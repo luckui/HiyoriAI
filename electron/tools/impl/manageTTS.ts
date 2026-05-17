@@ -8,9 +8,23 @@
  * 自动完成 Python 虚拟环境创建、依赖安装、服务启停、引擎切换。
  */
 
+import { BrowserWindow } from 'electron';
 import type { ToolDefinition, ToolExecuteResult } from '../types';
 import * as mgr from '../../ttsServerManager';
 import { getTTSConfig, updateTTSConfig } from '../../main';
+
+/* ── 终端气泡推送 helper（复用 hearing:terminal-block 频道） ────── */
+function sendTerminalBlock(ev: {
+  blockId: string;
+  line?: string;
+  status?: 'running' | 'done' | 'error';
+  title?: string;
+}) {
+  const win = BrowserWindow.getAllWindows()[0];
+  if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+    win.webContents.send('hearing:terminal-block', ev);
+  }
+}
 
 interface ManageTTSParams {
   /** 要执行的操作 */
@@ -113,8 +127,14 @@ const manageTTSTool: ToolDefinition<ManageTTSParams> = {
 
       case 'install': {
         const engine = resolveEngine();
+        const blockId = `tts-install-${Date.now()}`;
+        sendTerminalBlock({ blockId, title: `安装 TTS (${engine ?? 'edge-tts'})`, status: 'running' });
         const logs: string[] = [];
-        const result = await mgr.install((msg) => logs.push(msg), engine);
+        const result = await mgr.install((msg) => {
+          logs.push(msg);
+          sendTerminalBlock({ blockId, line: msg, status: 'running' });
+        }, engine);
+        sendTerminalBlock({ blockId, status: result.ok ? 'done' : 'error' });
         return result.ok
           ? `✅ 安装成功 (${engine ?? 'edge-tts'})\n${logs.join('\n')}\n${result.detail}`
           : `❌ 安装失败 (${engine ?? 'edge-tts'})\n${logs.join('\n')}\n${result.detail}`;
@@ -171,8 +191,14 @@ const manageTTSTool: ToolDefinition<ManageTTSParams> = {
 
       case 'install_and_start': {
         const engine = resolveEngine();
+        const blockId = `tts-install-start-${Date.now()}`;
+        sendTerminalBlock({ blockId, title: `安装并启动 TTS (${engine ?? 'edge-tts'})`, status: 'running' });
         const logs: string[] = [];
-        const result = await mgr.installAndStart((msg) => logs.push(msg), engine);
+        const result = await mgr.installAndStart((msg) => {
+          logs.push(msg);
+          sendTerminalBlock({ blockId, line: msg, status: 'running' });
+        }, engine);
+        sendTerminalBlock({ blockId, status: result.ok ? 'done' : 'error' });
         if (result.ok) {
           updateTTSConfig({ enabled: true });
           return [

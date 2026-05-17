@@ -58,13 +58,17 @@ const runCommandTool: ToolDefinition<RunCommandParams> = {
       description:
         '在系统 Shell 中执行命令。支持两种模式：\n' +
         '\n' +
-        '【同步模式（默认）】阻塞执行，命令完成后返回 stdout + stderr。\n' +
-        '  适用：pip install、python script.py、npm build、系统查询等\n' +
+        '【同步模式（默认）】阻塞执行，命令完成后返回结果。⚠️ 仅适合预期30秒内完成的命令。\n' +
+        '  适用：python --version、npm run build（小项目）、系统查询等\n' +
+        '  ⚠️ 不确定耗时的命令请用 background=true——超时后只能重试，非常浪费。\n' +
         '\n' +
-        '【后台模式（background=true）】异步启动，返回 session_id，用 process 工具管理。\n' +
-        '  适用：npm run dev、python -m http.server 等长驻进程/开发服务器\n' +
-        '  启动后用 process({ action:"poll", session_id }) 检查输出\n' +
-        '  用 process({ action:"kill", session_id }) 停止进程\n' +
+        '【后台模式（background=true）】异步启动，立即返回 session_id，用 process 工具跟踪。\n' +
+        '  适用（凡是耗时不确定的，都优先用这个）：\n' +
+        '    • pip install / npm install（网速慢时可能几分钟）\n' +
+        '    • python script.py（计算密集型、爬虫、训练等耗时不定）\n' +
+        '    • wget / curl 大文件下载\n' +
+        '    • npm run dev / python -m http.server 等长驻进程\n' +
+        '  启动后【必须】用 process({ action:"poll", session_id }) 检查进度\n' +
         '\n' +
         '【⚠️ 工作目录】需要在特定目录执行时，必须用 cwd 参数指定绝对路径，\n' +
         '  不要用 cd 切换目录！cmd.exe 的 cd 不能跨盘符（如从 D: 切到 C:）。\n' +
@@ -83,7 +87,10 @@ const runCommandTool: ToolDefinition<RunCommandParams> = {
           },
           timeoutMs: {
             type: 'number',
-            description: '超时毫秒数，默认 30000（30 秒）。同步模式专用，后台模式忽略此参数。',
+            description:
+              '超时毫秒数，默认 30000（30 秒）。同步模式专用，后台模式忽略此参数。\n' +
+              '⚠️ 不要靠增大超时解决"耗时不确定"的问题——改用 background=true 才是正解。\n' +
+              '只有你明确知道命令会在 N 秒内完成时，才考虑调大此值（如 timeoutMs: 120000）。',
           },
           cwd: {
             type: 'string',
@@ -127,11 +134,22 @@ const runCommandTool: ToolDefinition<RunCommandParams> = {
           `📤 初始输出:`,
           output || '（暂无输出）',
           ``,
-          `【后续操作】用 process 工具管理此进程：`,
-          `  • process({ action: "poll", session_id: "${id}" })  — 检查状态 + 最近输出`,
-          `  • process({ action: "log", session_id: "${id}" })   — 完整输出日志`,
+          `⚠️ 【重要】进程已在后台运行，你必须主动跟踪其状态！不跟踪 = 不知道成功还是失败。`,
+          ``,
+          `【必须执行的后续操作】`,
+          `  1️⃣  稍等 3—10 秒（进程需要启动时间）`,
+          `  2️⃣  process({ action: "poll", session_id: "${id}" })  ← 检查输出，确认进程是否正常`,
+          `  3️⃣  根据输出内容判断结果：`,
+          `       • 下载/安装：找 progress 百分比或 “Successfully installed”`,
+          `       • 服务器：找地址行（如 “Local: http://localhost:5173”）`,
+          `       • 如果进程还未完成，再等一会再次 poll`,
+          ``,
+          `📋 如果忘记了 session_id，用 process({ action: "list" }) 找回所有后台进程`,
+          ``,
+          `🔧 其他操作:`,
+          `  • process({ action: "log", session_id: "${id}" })             — 完整输出日志`,
           `  • process({ action: "send", session_id: "${id}", data: "..." }) — 发送输入`,
-          `  • process({ action: "kill", session_id: "${id}" })  — 终止进程`,
+          `  • process({ action: "kill", session_id: "${id}" })             — 终止进程`,
         ].join('\n');
       } catch (error: any) {
         return `❌ 后台启动失败: ${error.message}`;
@@ -188,7 +206,18 @@ const runCommandTool: ToolDefinition<RunCommandParams> = {
           const combined = [out, errText].filter(Boolean).join('\n');
 
           if (err?.killed || err?.signal === 'SIGTERM') {
-            resolve(`⏱️ 命令超时（>${timeoutMs}ms）：${command}`);
+            resolve(
+              `⏱️ 命令超时（>${timeoutMs}ms）：${command}\n\n` +
+              `【你现在必须做的选择】\n` +
+              `  A) 耗时不确定（下载/安装/计算密集型脚本）→ 改用后台模式：\n` +
+              `     run_command({ command: "${command.replace(/"/g, '\\"')}", background: true${cwd ? `, cwd: "${cwd}"` : ''} })\n` +
+              `     然后用 process({ action: "poll", session_id }) 跟踪进度\n` +
+              `\n` +
+              `  B) 确定命令会完成但需要更多时间 → 增大超时重试：\n` +
+              `     run_command({ command: "${command.replace(/"/g, '\\"')}", timeoutMs: ${timeoutMs * 4}${cwd ? `, cwd: "${cwd}"` : ''} })\n` +
+              `\n` +
+              `⚠️ 不要向用户解释超时——选择 A 或 B 直接重试。`
+            );
             return;
           }
 

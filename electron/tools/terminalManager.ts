@@ -241,22 +241,17 @@ class TerminalManager {
    * 获取合并的输出（stdout + stderr）
    */
   private getCombinedOutput(session: TerminalSession): string {
-    const parts: string[] = [];
-    
-    if (session.outputBuffer) {
-      parts.push('📤 标准输出:');
-      parts.push(session.outputBuffer);
-    }
-    
-    if (session.stderrBuffer) {
-      parts.push('');
-      parts.push('⚠️ 标准错误:');
-      parts.push(session.stderrBuffer);
-    }
+    // 注意：很多工具（git/pip/npm/curl）把进度信息写到 stderr，stdout 留给纯数据。
+    // 不区分 stdout/stderr，直接合并展示，避免 AI 误判 stderr 内容为"出错"。
+    const combined = [session.outputBuffer, session.stderrBuffer]
+      .filter(Boolean)
+      .join('\n');
 
-    if (parts.length === 0) {
+    if (!combined.trim()) {
       return '（无输出）';
     }
+
+    const parts = ['📤 输出:', combined];
 
     return parts.join('\n');
   }
