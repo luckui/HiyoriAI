@@ -1,0 +1,5 @@
+{
+  "name": "个人技能",
+  "emoji": "📁",
+  "description": "用户自定义技能集合，直接放在 electron/skills/ 根目录下的技能归属此集合"
+}

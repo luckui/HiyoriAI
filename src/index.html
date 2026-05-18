@@ -116,9 +116,14 @@
 
         <!-- Tab 切换栏 -->
         <div id="s-tabs" class="no-drag">
-          <button class="s-tab s-tab-active" data-tab="llm">🤖 AI 模型</button>
-          <button class="s-tab" data-tab="tts">🔊 语音</button>
-          <button class="s-tab" data-tab="bridges">🔗 平台桥接</button>
+          <div id="s-tabs-strip">
+            <button class="s-tab s-tab-active" data-tab="llm">🤖 AI 模型</button>
+            <button class="s-tab" data-tab="tts">🔊 语音</button>
+            <button class="s-tab" data-tab="bridges">🔗 平台桥接</button>
+            <button class="s-tab" data-tab="skills">🧰 Skills</button>
+          </div>
+          <button id="s-tabs-more" class="s-tab-more" hidden>更多 ▾</button>
+          <div id="s-tabs-dropdown" class="s-tabs-dropdown" hidden></div>
         </div>
 
         <div id="settings-scroller">
@@ -436,6 +441,11 @@
             </div><!-- /#s-bridges-layout -->
 
           </div><!-- /#s-tab-bridges -->
+
+          <!-- ════ Tab: Skills 管理 ════ -->
+          <div id="s-tab-skills" class="s-tab-pane s-tab-pane-hidden">
+            <div id="skills-mgr"></div>
+          </div><!-- /#s-tab-skills -->
 
         </div><!-- /#settings-scroller -->
       </div><!-- /#settings-panel -->

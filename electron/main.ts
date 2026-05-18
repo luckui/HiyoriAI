@@ -101,6 +101,8 @@ import { ttsService } from './ttsService';
 import defaultTTSConfig from './tts.config';
 import type { TTSConfig, TTSProviderConfig } from './tts.config';
 import { getAgentMode, setAgentMode } from './agentMode';
+import { getSkillsConfig, saveSkillsConfig } from './skillsConfig';
+import { listTopicsForUI, listCollections } from './tools/impl/manual';
 import * as ttsServerManager from './ttsServerManager';
 import * as sttServerManager from './sttServerManager';
 import { hearingManager } from './hearingManager';
@@ -656,6 +658,33 @@ function createWindow(): void {
   ipcMain.handle('agent:set-mode', (_e, mode: string) => {
     setAgentMode(mode);
     console.log(`[IPC] Agent 模式切换为: ${mode}`);
+  });
+
+  // ── Skills 配置管理 ────────────────────────────────────────
+  ipcMain.handle('skills:get-config', () => {
+    return getSkillsConfig();
+  });
+
+  ipcMain.handle('skills:save-config', (_e, cfg: ReturnType<typeof getSkillsConfig>) => {
+    saveSkillsConfig(cfg);
+  });
+
+  /**
+   * 返回所有可用 skill 的列表，供 UI 展示 / 选择。
+   * 返回格式：{ name, summary, collection, skillKey }[]
+   *   collection: skill 所属集合（"scientific" | "skills" | ...）
+   *   skillKey:   在 disabledSkills 中使用的唯一标识符
+   */
+  ipcMain.handle('skills:list', () => {
+    return listTopicsForUI();
+  });
+
+  /**
+   * 返回所有集合的元信息列表，供 UI 动态渲染集合标题（无需硬编码）。
+   * 返回格式：{ id, displayName, description }[]
+   */
+  ipcMain.handle('skills:list-collections', () => {
+    return listCollections();
   });
 
   ipcMain.handle('tts:isEnabled', () => {

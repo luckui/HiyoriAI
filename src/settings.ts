@@ -81,6 +81,32 @@ interface MemoryImportResult {
   error?: string;
 }
 
+// ── Skills 配置类型（与 electron/skillsConfig.ts 保持一致） ──────────────────
+
+type SkillListingMode = 'none' | 'names' | 'short' | 'full';
+
+interface SkillsConfig {
+  enabled: boolean;
+  listingMode: SkillListingMode;
+  disabledCollections: string[];
+  disabledSkills: string[];
+  collectionModes: Record<string, SkillListingMode>;
+}
+
+interface SkillEntry {
+  name: string;
+  summary: string;
+  collection: string;
+  skillKey: string;
+}
+
+/** 集合元信息（从 _collection.json 动态读取，无硬编码） */
+interface CollectionInfo {
+  id: string;
+  displayName: string;
+  description: string;
+}
+
 declare global {
   interface Window {
     settingsAPI?: {
@@ -116,6 +142,16 @@ declare global {
       export(): Promise<MemoryExportResult>;
       import(): Promise<MemoryImportResult>;
     };
+    skillsAPI?: {
+      /** 读取当前 Skills 配置 */
+      getConfig(): Promise<SkillsConfig>;
+      /** 保存 Skills 配置 */
+      saveConfig(cfg: SkillsConfig): Promise<void>;
+      /** 列出所有可用 skill（含 collection / skillKey），供 UI 展示和选择 */
+      listAll(): Promise<SkillEntry[]>;
+      /** 列出所有集合元信息（id / displayName / description），从 _collection.json 动态读取 */
+      listCollections(): Promise<CollectionInfo[]>;
+    };
   }
 }
 
@@ -128,6 +164,8 @@ let editKey: string | null = null;
 let savedWindowWidth = 0;
 /** 打开设置前的窗口高度，关闭时恢复 */
 let savedWindowHeight = 0;
+/** Tab 溢出重排回调（由 initTabOverflow 设置） */
+let _reflowTabs: (() => void) | null = null;
 
 // ── 表单 ↔ 内存同步 ───────────────────────────────────
 
@@ -891,6 +929,388 @@ function setActiveProvider(): void {
 
 // ── 面板开关 ──────────────────────────────────────────
 
+// ── Tab 溢出自适应 ────────────────────────────────────
+
+function initTabOverflow(): void {
+  const strip   = document.getElementById('s-tabs-strip') as HTMLElement | null;
+  const moreBtn = document.getElementById('s-tabs-more') as HTMLButtonElement | null;
+  const dropdown = document.getElementById('s-tabs-dropdown') as HTMLElement | null;
+  if (!strip || !moreBtn || !dropdown) return;
+
+  moreBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    dropdown.hidden = !dropdown.hidden;
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!moreBtn.contains(e.target as Node) && !dropdown.contains(e.target as Node)) {
+      dropdown.hidden = true;
+    }
+  });
+
+  function reflow(): void {
+    const allTabs = Array.from(strip!.querySelectorAll<HTMLButtonElement>('.s-tab'));
+
+    // Reset: show all tabs, hide more button + dropdown
+    allTabs.forEach((t) => { t.style.display = ''; });
+    moreBtn!.hidden = true;
+    dropdown!.hidden = true;
+    dropdown!.innerHTML = '';
+
+    // Force layout flush
+    void strip!.scrollWidth;
+
+    if (strip!.scrollWidth <= strip!.clientWidth + 1) return;
+
+    // Overflow detected — show more button
+    moreBtn!.hidden = false;
+    void moreBtn!.offsetWidth; // flush so strip narrows
+
+    const stripRect = strip!.getBoundingClientRect();
+    const overflowing: HTMLButtonElement[] = [];
+    for (const tab of allTabs) {
+      if (tab.getBoundingClientRect().right > stripRect.right + 1) {
+        tab.style.display = 'none';
+        overflowing.push(tab);
+      }
+    }
+
+    if (overflowing.length === 0) {
+      moreBtn!.hidden = true;
+      return;
+    }
+
+    // Mirror active state onto more button
+    const hasActiveOverflow = overflowing.some((t) => t.classList.contains('s-tab-active'));
+    moreBtn!.classList.toggle('s-tab-active', hasActiveOverflow);
+
+    // Build dropdown items
+    for (const tab of overflowing) {
+      const item = document.createElement('button');
+      item.className = 's-tab-dropdown-item';
+      if (tab.classList.contains('s-tab-active')) item.classList.add('s-tab-active');
+      item.dataset['tab'] = tab.dataset['tab'];
+      item.textContent = tab.textContent;
+      item.addEventListener('click', () => {
+        tab.click();
+        dropdown!.hidden = true;
+      });
+      dropdown!.appendChild(item);
+    }
+  }
+
+  _reflowTabs = reflow;
+  new ResizeObserver(reflow).observe(strip);
+  reflow();
+}
+
+// ── Skills 管理 UI ────────────────────────────────────
+
+async function loadSkillsUI(): Promise<void> {
+  const container = document.getElementById('skills-mgr');
+  if (!container) return;
+
+  if (!window.skillsAPI) {
+    container.innerHTML = '<p class="s-hint">Skills API 不可用</p>';
+    return;
+  }
+
+  container.innerHTML = '<p class="s-hint">加载中…</p>';
+
+  let config: SkillsConfig;
+  let allSkills: SkillEntry[];
+  let collections: CollectionInfo[];
+  try {
+    [config, allSkills, collections] = await Promise.all([
+      window.skillsAPI.getConfig(),
+      window.skillsAPI.listAll(),
+      window.skillsAPI.listCollections(),
+    ]);
+  } catch (e) {
+    container.innerHTML = `<p class="s-hint">加载失败: ${String(e)}</p>`;
+    return;
+  }
+
+  // Deep clone for in-memory editing
+  const draft: SkillsConfig = JSON.parse(JSON.stringify(config)) as SkillsConfig;
+
+  // Group skills by collection
+  const collMap = new Map<string, SkillEntry[]>();
+  for (const s of allSkills) {
+    const arr = collMap.get(s.collection) ?? [];
+    arr.push(s);
+    collMap.set(s.collection, arr);
+  }
+
+  // Build display name map from dynamic collection metadata
+  // Falls back to "📦 <id>" for any collection without _collection.json
+  const collDisplayMap = new Map(collections.map((c) => [c.id, c.displayName]));
+
+  container.innerHTML = '';
+
+  // ── 全局设置 ────────────────────────────────────────
+  const globalSec = skillsMkSection('全局设置');
+
+  globalSec.appendChild(skillsMkToggleRow(
+    '注入技能目录',
+    '在 agent 模式下将技能注入系统提示词（chat 模式始终不注入）',
+    draft.enabled,
+    (v) => {
+      draft.enabled = v;
+      container.querySelectorAll<HTMLElement>('.skills-coll-body').forEach((el) => {
+        el.style.opacity = v ? '1' : '0.4';
+        el.style.pointerEvents = v ? '' : 'none';
+      });
+    },
+  ));
+
+  globalSec.appendChild(skillsMkSelectRow(
+    '全局展示模式',
+    [
+      { value: 'none',  label: '不注入（节省最多 token）' },
+      { value: 'names', label: '仅名称' },
+      { value: 'short', label: '名称 + 短描述（40字）' },
+      { value: 'full',  label: '名称 + 完整描述（默认）' },
+    ],
+    draft.listingMode,
+    (v) => { draft.listingMode = v as SkillListingMode; },
+  ));
+
+  container.appendChild(globalSec);
+
+  // ── Per-collection cards ─────────────────────────────
+
+  for (const [collId, skills] of collMap) {
+    const titleHtml =
+      (collDisplayMap.get(collId) ?? `📦 ${collId}`) +
+      `&nbsp;<span style="font-weight:400;opacity:.6;font-size:10px">${skills.length} 个技能</span>`;
+    const collSec = skillsMkSection(titleHtml);
+    collSec.classList.add('skills-coll-section');
+
+    const collBody = document.createElement('div');
+    collBody.className = 'skills-coll-body';
+    if (!draft.enabled) { collBody.style.opacity = '0.4'; collBody.style.pointerEvents = 'none'; }
+
+    // Skills area (affected by collection enabled toggle)
+    const skillsArea = document.createElement('div');
+    skillsArea.className = 'skills-coll-skills-area';
+    const collEnabled = !draft.disabledCollections.includes(collId);
+    if (!collEnabled) { skillsArea.style.opacity = '0.4'; skillsArea.style.pointerEvents = 'none'; }
+
+    // Collection enabled toggle
+    collBody.appendChild(skillsMkToggleRow('启用此集合', null, collEnabled, (v) => {
+      if (v) {
+        draft.disabledCollections = draft.disabledCollections.filter((c) => c !== collId);
+      } else if (!draft.disabledCollections.includes(collId)) {
+        draft.disabledCollections.push(collId);
+      }
+      skillsArea.style.opacity = v ? '1' : '0.4';
+      skillsArea.style.pointerEvents = v ? '' : 'none';
+    }));
+
+    // Collection mode override
+    collBody.appendChild(skillsMkSelectRow(
+      '展示模式（此集合）',
+      [
+        { value: '',      label: `继承全局（${skillsModeLabel(draft.listingMode)}）` },
+        { value: 'none',  label: '不注入' },
+        { value: 'names', label: '仅名称' },
+        { value: 'short', label: '名称 + 短描述' },
+        { value: 'full',  label: '名称 + 完整描述' },
+      ],
+      draft.collectionModes[collId] ?? '',
+      (v) => {
+        if (v === '') { delete draft.collectionModes[collId]; }
+        else { draft.collectionModes[collId] = v as SkillListingMode; }
+      },
+    ));
+
+    // Collapsible skill list
+    const detailsEl = document.createElement('details');
+    detailsEl.className = 'skills-details';
+    if (skills.length <= 8) detailsEl.open = true;
+
+    const summaryEl = document.createElement('summary');
+    const setSummaryText = () => {
+      summaryEl.textContent = detailsEl.open
+        ? `▾ 收起 ${skills.length} 个技能`
+        : `▸ 展开 ${skills.length} 个技能`;
+    };
+    setSummaryText();
+    detailsEl.addEventListener('toggle', setSummaryText);
+
+    // Controls row
+    const ctrlRow = document.createElement('div');
+    ctrlRow.className = 'skills-ctrl-row';
+    const searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.className = 'skills-search';
+    searchInput.placeholder = '搜索技能…';
+    const btnAll  = document.createElement('button');
+    btnAll.className  = 's-small-btn';
+    btnAll.textContent = '全选';
+    const btnNone = document.createElement('button');
+    btnNone.className  = 's-small-btn';
+    btnNone.textContent = '全不选';
+    ctrlRow.append(searchInput, btnAll, btnNone);
+
+    // Skills grid
+    const grid = document.createElement('div');
+    grid.className = 'skills-grid';
+    const itemEls: HTMLLabelElement[] = [];
+
+    for (const skill of skills) {
+      const lbl = document.createElement('label');
+      lbl.className = 'skills-item';
+      lbl.title = skill.summary;
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = !draft.disabledSkills.includes(skill.skillKey);
+      cb.addEventListener('change', () => {
+        if (cb.checked) {
+          draft.disabledSkills = draft.disabledSkills.filter((k) => k !== skill.skillKey);
+        } else if (!draft.disabledSkills.includes(skill.skillKey)) {
+          draft.disabledSkills.push(skill.skillKey);
+        }
+      });
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'skills-item-name';
+      nameSpan.textContent = skill.name;
+
+      lbl.append(cb, nameSpan);
+      grid.appendChild(lbl);
+      itemEls.push(lbl);
+    }
+
+    // Search filter
+    searchInput.addEventListener('input', () => {
+      const q = searchInput.value.toLowerCase();
+      for (const el of itemEls) {
+        const name = (el.querySelector('.skills-item-name')?.textContent ?? '').toLowerCase();
+        el.style.display = name.includes(q) ? '' : 'none';
+      }
+    });
+
+    // Bulk select / deselect (visible items only)
+    const toggleAll = (checked: boolean) => {
+      grid.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((c) => {
+        if ((c.closest('label') as HTMLElement | null)?.style.display !== 'none') {
+          c.checked = checked;
+          c.dispatchEvent(new Event('change'));
+        }
+      });
+    };
+    btnAll.addEventListener('click',  () => toggleAll(true));
+    btnNone.addEventListener('click', () => toggleAll(false));
+
+    detailsEl.append(summaryEl, ctrlRow, grid);
+    skillsArea.appendChild(detailsEl);
+    collBody.appendChild(skillsArea);
+    collSec.appendChild(collBody);
+    container.appendChild(collSec);
+  }
+
+  // ── 保存按钮 ────────────────────────────────────────
+  const saveRow = document.createElement('div');
+  saveRow.style.cssText = 'display:flex;justify-content:flex-end;padding:4px 0 8px';
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 's-save-btn';
+  saveBtn.textContent = '保存 Skills 配置';
+  saveBtn.addEventListener('click', async () => {
+    try {
+      await window.skillsAPI!.saveConfig(draft);
+      saveBtn.textContent = '✓ 已保存';
+      setTimeout(() => { saveBtn.textContent = '保存 Skills 配置'; }, 2000);
+    } catch {
+      saveBtn.textContent = '保存失败';
+      setTimeout(() => { saveBtn.textContent = '保存 Skills 配置'; }, 2000);
+    }
+  });
+  saveRow.appendChild(saveBtn);
+  container.appendChild(saveRow);
+}
+
+// ── Skills UI 辅助函数 ────────────────────────────────
+
+function skillsModeLabel(m: SkillListingMode): string {
+  const labels: Record<SkillListingMode, string> = {
+    none: '不注入', names: '仅名称', short: '名称+短描述', full: '名称+完整描述',
+  };
+  return labels[m] ?? m;
+}
+
+function skillsMkSection(titleHtml: string): HTMLElement {
+  const sec = document.createElement('section');
+  sec.className = 's-section';
+  const h = document.createElement('h3');
+  h.className = 's-title';
+  h.innerHTML = titleHtml;
+  sec.appendChild(h);
+  return sec;
+}
+
+function skillsMkToggleRow(
+  label: string,
+  hint: string | null,
+  checked: boolean,
+  onChange: (v: boolean) => void,
+): HTMLElement {
+  const row = document.createElement('label');
+  row.className = 's-label s-label-row';
+
+  const text = document.createElement('span');
+  text.className = 's-label-text';
+  text.textContent = label;
+
+  const toggleWrap = document.createElement('label');
+  toggleWrap.className = 's-toggle';
+  const input = document.createElement('input');
+  input.type = 'checkbox';
+  input.checked = checked;
+  input.addEventListener('change', () => onChange(input.checked));
+  const slider = document.createElement('span');
+  slider.className = 's-toggle-slider';
+  toggleWrap.append(input, slider);
+
+  row.append(text, toggleWrap);
+
+  if (hint) {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;flex-direction:column;gap:3px';
+    const hintEl = document.createElement('span');
+    hintEl.className = 's-hint';
+    hintEl.textContent = hint;
+    wrap.append(row, hintEl);
+    return wrap;
+  }
+  return row;
+}
+
+function skillsMkSelectRow(
+  label: string,
+  options: Array<{ value: string; label: string }>,
+  currentValue: string,
+  onChange: (v: string) => void,
+): HTMLElement {
+  const lbl = document.createElement('label');
+  lbl.className = 's-label';
+  lbl.textContent = label;
+  const sel = document.createElement('select');
+  sel.className = 's-input';
+  for (const opt of options) {
+    const o = document.createElement('option');
+    o.value = opt.value;
+    o.textContent = opt.label;
+    sel.appendChild(o);
+  }
+  sel.value = currentValue;
+  sel.addEventListener('change', () => onChange(sel.value));
+  lbl.appendChild(sel);
+  return lbl;
+}
+
 export function openSettings(): void {
   savedWindowWidth  = window.innerWidth;
   savedWindowHeight = window.innerHeight;
@@ -905,6 +1325,7 @@ export function openSettings(): void {
   void loadDiscordUI();
   void loadWeChatUI();
   void loadTTSUI();
+  void loadSkillsUI();
 
   // 当 Agent 或主进程修改了 TTS 配置时自动刷新设置界面（仅注册一次）
   if (!(window as any).__ttsConfigListenerRegistered) {
@@ -976,8 +1397,11 @@ export function initSettings(): void {
         const match = pane.id === `s-tab-${target}`;
         pane.classList.toggle('s-tab-pane-hidden', !match);
       });
+      _reflowTabs?.();
     });
   });
+
+  initTabOverflow();
 
   // ── 平台列表左侧切换 ──────────────────────────────
   document.querySelectorAll<HTMLElement>('.s-bridge-item').forEach((item) => {

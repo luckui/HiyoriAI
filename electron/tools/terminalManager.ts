@@ -14,6 +14,7 @@
 
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process';
 import { randomUUID } from 'crypto';
+import { decodeBuffer } from './encoding';
 
 interface TerminalSession {
   id: string;
@@ -87,13 +88,13 @@ class TerminalManager {
         this.sessions.set(id, session);
 
         // 监听 stdout
-        proc.stdout.on('data', (data) => {
-          session.outputBuffer += data.toString('utf8');
+        proc.stdout.on('data', (data: Buffer) => {
+          session.outputBuffer += decodeBuffer(data);
         });
 
         // 监听 stderr
-        proc.stderr.on('data', (data) => {
-          session.stderrBuffer += data.toString('utf8');
+        proc.stderr.on('data', (data: Buffer) => {
+          session.stderrBuffer += decodeBuffer(data);
         });
 
         // 监听进程退出

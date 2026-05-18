@@ -18,6 +18,7 @@ import { app } from 'electron';
 import { join } from 'path';
 import type { ToolDefinition } from '../types';
 import { terminalManager } from '../terminalManager';
+import { decodeBuffer } from '../encoding';
 
 /**
  * 为子进程注入 Hiyori 应用路径环境变量，
@@ -33,6 +34,12 @@ function buildEnv(userEnv?: Record<string, string>): Record<string, string> {
     ...process.env as Record<string, string>,
     HIYORI_UV_EXE: uvExe,
     HIYORI_DATA_DIR: dataDir,
+    // Python 强制 UTF-8 模式（Python 3.7+）：
+    // - 修复 Windows 管道下 Python 默认退回 GBK 导致的 UnicodeEncodeError
+    // - 修复 conda run 等 Python 中间层用 GBK 转码 UTF-8 输出导致的乱码
+    // - PYTHONUTF8=1 影响整个 Python 子进程树，包括 conda 自身
+    PYTHONUTF8: '1',
+    PYTHONIOENCODING: 'utf-8',
     ...userEnv,
   };
 }
@@ -183,8 +190,9 @@ const runCommandTool: ToolDefinition<RunCommandParams> = {
       const isWin = process.platform === 'win32';
       const shell = isWin ? 'cmd.exe' : '/bin/sh';
 
-      // Windows：chcp 65001 切换到 UTF-8，避免中文输出乱码
-      const actualCommand = isWin ? `chcp 65001 > nul && ${command}` : command;
+      // 不使用 chcp 65001：由下方的 decodeBuffer 自动检测 UTF-8/GBK，
+      // 无需依赖 code page，且不与 conda 的 activate.bat 冲突。
+      const actualCommand = command;
 
       // 合并环境变量（自动注入 HIYORI_UV_EXE / HIYORI_DATA_DIR）
       const mergedEnv = buildEnv(env);
@@ -196,13 +204,13 @@ const runCommandTool: ToolDefinition<RunCommandParams> = {
           timeout: timeoutMs,
           cwd: cwd ?? process.cwd(),
           env: mergedEnv,
-          encoding: 'utf8',
+          encoding: 'binary',  // 保留原始字节，由 decodeBuffer 自动识别 UTF-8 / GBK
           maxBuffer: 1024 * 1024,
           windowsHide: true,
         },
         (err, stdout, stderr) => {
-          const out = (stdout ?? '').trim();
-          const errText = (stderr ?? '').trim();
+          const out = decodeBuffer(Buffer.from(stdout ?? '', 'binary')).trim();
+          const errText = decodeBuffer(Buffer.from(stderr ?? '', 'binary')).trim();
           const combined = [out, errText].filter(Boolean).join('\n');
 
           if (err?.killed || err?.signal === 'SIGTERM') {

@@ -48,3 +48,5 @@ tts-server*/CharacterModels/
 tts-server*/.cache/
 
 electron/manual
+electron/skills/scientific
+electron/skills/cli-anything

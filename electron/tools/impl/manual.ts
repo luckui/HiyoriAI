@@ -35,6 +35,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
 import type { ToolDefinition } from '../types';
+import { getSkillsConfig, type SkillListingMode } from '../../skillsConfig';
 
 /**
  * 目录路径（兼容开发模式和打包后）
@@ -44,7 +45,7 @@ const MANUAL_DIR = app.isPackaged
   : path.join(app.getAppPath(), 'electron', 'manual');
 
 const SKILLS_DIR = app.isPackaged
-  ? path.join(process.resourcesPath, 'electron', 'skills')
+  ? path.join(app.getPath('userData'), 'skills')
   : path.join(app.getAppPath(), 'electron', 'skills');
 
 // ─── Frontmatter 工具 ─────────────────────────────────────────────────────────
@@ -207,11 +208,31 @@ function resolveTopicFile(topic: string): string | null {
 }
 
 /**
+ * 根据 SkillListingMode 将单个主题条目格式化为一行文本。
+ * 返回 null 表示该条目应被跳过（mode='none'）。
+ */
+function formatTopicLine(t: TopicEntry, mode: SkillListingMode): string | null {
+  if (mode === 'none') return null;
+  if (mode === 'names') return `    • ${t.name}`;
+  const desc = mode === 'short' ? t.summary.slice(0, 40) : t.summary;
+  return desc ? `    • ${t.name}（${desc}${mode === 'short' && t.summary.length > 40 ? '…' : ''}）` : `    • ${t.name}`;
+}
+
+/**
  * 返回当前可用说明书 / Skills 主题列表，格式化为适合注入 system prompt 的字符串。
  * 每次对话初始化时调用，让 AI 在第一个 token 起就知道有哪些知识可查。
+ *
+ * 行为受 SkillsConfig 控制（见 electron/skillsConfig.ts）：
+ *   - enabled=false         → 跳过全部 skill 条目，仅保留 manual/ 条目
+ *   - disabledCollections   → 跳过指定集合（如 "scientific"）
+ *   - disabledSkills        → 跳过指定单个技能
+ *   - listingMode           → 全局展示详细程度（none/names/short/full）
+ *   - collectionModes       → 每个集合的展示模式覆盖
+ *
  * 遵循渐进式披露：此处只注入 name + description，全文内容由 AI 按需调用 read_manual 加载。
  */
 export function getManualTopicsForPrompt(): string {
+  const skillsCfg = getSkillsConfig();
   const topics = listTopics();
   if (topics.length === 0) return '';
 
@@ -224,18 +245,168 @@ export function getManualTopicsForPrompt(): string {
   }
 
   const lines: string[] = [];
+  let shownCount = 0;
+
   for (const [cat, items] of grouped) {
-    if (cat && cat !== '通用') lines.push(`  [${cat}]`);
+    const isSkillCategory = items.some(t => t.filePath.startsWith(SKILLS_DIR));
+
+    // ── Manual/ 条目：始终保留，不受 skills 配置影响 ──
+    if (!isSkillCategory) {
+      if (cat && cat !== '通用') lines.push(`  [${cat}]`);
+      for (const t of items) {
+        lines.push(t.summary ? `    • ${t.name}（${t.summary}）` : `    • ${t.name}`);
+        shownCount++;
+      }
+      continue;
+    }
+
+    // ── Skills 条目：受配置过滤 ──
+    if (!skillsCfg.enabled) continue;
+
+    // 集合级别禁用检查
+    const collectionId = cat === '通用' ? 'skills' : cat;
+    if (skillsCfg.disabledCollections.includes(collectionId)) continue;
+
+    // 确定该集合的展示模式（集合覆盖 > 全局）
+    const collectionMode: SkillListingMode =
+      skillsCfg.collectionModes[collectionId] ?? skillsCfg.listingMode;
+
+    // 如果整个集合 mode=none，跳过
+    if (collectionMode === 'none') continue;
+
+    const catLines: string[] = [];
     for (const t of items) {
-      lines.push(t.summary ? `    • ${t.name}（${t.summary}）` : `    • ${t.name}`);
+      // 单技能禁用检查：集合内格式 "collection/skill"，根目录格式 "skill"
+      const skillKey = collectionId === 'skills' ? t.name : `${collectionId}/${t.name}`;
+      if (skillsCfg.disabledSkills.includes(skillKey)) continue;
+
+      const line = formatTopicLine(t, collectionMode);
+      if (line !== null) {
+        catLines.push(line);
+        shownCount++;
+      }
+    }
+
+    if (catLines.length > 0) {
+      if (cat && cat !== '通用') lines.push(`  [${cat}]`);
+      lines.push(...catLines);
     }
   }
 
+  if (shownCount === 0) return '';
+
   return (
-    '\n\n【可用说明书 / Skills 目录】（共 ' + topics.length + ' 项）\n' +
+    '\n\n【可用说明书 / Skills 目录】（共 ' + shownCount + ' 项）\n' +
     lines.join('\n') + '\n' +
     '调用 read_manual(topic="主题名") 查阅完整内容，topic 支持模糊匹配和跨目录搜索。'
   );
+}
+
+/**
+ * 单个集合的元信息（来自目录中的 _collection.json，或从目录名生成默认值）。
+ * 设计用途：UI 展示、动态列集合，支持用户自行新增集合目录。
+ */
+export interface CollectionInfo {
+  /** 集合唯一标识符（目录名，根目录 skill 固定为 'skills'） */
+  id: string;
+  /** 带 emoji 的可读名称，例如 "📦 Scientific（科研技能库）" */
+  displayName: string;
+  /** 可选描述文本 */
+  description: string;
+}
+
+/**
+ * 读取集合目录中的 _collection.json，若不存在或解析失败则返回 null。
+ * _collection.json 格式（所有字段可选）：
+ *   { "name": "...", "emoji": "...", "description": "..." }
+ */
+function readCollectionMeta(dir: string): { name?: string; emoji?: string; description?: string } | null {
+  const metaPath = path.join(dir, '_collection.json');
+  try {
+    if (!fs.existsSync(metaPath)) return null;
+    return JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { name?: string; emoji?: string; description?: string };
+  } catch { return null; }
+}
+
+/**
+ * 枚举 SKILLS_DIR 下所有顶层集合（categories）及其元信息。
+ *
+ * 发现规则：
+ *   - SKILLS_DIR 下直接包含 SKILL.md 的目录 → 根集合 id='skills'，读 SKILLS_DIR/_collection.json
+ *   - SKILLS_DIR 下不含 SKILL.md 的子目录（视为 category dir）→ id=目录名，读子目录/_collection.json
+ *
+ * 若用户在 electron/skills/ 中新建任意目录并放入带 SKILL.md 的子目录，
+ * 该集合会被自动发现，无需修改代码。
+ */
+export function listCollections(): CollectionInfo[] {
+  if (!fs.existsSync(SKILLS_DIR)) return [];
+
+  const entries = fs.readdirSync(SKILLS_DIR, { withFileTypes: true });
+  const result: CollectionInfo[] = [];
+
+  // ── 根集合：SKILLS_DIR 下直接有 SKILL.md 的技能归属 'skills' ──
+  const hasRootSkills = entries.some(
+    (e) => e.isDirectory() && fs.existsSync(path.join(SKILLS_DIR, e.name, 'SKILL.md')),
+  );
+  if (hasRootSkills) {
+    const meta = readCollectionMeta(SKILLS_DIR);
+    result.push({
+      id: 'skills',
+      displayName: `${meta?.emoji ?? '📁'} ${meta?.name ?? '个人技能'}`,
+      description: meta?.description ?? '',
+    });
+  }
+
+  // ── 子目录集合：不含 SKILL.md 本身的目录视为 category ──
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const subDir = path.join(SKILLS_DIR, entry.name);
+    // 有 SKILL.md → 这个目录本身是一个 skill，不是集合
+    if (fs.existsSync(path.join(subDir, 'SKILL.md'))) continue;
+    // 检查子目录内是否有 skill（避免列出空目录）
+    let hasAnySkill = false;
+    try {
+      hasAnySkill = fs.readdirSync(subDir, { withFileTypes: true }).some(
+        (e) => e.isDirectory() && fs.existsSync(path.join(subDir, e.name, 'SKILL.md')),
+      );
+    } catch { /* ignore */ }
+    if (!hasAnySkill) continue;
+
+    const meta = readCollectionMeta(subDir);
+    result.push({
+      id: entry.name,
+      displayName: `${meta?.emoji ?? '📦'} ${meta?.name ?? entry.name}`,
+      description: meta?.description ?? '',
+    });
+  }
+
+  return result;
+}
+
+/**
+ * 返回所有可用 skill 的扁平列表，供 UI 展示和编辑 SkillsConfig 使用。
+ * 不含 manual/ 条目，只返回 skills/ 目录下的技能。
+ *
+ * 返回字段：
+ *   - name:       技能名（frontmatter 中的 name 字段）
+ *   - summary:    技能摘要（frontmatter description，截断到 100 字）
+ *   - collection: 所属集合名（'scientific' | 'skills' | ...）
+ *   - skillKey:   在 disabledSkills 中使用的唯一标识符
+ */
+export function listTopicsForUI(): Array<{
+  name: string;
+  summary: string;
+  collection: string;
+  skillKey: string;
+}> {
+  const topics = listTopics();
+  return topics
+    .filter(t => t.filePath.startsWith(SKILLS_DIR))
+    .map(t => {
+      const collection = t.category || 'skills';
+      const skillKey = collection === 'skills' ? t.name : `${collection}/${t.name}`;
+      return { name: t.name, summary: t.summary, collection, skillKey };
+    });
 }
 
 interface ReadManualParams {

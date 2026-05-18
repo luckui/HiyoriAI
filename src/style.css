@@ -1572,14 +1572,24 @@ html, body {
 /* ── 设置 Tab 切换栏 ── */
 #s-tabs {
   display: flex;
+  align-items: stretch;
+  position: relative;
   flex-shrink: 0;
   border-bottom: 1.5px solid rgba(240, 147, 251, 0.18);
   background: rgba(252, 248, 255, 0.6);
 }
 
-.s-tab {
+#s-tabs-strip {
+  display: flex;
   flex: 1;
-  padding: 9px 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.s-tab {
+  flex-shrink: 0;
+  padding: 9px 10px;
+  white-space: nowrap;
   border: none;
   background: transparent;
   font-family: var(--font);
@@ -1601,9 +1611,184 @@ html, body {
   box-shadow: inset 0 -2px 0 var(--pink-deep);
 }
 
+/* ── 更多 Tab 按钮 ── */
+.s-tab-more {
+  flex-shrink: 0;
+  padding: 9px 12px;
+  white-space: nowrap;
+  border: none;
+  border-left: 1px solid rgba(240, 147, 251, 0.18);
+  background: transparent;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--purple-soft);
+  cursor: pointer;
+  transition: color 0.15s;
+  -webkit-app-region: no-drag;
+}
+
+.s-tab-more:hover {
+  color: var(--pink-deep);
+}
+
+.s-tab-more.s-tab-active {
+  color: var(--pink-deep);
+}
+
+/* ── 溢出下拉菜单 ── */
+.s-tabs-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 300;
+  background: rgba(252, 248, 255, 0.98);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1.5px solid rgba(240, 147, 251, 0.3);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  padding: 5px;
+  min-width: 130px;
+}
+
+.s-tab-dropdown-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 12px;
+  border: none;
+  background: transparent;
+  font-family: var(--font);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--purple-soft);
+  cursor: pointer;
+  border-radius: 6px;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+  -webkit-app-region: no-drag;
+}
+
+.s-tab-dropdown-item:hover {
+  background: rgba(240, 147, 251, 0.1);
+  color: var(--pink-deep);
+}
+
+.s-tab-dropdown-item.s-tab-active {
+  color: var(--pink-deep);
+}
+
 /* ── Tab 内容面板 ── */
 .s-tab-pane-hidden {
   display: none;
+}
+
+/* ── Skills 管理 ── */
+#skills-mgr {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.skills-coll-section {
+  border: 1.5px solid rgba(240, 147, 251, 0.2);
+  border-radius: 10px;
+  padding: 12px;
+  background: rgba(252, 248, 255, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.skills-coll-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: opacity 0.2s;
+}
+
+.skills-coll-skills-area {
+  transition: opacity 0.2s;
+}
+
+.skills-details summary {
+  font-size: 11.5px;
+  color: var(--purple-soft);
+  cursor: pointer;
+  list-style: none;
+  padding: 4px 0;
+  user-select: none;
+}
+
+.skills-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.skills-ctrl-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 4px;
+}
+
+.skills-search {
+  flex: 1;
+  padding: 3px 8px;
+  border: 1.5px solid rgba(200, 100, 150, 0.2);
+  border-radius: 16px;
+  background: transparent;
+  font-family: var(--font);
+  font-size: 11.5px;
+  color: var(--text-main);
+  outline: none;
+}
+
+.skills-search:focus {
+  border-color: rgba(240, 147, 251, 0.5);
+}
+
+.skills-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 2px;
+  max-height: 180px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(200, 100, 150, 0.25) transparent;
+  padding: 2px;
+  margin-top: 4px;
+}
+
+.skills-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-main);
+  transition: background 0.12s;
+}
+
+.skills-item:hover {
+  background: rgba(240, 147, 251, 0.1);
+}
+
+.skills-item input[type="checkbox"] {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  accent-color: var(--pink-deep);
+  cursor: pointer;
+}
+
+.skills-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 /* ── 平台桥接：master-detail 布局 ── */

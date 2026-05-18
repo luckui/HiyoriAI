@@ -226,3 +226,18 @@ contextBridge.exposeInMainWorld('live2dAPI', {
     return () => { ipcRenderer.removeListener('live2d:cmd', handler); };
   },
 });
+
+/** Skills 配置 API（供 UI 读写 SkillsConfig） */
+contextBridge.exposeInMainWorld('skillsAPI', {
+  /** 读取当前 Skills 配置 */
+  getConfig: () => ipcRenderer.invoke('skills:get-config'),
+  /** 保存 Skills 配置（传入完整的 SkillsConfig 对象） */
+  saveConfig: (cfg: unknown) => ipcRenderer.invoke('skills:save-config', cfg),
+  /**
+   * 列出所有可用 skill（含 collection / skillKey），供 UI 展示和选择。
+   * 返回类型：{ name, summary, collection, skillKey }[]
+   */
+  listAll: () => ipcRenderer.invoke('skills:list'),
+  /** 列出所有集合的元信息（id + 显示名 + 描述），从目录 _collection.json 读取，无硬编码 */
+  listCollections: () => ipcRenderer.invoke('skills:list-collections'),
+});
