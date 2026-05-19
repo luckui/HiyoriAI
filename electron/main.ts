@@ -1,7 +1,7 @@
 /// <reference types="node" />
 // 必须在所有 import 之前加载，这样 ai.config.ts 里的 process.env 才能取到局部 .env 的实际内容
 import * as dotenv from 'dotenv';
-import { app, BrowserWindow, desktopCapturer, ipcMain, screen, session } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, screen, session } from 'electron';
 import { join } from 'path';
 
 /**
@@ -102,7 +102,7 @@ import defaultTTSConfig from './tts.config';
 import type { TTSConfig, TTSProviderConfig } from './tts.config';
 import { getAgentMode, setAgentMode } from './agentMode';
 import { getSkillsConfig, saveSkillsConfig } from './skillsConfig';
-import { listTopicsForUI, listCollections } from './tools/impl/manual';
+import { listTopicsForUI, listCollections, importSkillFolder, removeUserCollection } from './tools/impl/manual';
 import * as ttsServerManager from './ttsServerManager';
 import * as sttServerManager from './sttServerManager';
 import { hearingManager } from './hearingManager';
@@ -684,7 +684,29 @@ function createWindow(): void {
    * 返回格式：{ id, displayName, description }[]
    */
   ipcMain.handle('skills:list-collections', () => {
-    return listCollections();
+    // dirPath 仅主进程内部使用，剥掉后再发给渲染进程
+    return listCollections().map(({ dirPath: _dp, ...rest }) => rest);
+  });
+
+  /**
+   * 打开文件夹选择器，将用户选定的文件夹导入到 USER_SKILLS_DIR。
+   * 自动识别是单个 skill 还是集合，返回 { success, canceled, type, message }。
+   */
+  ipcMain.handle('skills:import-folder', async (_e) => {
+    const win = BrowserWindow.getFocusedWindow();
+    const result = await dialog.showOpenDialog(win ?? BrowserWindow.getAllWindows()[0], {
+      title: '选择要导入的 Skill 文件夹',
+      properties: ['openDirectory'],
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return { success: false, canceled: true, message: '已取消' };
+    }
+    return importSkillFolder(result.filePaths[0]);
+  });
+
+  /** 删除用户导入的集合目录（只允许删 USER_SKILLS_DIR 下的子目录，'skills' 根集合不可删） */
+  ipcMain.handle('skills:remove-collection', (_e, collId: string) => {
+    return removeUserCollection(collId);
   });
 
   ipcMain.handle('tts:isEnabled', () => {

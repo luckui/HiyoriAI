@@ -48,6 +48,16 @@ const SKILLS_DIR = app.isPackaged
   ? path.join(app.getPath('userData'), 'skills')
   : path.join(app.getAppPath(), 'electron', 'skills');
 
+/**
+ * 用户自行上传的 Skills 目录（打包前后始终指向 userData/skills）。
+ * 开发模式下 SKILLS_DIR 与此不同，两个目录均会被扫描；
+ * 打包模式下两者相同，自动去重。
+ */
+const USER_SKILLS_DIR = path.join(app.getPath('userData'), 'skills');
+
+/** 实际需扫描的所有 Skills 目录（自动去重） */
+const SKILLS_DIRS: readonly string[] = [...new Set([SKILLS_DIR, USER_SKILLS_DIR])];
+
 // ─── Frontmatter 工具 ─────────────────────────────────────────────────────────
 
 /**
@@ -120,30 +130,30 @@ function listTopics(): TopicEntry[] {
   }
 
   // ── 2. Agent Skills 标准格式：skills/[category/]skill-name/SKILL.md ──
-  if (fs.existsSync(SKILLS_DIR)) {
-    function scanSkillsDir(dir: string, category: string) {
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-        const subDir = path.join(dir, entry.name);
-        const skillFile = path.join(subDir, 'SKILL.md');
-        if (fs.existsSync(skillFile)) {
-          // 这是一个 skill 文件夹
-          try {
-            const content = fs.readFileSync(skillFile, 'utf-8');
-            const fm = parseFrontmatter(content);
-            const topicName = fm.name || entry.name;
-            const summary = (fm.description || '').slice(0, 100);
-            const cat = category || 'skills';
-            results.push({ name: topicName, summary, category: cat, filePath: skillFile });
-          } catch { /* ignore */ }
-        } else {
-          // 可能是分类目录，递归进去
-          scanSkillsDir(subDir, entry.name);
-        }
+  function scanSkillsDir(dir: string, category: string) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const subDir = path.join(dir, entry.name);
+      const skillFile = path.join(subDir, 'SKILL.md');
+      if (fs.existsSync(skillFile)) {
+        // 这是一个 skill 文件夹
+        try {
+          const content = fs.readFileSync(skillFile, 'utf-8');
+          const fm = parseFrontmatter(content);
+          const topicName = fm.name || entry.name;
+          const summary = (fm.description || '').slice(0, 100);
+          const cat = category || 'skills';
+          results.push({ name: topicName, summary, category: cat, filePath: skillFile });
+        } catch { /* ignore */ }
+      } else {
+        // 可能是分类目录，递归进去
+        scanSkillsDir(subDir, entry.name);
       }
     }
-    scanSkillsDir(SKILLS_DIR, '');
+  }
+  for (const skillsDir of SKILLS_DIRS) {
+    if (fs.existsSync(skillsDir)) scanSkillsDir(skillsDir, '');
   }
 
   return results;
@@ -313,6 +323,10 @@ export interface CollectionInfo {
   displayName: string;
   /** 可选描述文本 */
   description: string;
+  /** 是否允许用户删除（仅用户导入的子目录集合可删除，'skills' 根集合不可删） */
+  removable: boolean;
+  /** 集合在文件系统中的实际路径（主进程内部使用，不发往渲染进程） */
+  dirPath: string;
 }
 
 /**
@@ -339,48 +353,94 @@ function readCollectionMeta(dir: string): { name?: string; emoji?: string; descr
  * 该集合会被自动发现，无需修改代码。
  */
 export function listCollections(): CollectionInfo[] {
-  if (!fs.existsSync(SKILLS_DIR)) return [];
-
-  const entries = fs.readdirSync(SKILLS_DIR, { withFileTypes: true });
+  const seenIds = new Set<string>();
   const result: CollectionInfo[] = [];
 
-  // ── 根集合：SKILLS_DIR 下直接有 SKILL.md 的技能归属 'skills' ──
-  const hasRootSkills = entries.some(
-    (e) => e.isDirectory() && fs.existsSync(path.join(SKILLS_DIR, e.name, 'SKILL.md')),
-  );
-  if (hasRootSkills) {
-    const meta = readCollectionMeta(SKILLS_DIR);
-    result.push({
-      id: 'skills',
-      displayName: `${meta?.emoji ?? '📁'} ${meta?.name ?? '个人技能'}`,
-      description: meta?.description ?? '',
-    });
+  // checkRoot=false 时跳过「根集合」检测，避免递归进集合子目录时误建重复 'skills' 条目
+  function scanDir(skillsDir: string, checkRoot = true): void {
+    if (!fs.existsSync(skillsDir)) return;
+    const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
+
+    // ── 根集合：当前目录下直接有 SKILL.md 的技能归属 'skills' ──
+    if (checkRoot) {
+      const hasRootSkills = entries.some(
+        (e) => e.isDirectory() && fs.existsSync(path.join(skillsDir, e.name, 'SKILL.md')),
+      );
+      if (hasRootSkills && !seenIds.has('skills')) {
+        seenIds.add('skills');
+        const meta = readCollectionMeta(skillsDir);
+        result.push({
+          id: 'skills',
+          displayName: `${meta?.emoji ?? '📁'} ${meta?.name ?? '个人技能'}`,
+          description: meta?.description ?? '',
+          removable: false,
+          dirPath: skillsDir,
+        });
+      }
+    }
+
+    // ── 子目录扫描（与 scanSkillsDir 保持相同的递归深度）──
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const subDir = path.join(skillsDir, entry.name);
+      // 跳过本身就是 skill 的目录（有 SKILL.md）
+      if (fs.existsSync(path.join(subDir, 'SKILL.md'))) continue;
+      // 检查是否直接包含 skill 子目录
+      let hasDirectSkills = false;
+      try {
+        hasDirectSkills = fs.readdirSync(subDir, { withFileTypes: true }).some(
+          (e) => e.isDirectory() && fs.existsSync(path.join(subDir, e.name, 'SKILL.md')),
+        );
+      } catch { /* ignore */ }
+      if (hasDirectSkills) {
+        // 这是一个集合，注册它
+        if (!seenIds.has(entry.name)) {
+          seenIds.add(entry.name);
+          const meta = readCollectionMeta(subDir);
+          // 用实际路径判断是否可删除：只要在 USER_SKILLS_DIR 树下即可
+          const removable = !path.relative(USER_SKILLS_DIR, subDir).startsWith('..');
+          result.push({
+            id: entry.name,
+            displayName: `${meta?.emoji ?? '📦'} ${meta?.name ?? entry.name}`,
+            description: meta?.description ?? '',
+            removable,
+            dirPath: subDir,
+          });
+        }
+        // 注册后仍需递归，处理「集合内还有子集合」的混合结构
+        // （如 hermes-skill/ 同时含直接 skill 和 collection-1/ 子集合）
+        scanDir(subDir, false);
+      } else {
+        // 不是集合也不是 skill，递归进去（可能包含嵌套集合）
+        scanDir(subDir, false);
+      }
+    }
   }
 
-  // ── 子目录集合：不含 SKILL.md 本身的目录视为 category ──
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const subDir = path.join(SKILLS_DIR, entry.name);
-    // 有 SKILL.md → 这个目录本身是一个 skill，不是集合
-    if (fs.existsSync(path.join(subDir, 'SKILL.md'))) continue;
-    // 检查子目录内是否有 skill（避免列出空目录）
-    let hasAnySkill = false;
-    try {
-      hasAnySkill = fs.readdirSync(subDir, { withFileTypes: true }).some(
-        (e) => e.isDirectory() && fs.existsSync(path.join(subDir, e.name, 'SKILL.md')),
-      );
-    } catch { /* ignore */ }
-    if (!hasAnySkill) continue;
-
-    const meta = readCollectionMeta(subDir);
-    result.push({
-      id: entry.name,
-      displayName: `${meta?.emoji ?? '📦'} ${meta?.name ?? entry.name}`,
-      description: meta?.description ?? '',
-    });
+  for (const skillsDir of SKILLS_DIRS) {
+    scanDir(skillsDir);
   }
 
   return result;
+}
+
+/**
+ * 删除用户导入的集合（仅限 USER_SKILLS_DIR 下的子目录集合，'skills' 根集合不可删）。
+ */
+export function removeUserCollection(collId: string): { success: boolean; message: string } {
+  if (!collId || collId === 'skills') {
+    return { success: false, message: '个人技能集合不可删除' };
+  }
+  // 通过 listCollections 查出实际路径，支持嵌套在子目录中的集合
+  const coll = listCollections().find((c) => c.id === collId && c.removable);
+  if (!coll) {
+    return { success: false, message: `集合「${collId}」不存在或不可删除` };
+  }
+  if (!fs.existsSync(coll.dirPath)) {
+    return { success: false, message: `集合目录不存在：${coll.dirPath}` };
+  }
+  fs.rmSync(coll.dirPath, { recursive: true, force: true });
+  return { success: true, message: `已删除集合「${collId}」` };
 }
 
 /**
@@ -401,12 +461,85 @@ export function listTopicsForUI(): Array<{
 }> {
   const topics = listTopics();
   return topics
-    .filter(t => t.filePath.startsWith(SKILLS_DIR))
+    .filter(t => SKILLS_DIRS.some(d => t.filePath.startsWith(d)))
     .map(t => {
       const collection = t.category || 'skills';
       const skillKey = collection === 'skills' ? t.name : `${collection}/${t.name}`;
       return { name: t.name, summary: t.summary, collection, skillKey };
     });
+}
+
+// ─── Skill 导入（UI 上传） ────────────────────────────────────────────────────
+
+/** 递归复制目录（目标已存在则合并，同名文件直接覆盖） */
+function copyDirRecursive(src: string, dest: string): void {
+  if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const srcPath  = path.join(src,  entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDirRecursive(srcPath, destPath);
+    } else {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
+}
+
+export interface ImportResult {
+  success: boolean;
+  canceled?: boolean;
+  type?: 'skill' | 'collection';
+  message: string;
+}
+
+/**
+ * 将用户选择的文件夹导入到 USER_SKILLS_DIR。
+ *
+ * 结构检测（仅看一级子目录）：
+ *   - 文件夹自身含 SKILL.md            → 单个 skill → 放入根集合（个人技能）
+ *   - 文件夹内有子文件夹含 SKILL.md    → 集合       → 整体复制，以文件夹名为集合名
+ */
+export function importSkillFolder(srcPath: string): ImportResult {
+  const folderName = path.basename(srcPath);
+
+  // 确保目标目录存在
+  if (!fs.existsSync(USER_SKILLS_DIR)) {
+    fs.mkdirSync(USER_SKILLS_DIR, { recursive: true });
+  }
+
+  // ── 单个 skill ──
+  if (fs.existsSync(path.join(srcPath, 'SKILL.md'))) {
+    const dest = path.join(USER_SKILLS_DIR, folderName);
+    copyDirRecursive(srcPath, dest);
+    return {
+      success: true,
+      type: 'skill',
+      message: `已将技能「${folderName}」导入个人技能集合`,
+    };
+  }
+
+  // ── 集合（子文件夹含 SKILL.md）──
+  let skillCount = 0;
+  try {
+    skillCount = fs.readdirSync(srcPath, { withFileTypes: true }).filter(
+      (e) => e.isDirectory() && fs.existsSync(path.join(srcPath, e.name, 'SKILL.md')),
+    ).length;
+  } catch { /* ignore */ }
+
+  if (skillCount > 0) {
+    const dest = path.join(USER_SKILLS_DIR, folderName);
+    copyDirRecursive(srcPath, dest);
+    return {
+      success: true,
+      type: 'collection',
+      message: `已导入集合「${folderName}」，包含 ${skillCount} 个技能`,
+    };
+  }
+
+  return {
+    success: false,
+    message: '所选文件夹未找到有效的 SKILL.md，请确认目录结构：\n• 单个技能：文件夹内直接含 SKILL.md\n• 集合：文件夹内有子文件夹，每个子文件夹含 SKILL.md',
+  };
 }
 
 interface ReadManualParams {

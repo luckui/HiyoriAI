@@ -105,6 +105,7 @@ interface CollectionInfo {
   id: string;
   displayName: string;
   description: string;
+  removable: boolean;
 }
 
 declare global {
@@ -151,6 +152,16 @@ declare global {
       listAll(): Promise<SkillEntry[]>;
       /** 列出所有集合元信息（id / displayName / description），从 _collection.json 动态读取 */
       listCollections(): Promise<CollectionInfo[]>;
+      /**
+       * 打开文件夹选择器，将选定的文件夹导入到 userData/skills/。
+       * 自动识别是单个 skill 还是集合。
+       */
+      importFolder(): Promise<{ success: boolean; canceled?: boolean; type?: 'skill' | 'collection'; message: string }>;
+      /**
+       * 删除用户导入的集合目录（仅限 userData/skills/<collId>）。
+       * 'skills' 根集合不可删除。
+       */
+      removeCollection(collId: string): Promise<{ success: boolean; message: string }>;
     };
   }
 }
@@ -1045,8 +1056,50 @@ async function loadSkillsUI(): Promise<void> {
   // Build display name map from dynamic collection metadata
   // Falls back to "📦 <id>" for any collection without _collection.json
   const collDisplayMap = new Map(collections.map((c) => [c.id, c.displayName]));
+  const collRemovableSet = new Set(collections.filter((c) => c.removable).map((c) => c.id));
+
+  // All collection-mode selects' "inherit" options — updated immediately when global mode changes
+  const inheritOpts: HTMLOptionElement[] = [];
 
   container.innerHTML = '';
+
+  // ── 头部操作行：导入按钮 ──────────────────────────────
+  const headerRow = document.createElement('div');
+  headerRow.style.cssText = 'display:flex;justify-content:flex-end;align-items:center;padding:0 0 6px;gap:8px';
+  const importBtn = document.createElement('button');
+  importBtn.className = 's-small-btn';
+  importBtn.textContent = '⬆️ 导入 Skill 文件夹';
+  const importHint = document.createElement('span');
+  importHint.className = 's-hint';
+  importHint.style.cssText = 'flex:1;transition:color .2s';
+  headerRow.append(importHint, importBtn);
+  container.appendChild(headerRow);
+
+  importBtn.addEventListener('click', async () => {
+    importBtn.disabled = true;
+    importBtn.textContent = '选择中…';
+    importHint.textContent = '';
+    try {
+      const res = await window.skillsAPI!.importFolder();
+      if (res.canceled) {
+        importHint.textContent = '';
+      } else if (res.success) {
+        importHint.style.color = 'var(--accent, #7aa2f7)';
+        importHint.textContent = `✓ ${res.message}`;
+        // 导入成功后刷新整个面板，新集合/技能将自动出现
+        await loadSkillsUI();
+      } else {
+        importHint.style.color = '#f7768e';
+        importHint.textContent = `✗ ${res.message}`;
+      }
+    } catch (e) {
+      importHint.style.color = '#f7768e';
+      importHint.textContent = `✗ 导入失败: ${String(e)}`;
+    } finally {
+      importBtn.disabled = false;
+      importBtn.textContent = '⬆️ 导入 Skill 文件夹';
+    }
+  });
 
   // ── 全局设置 ────────────────────────────────────────
   const globalSec = skillsMkSection('全局设置');
@@ -1073,7 +1126,12 @@ async function loadSkillsUI(): Promise<void> {
       { value: 'full',  label: '名称 + 完整描述（默认）' },
     ],
     draft.listingMode,
-    (v) => { draft.listingMode = v as SkillListingMode; },
+    (v) => {
+      draft.listingMode = v as SkillListingMode;
+      // Sync every collection's "inherit" placeholder text immediately
+      const inherited = `继承全局（${skillsModeLabel(draft.listingMode)}）`;
+      for (const opt of inheritOpts) { opt.textContent = inherited; }
+    },
   ));
 
   container.appendChild(globalSec);
@@ -1086,6 +1144,37 @@ async function loadSkillsUI(): Promise<void> {
       `&nbsp;<span style="font-weight:400;opacity:.6;font-size:10px">${skills.length} 个技能</span>`;
     const collSec = skillsMkSection(titleHtml);
     collSec.classList.add('skills-coll-section');
+
+    // 可移除的集合在卡片标题右上角显示×按钮
+    if (collRemovableSet.has(collId)) {
+      const h3 = collSec.querySelector('h3')!;
+      h3.style.cssText += ';display:flex;align-items:center;justify-content:space-between;gap:6px';
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 's-small-btn';
+      removeBtn.title = '移除此集合';
+      removeBtn.style.cssText = 'padding:2px 7px;font-size:13px;color:#f7768e;border-color:transparent;background:transparent;flex-shrink:0;opacity:.7';
+      removeBtn.textContent = '\u2715';
+      removeBtn.addEventListener('mouseenter', () => { removeBtn.style.opacity = '1'; });
+      removeBtn.addEventListener('mouseleave', () => { removeBtn.style.opacity = '.7'; });
+      removeBtn.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        const displayName = collDisplayMap.get(collId) ?? collId;
+        // eslint-disable-next-line no-alert
+        if (!confirm(`确定要删除集合「${displayName}」吗？\n此操作不可撤销，将永久删除该集合的所有文件。`)) return;
+        removeBtn.disabled = true;
+        removeBtn.textContent = '…';
+        const res = await window.skillsAPI!.removeCollection(collId);
+        if (res.success) {
+          await loadSkillsUI();
+        } else {
+          // eslint-disable-next-line no-alert
+          alert(`删除失败: ${res.message}`);
+          removeBtn.disabled = false;
+          removeBtn.textContent = '\u2715';
+        }
+      });
+      h3.appendChild(removeBtn);
+    }
 
     const collBody = document.createElement('div');
     collBody.className = 'skills-coll-body';
@@ -1109,7 +1198,7 @@ async function loadSkillsUI(): Promise<void> {
     }));
 
     // Collection mode override
-    collBody.appendChild(skillsMkSelectRow(
+    const modeRow = skillsMkSelectRow(
       '展示模式（此集合）',
       [
         { value: '',      label: `继承全局（${skillsModeLabel(draft.listingMode)}）` },
@@ -1123,7 +1212,11 @@ async function loadSkillsUI(): Promise<void> {
         if (v === '') { delete draft.collectionModes[collId]; }
         else { draft.collectionModes[collId] = v as SkillListingMode; }
       },
-    ));
+    );
+    // Register the inherit option so it stays in sync with global mode changes
+    const inheritOpt = modeRow.querySelector<HTMLOptionElement>('option[value=""]');
+    if (inheritOpt) inheritOpts.push(inheritOpt);
+    collBody.appendChild(modeRow);
 
     // Collapsible skill list
     const detailsEl = document.createElement('details');

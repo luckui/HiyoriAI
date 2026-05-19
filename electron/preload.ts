@@ -240,4 +240,16 @@ contextBridge.exposeInMainWorld('skillsAPI', {
   listAll: () => ipcRenderer.invoke('skills:list'),
   /** 列出所有集合的元信息（id + 显示名 + 描述），从目录 _collection.json 读取，无硬编码 */
   listCollections: () => ipcRenderer.invoke('skills:list-collections'),
+  /**
+   * 打开文件夹选择器，将用户选定的文件夹导入到 userData/skills/。
+   * 自动识别结构：单个 skill（含 SKILL.md）或集合（含子文件夹/SKILL.md）。
+   * 返回：{ success: boolean; canceled?: boolean; type?: 'skill' | 'collection'; message: string }
+   */
+  importFolder: () => ipcRenderer.invoke('skills:import-folder'),
+  /**
+   * 删除用户导入的集合目录（仅 userData/skills/<collId>）。
+   * 'skills' 根集合不可删除。
+   * 返回：{ success: boolean; message: string }
+   */
+  removeCollection: (collId: string) => ipcRenderer.invoke('skills:remove-collection', collId),
 });
