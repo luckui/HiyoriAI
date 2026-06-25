@@ -226,18 +226,22 @@ export function createCodexRuntimeProvider(
 
     async startSession(input) {
       const now = Date.now();
-      const thread = (await getClient()).startThread(createThreadOptions(input));
+      const threadOptions = createThreadOptions(input);
+      const resumeThreadId = readString(input.metadata?.providerSessionRef);
+      const thread = resumeThreadId
+        ? (await getClient()).resumeThread(resumeThreadId, threadOptions)
+        : (await getClient()).startThread(threadOptions);
       const session: RuntimeSession = {
         id: randomUUID(),
         providerId: 'codex',
-        providerSessionRef: thread.id ?? '',
+        providerSessionRef: resumeThreadId || thread.id || '',
         hiyoriConversationId: input.hiyoriConversationId,
         cwd: input.cwd,
         title: input.title,
         status: 'running',
         createdAt: now,
         updatedAt: now,
-        metadata: input.metadata ?? {},
+        metadata: { ...(input.metadata ?? {}), resumedProviderSessionRef: resumeThreadId || undefined },
       };
       const state: CodexSessionState = { session, thread };
       sessions.set(session.id, state);
@@ -252,7 +256,14 @@ export function createCodexRuntimeProvider(
       }
       const now = Date.now();
       const thread = (await getClient()).resumeThread(codexThreadId, {
-        workingDirectory: input.cwd,
+        ...createThreadOptions({
+          providerId: input.providerId,
+          hiyoriConversationId: input.hiyoriConversationId,
+          title: input.title,
+          initialMessage: '',
+          cwd: input.cwd,
+          metadata: input.metadata,
+        }),
       });
       const session: RuntimeSession = {
         id: input.runtimeSessionId,

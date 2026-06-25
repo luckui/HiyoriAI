@@ -1,7 +1,8 @@
 import { codingAgentSessionRouter } from '../../codingAgents';
+import { listCodexSessionCandidates } from '../../runtimes/providers/codexSessionDiscovery';
 import type { ToolContext, ToolDefinition } from '../types';
 
-type CodingAgentAction = 'start' | 'continue' | 'status' | 'result' | 'stop';
+type CodingAgentAction = 'start' | 'continue' | 'status' | 'result' | 'sessions' | 'stop';
 
 interface CodingAgentParams {
   action: CodingAgentAction;
@@ -9,6 +10,12 @@ interface CodingAgentParams {
   task?: string;
   message?: string;
   cwd?: string;
+  resume_session_id?: string;
+  model?: string;
+  reasoning_effort?: string;
+  approval_policy?: string;
+  sandbox_mode?: string;
+  network_access_enabled?: boolean;
 }
 
 function conversationIdFrom(context?: ToolContext): string {
@@ -21,15 +28,15 @@ const codingAgentTool: ToolDefinition<CodingAgentParams> = {
     function: {
       name: 'coding_agent',
       description:
-        'User-facing bridge to Codex or another coding agent. Use when the user asks to let Codex, Claude Code, or a coding agent handle a programming task, continue it, check status, or stop it. Do not expose runtime/provider/session ids to the user.',
+        'User-facing bridge to Codex or another coding agent. Use when the user asks to let Codex, Claude Code, or a coding agent handle a programming task, continue it, check status, list resumable sessions, or stop it. Do not expose raw runtime ids unless the user needs a Codex resume_session_id.',
       parameters: {
         type: 'object',
         properties: {
           action: {
             type: 'string',
-            enum: ['start', 'continue', 'status', 'result', 'stop'],
+            enum: ['start', 'continue', 'status', 'result', 'sessions', 'stop'],
             description:
-              'start a new coding-agent task, continue the active task, report status/result, or stop the active task.',
+              'start a new coding-agent task, continue the active task, report status/result, list resumable sessions, or stop the active task.',
           },
           agent: {
             type: 'string',
@@ -47,6 +54,34 @@ const codingAgentTool: ToolDefinition<CodingAgentParams> = {
             type: 'string',
             description: 'Project directory for the coding agent. Use the current project path when known.',
           },
+          resume_session_id: {
+            type: 'string',
+            description:
+              'Optional Codex/agent session or thread id to resume. Use this when the user wants to continue an existing project conversation instead of starting fresh.',
+          },
+          model: {
+            type: 'string',
+            description: 'Optional model override for the coding agent, for example gpt-5.1-codex.',
+          },
+          reasoning_effort: {
+            type: 'string',
+            enum: ['minimal', 'low', 'medium', 'high', 'xhigh'],
+            description: 'Optional Codex reasoning effort.',
+          },
+          approval_policy: {
+            type: 'string',
+            enum: ['never', 'on-request', 'on-failure', 'untrusted'],
+            description: 'Optional Codex approval policy.',
+          },
+          sandbox_mode: {
+            type: 'string',
+            enum: ['read-only', 'workspace-write', 'danger-full-access'],
+            description: 'Optional Codex sandbox mode.',
+          },
+          network_access_enabled: {
+            type: 'boolean',
+            description: 'Optional Codex network access setting for workspace-write sandbox.',
+          },
         },
         required: ['action'],
       },
@@ -63,6 +98,12 @@ const codingAgentTool: ToolDefinition<CodingAgentParams> = {
         agent: params.agent || 'codex',
         task: params.task,
         cwd: params.cwd,
+        resumeSessionId: params.resume_session_id,
+        model: params.model,
+        reasoningEffort: params.reasoning_effort,
+        approvalPolicy: params.approval_policy,
+        sandboxMode: params.sandbox_mode,
+        networkAccessEnabled: params.network_access_enabled,
       });
       return result.userMessage;
     }
@@ -78,6 +119,23 @@ const codingAgentTool: ToolDefinition<CodingAgentParams> = {
     if (params.action === 'status' || params.action === 'result') {
       const result = await codingAgentSessionRouter.status({ conversationId });
       return result.userMessage;
+    }
+
+    if (params.action === 'sessions') {
+      const candidates = await listCodexSessionCandidates({ cwd: params.cwd, limit: 5 });
+      if (!candidates.length) {
+        return params.cwd
+          ? `没有找到目录 ${params.cwd} 对应的可恢复 Codex 会话。可以直接 start 新任务，或让用户提供 Codex thread id。`
+          : '没有找到可恢复 Codex 会话。可以直接 start 新任务，或让用户提供 Codex thread id。';
+      }
+      return [
+        params.cwd ? `最近可恢复的 Codex 会话（目录：${params.cwd}）：` : '最近可恢复的 Codex 会话：',
+        ...candidates.map((session, index) => (
+          `${index + 1}. ${session.id}${session.cwd ? `\n   cwd: ${session.cwd}` : ''}`
+        )),
+        '',
+        '继续已有会话时，用 coding_agent(action="start", resume_session_id="<上面的 id>", cwd="<项目目录>", task="<新指令>")。',
+      ].join('\n');
     }
 
     if (params.action === 'stop') {

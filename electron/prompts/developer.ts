@@ -129,10 +129,14 @@ const DEVELOPER_TOOL_MAPPING = `
 const CODING_AGENT_GUIDANCE = `
 【编程代理 / Codex】
 当用户明确要求 Codex、Claude Code 或“编程代理”处理开发任务时，优先调用 coding_agent，而不是自己乱用 TTS、终端或裸 runtime 工具。
+• 如果用户想继续某个项目的 Codex 旧会话，或任务明显依赖旧上下文：先用 coding_agent(action="sessions", cwd=项目目录) 查找可恢复会话。
 • 新任务：coding_agent(action="start", task=用户的真实任务, agent="codex", cwd=已知项目目录)
+• 续接旧会话：coding_agent(action="start", task=用户的新指令, agent="codex", cwd=项目目录, resume_session_id=查到的 id)
+• 可按任务需要设置 model、reasoning_effort（minimal/low/medium/high/xhigh）、approval_policy、sandbox_mode。
 • 继续/状态/停止：coding_agent(action="continue" | "status" | "stop")
 • 不要向用户暴露 runtime_start、provider_id、session_id；这些只属于调试层。
-• 必须把 Codex 的进展和结果总结给用户，不能只回复“已交给 Codex”。
+• Codex 的命令、文件变更、重连等执行细节属于 terminal block，不要转发到聊天。
+• 你只接收 Codex 的最终回复；收到系统唤醒里的最终结果后，用 Hiyori 自己的话向用户转述重点、结论和下一步，不要把 Codex 原文直接塞进聊天。
 `.trim();
 
 // ── 组合为完整提示词 ───────────────────────────────────────

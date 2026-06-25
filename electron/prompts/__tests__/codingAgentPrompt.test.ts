@@ -9,7 +9,9 @@ describe('coding agent prompt contract', () => {
     expect(prompt).toContain('coding_agent');
     expect(prompt).toContain('Codex');
     expect(prompt).toContain('编程代理');
-    expect(prompt).toContain('进展和结果');
+    expect(prompt).toContain('最终回复');
+    expect(prompt).toContain('terminal block');
+    expect(prompt).toContain('resume_session_id');
     expect(prompt).toContain('不要让用户提供 runtime');
   });
 
@@ -19,5 +21,7 @@ describe('coding agent prompt contract', () => {
     expect(prompt).toContain('coding_agent');
     expect(prompt).toContain('Codex');
     expect(prompt).toContain('不要向用户暴露 runtime_start');
+    expect(prompt).toContain('最终回复');
+    expect(prompt).toContain('resume_session_id');
   });
 });

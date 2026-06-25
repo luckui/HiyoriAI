@@ -76,6 +76,7 @@ export function createFakeRuntimeProvider(): AgentRuntimeProvider {
       const session = sessions.get(sessionId);
       if (!session) throw new Error(`Fake runtime session not found: ${sessionId}`);
       emit(session, 'assistant_message', `fake received: ${message.content}`);
+      emit(session, 'completed', 'fake turn completed');
     },
 
     async interrupt(sessionId) {

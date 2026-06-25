@@ -47,7 +47,7 @@ describe('CodingAgentSessionRouter', () => {
     expect(result.userMessage).toContain('已发送');
   });
 
-  it('pushes assistant responses to the configured notifier', async () => {
+  it('wakes the conversation only after the coding agent turn completes', async () => {
     const { router } = createRouter();
     const delivered: string[] = [];
     router.setNotifier((_conversationId, content) => {
@@ -65,6 +65,7 @@ describe('CodingAgentSessionRouter', () => {
     });
 
     expect(delivered.some((message) => message.includes('fake received: continue'))).toBe(true);
+    expect(delivered[0]).toContain('最终回复');
   });
 
   it('does not push low-level command details to the chat notifier', async () => {
@@ -125,6 +126,64 @@ describe('CodingAgentSessionRouter', () => {
 
     const status = await router.status({ conversationId: 'conv-detail' });
     expect(status.userMessage).not.toContain('powershell.exe');
+  });
+
+  it('routes low-level command details to the terminal notifier', async () => {
+    const registry = new RuntimeRegistry();
+    registry.register({
+      id: 'detail-terminal',
+      displayName: 'Detail Terminal Runtime',
+      async checkAvailability() {
+        return { available: true };
+      },
+      async startSession(input) {
+        return {
+          id: 'detail-terminal-session',
+          providerId: 'detail-terminal',
+          providerSessionRef: 'detail-terminal-native',
+          hiyoriConversationId: input.hiyoriConversationId,
+          title: input.title,
+          status: 'running' as const,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          metadata: {},
+        };
+      },
+      async resumeSession() {
+        throw new Error('not used');
+      },
+      async sendMessage() {},
+      async interrupt() {},
+      async stop() {},
+      subscribe(_sessionId, onEvent) {
+        setTimeout(() => {
+          onEvent({
+            id: 'tool-call-terminal-1',
+            sessionId: 'detail-terminal-session',
+            providerId: 'detail-terminal',
+            type: 'tool_call',
+            content: 'powershell.exe -Command Get-Content visible-in-terminal',
+            createdAt: Date.now(),
+          });
+        }, 0);
+        return { unsubscribe() {} };
+      },
+    });
+    const host = new RuntimeHost(registry, new TranscriptMirror());
+    const router = new CodingAgentSessionRouter(host);
+    const terminalLines: string[] = [];
+    router.setTerminalNotifier((event) => {
+      if (event.line) terminalLines.push(event.line);
+    });
+
+    await router.start({
+      conversationId: 'conv-terminal',
+      agent: 'detail-terminal',
+      task: 'inspect',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(terminalLines.join('\n')).toContain('powershell.exe');
   });
 
   it('reports visible status from the active session transcript', async () => {

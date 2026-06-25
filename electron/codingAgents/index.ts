@@ -9,4 +9,10 @@ export function setCodingAgentNotifier(
   codingAgentSessionRouter.setNotifier(notifier);
 }
 
+export function setCodingAgentTerminalNotifier(
+  notifier: Parameters<CodingAgentSessionRouter['setTerminalNotifier']>[0]
+): void {
+  codingAgentSessionRouter.setTerminalNotifier(notifier);
+}
+
 export * from './sessionRouter';

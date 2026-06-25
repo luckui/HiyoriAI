@@ -11,6 +11,7 @@ type FakeThreadEvent =
 function createFakeCodexClient(events: FakeThreadEvent[]) {
   const started: Array<Record<string, unknown> | undefined> = [];
   const resumed: string[] = [];
+  const resumedOptions: Array<Record<string, unknown> | undefined> = [];
   const prompts: unknown[] = [];
   const thread = {
     id: 'thread-existing',
@@ -30,13 +31,15 @@ function createFakeCodexClient(events: FakeThreadEvent[]) {
         started.push(options);
         return thread;
       },
-      resumeThread(id: string) {
+      resumeThread(id: string, options?: Record<string, unknown>) {
         resumed.push(id);
+        resumedOptions.push(options);
         return thread;
       },
     },
     started,
     resumed,
+    resumedOptions,
     prompts,
   };
 }
@@ -75,8 +78,12 @@ describe('createCodexRuntimeProvider', () => {
       initialMessage: 'fix tests',
       cwd: 'D:/repo',
       metadata: {
+        providerSessionRef: 'thread-existing',
+        model: 'gpt-5.1-codex',
+        modelReasoningEffort: 'high',
         sandboxMode: 'workspace-write',
         approvalPolicy: 'on-request',
+        networkAccessEnabled: true,
       },
     });
     provider.subscribe(session.id, (event) => seen.push(event));
@@ -85,10 +92,14 @@ describe('createCodexRuntimeProvider', () => {
 
     expect(session.providerId).toBe('codex');
     expect(session.providerSessionRef).toBe('thread-1');
-    expect(fake.started[0]).toMatchObject({
+    expect(fake.resumed).toEqual(['thread-existing']);
+    expect(fake.resumedOptions[0]).toMatchObject({
       workingDirectory: 'D:/repo',
+      model: 'gpt-5.1-codex',
+      modelReasoningEffort: 'high',
       sandboxMode: 'workspace-write',
       approvalPolicy: 'on-request',
+      networkAccessEnabled: true,
     });
     expect(fake.prompts).toEqual(['fix tests', 'continue']);
     expect(seen.map((event) => `${event.type}:${event.content}`)).toContain(

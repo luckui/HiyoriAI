@@ -19,6 +19,12 @@ export interface StartCodingAgentInput {
   agent?: string;
   task: string;
   cwd?: string;
+  resumeSessionId?: string;
+  model?: string;
+  reasoningEffort?: string;
+  approvalPolicy?: string;
+  sandboxMode?: string;
+  networkAccessEnabled?: boolean;
 }
 
 export interface ContinueCodingAgentInput {
@@ -31,6 +37,13 @@ export interface ConversationCodingAgentInput {
 }
 
 export type CodingAgentNotifier = (conversationId: string, content: string) => Promise<void> | void;
+export type CodingAgentTerminalNotifier = (event: {
+  conversationId: string;
+  sessionId: string;
+  title: string;
+  line?: string;
+  status?: 'running' | 'done' | 'error';
+}) => Promise<void> | void;
 
 interface CodingAgentBinding {
   conversationId: string;
@@ -43,7 +56,9 @@ export class CodingAgentSessionRouter {
   private readonly bindings = new Map<string, CodingAgentBinding>();
   private readonly sessionsToConversations = new Map<string, string>();
   private readonly deliveredEvents = new Set<string>();
+  private readonly lastAssistantMessages = new Map<string, string>();
   private notifier: CodingAgentNotifier | undefined;
+  private terminalNotifier: CodingAgentTerminalNotifier | undefined;
 
   constructor(private readonly runtimeHost: RuntimeHost) {
     this.runtimeHost.onRuntimeEvent((event) => {
@@ -55,6 +70,10 @@ export class CodingAgentSessionRouter {
     this.notifier = notifier;
   }
 
+  setTerminalNotifier(notifier: CodingAgentTerminalNotifier | undefined): void {
+    this.terminalNotifier = notifier;
+  }
+
   async start(input: StartCodingAgentInput): Promise<CodingAgentActionResult> {
     const agent = input.agent?.trim() || 'codex';
     const session = await this.runtimeHost.startSession({
@@ -63,6 +82,7 @@ export class CodingAgentSessionRouter {
       title: this.titleFromTask(input.task),
       initialMessage: input.task,
       cwd: input.cwd,
+      metadata: this.buildSessionMetadata(input),
     });
     const displayName = this.displayName(session);
     this.bindings.set(input.conversationId, {
@@ -76,7 +96,7 @@ export class CodingAgentSessionRouter {
     return {
       kind: 'started',
       sessionId: session.id,
-      userMessage: `已交给 ${displayName}，我会把它的进展和结果带回这个对话。`,
+      userMessage: `已交给 ${displayName}。完成后我会读取最终结果，再决定如何转述给你。`,
     };
   }
 
@@ -88,7 +108,7 @@ export class CodingAgentSessionRouter {
     return {
       kind: 'continued',
       sessionId: binding.sessionId,
-      userMessage: `已发送给 ${binding.displayName}，后续进展会继续回到这个对话。`,
+      userMessage: `已发送给 ${binding.displayName}。我会等待最终结果。`,
     };
   }
 
@@ -135,6 +155,17 @@ export class CodingAgentSessionRouter {
   private titleFromTask(task: string): string {
     const normalized = task.trim().replace(/\s+/g, ' ');
     return normalized.length > 60 ? `${normalized.slice(0, 57)}...` : normalized || 'Coding Agent Task';
+  }
+
+  private buildSessionMetadata(input: StartCodingAgentInput): Record<string, unknown> {
+    return {
+      providerSessionRef: input.resumeSessionId?.trim() || undefined,
+      model: input.model?.trim() || undefined,
+      modelReasoningEffort: input.reasoningEffort?.trim() || undefined,
+      approvalPolicy: input.approvalPolicy?.trim() || undefined,
+      sandboxMode: input.sandboxMode?.trim() || undefined,
+      networkAccessEnabled: input.networkAccessEnabled,
+    };
   }
 
   private displayName(session: RuntimeSession): string {
@@ -190,27 +221,84 @@ export class CodingAgentSessionRouter {
   }
 
   private async handleRuntimeEvent(event: RuntimeEvent): Promise<void> {
+    this.recordRuntimeEvent(event);
+    await this.forwardTerminalEvent(event);
+
     if (this.deliveredEvents.has(event.id)) return;
     const conversationId = this.sessionsToConversations.get(event.sessionId);
     if (!conversationId || !this.notifier) return;
 
     const session = this.runtimeHost.getSession(event.sessionId);
     const displayName = session ? this.displayName(session) : event.providerId;
-    const content = this.formatDelivery(displayName, event);
+    const content = this.formatDelivery(displayName, event, session);
     if (!content) return;
 
     this.deliveredEvents.add(event.id);
     await this.notifier(conversationId, content);
   }
 
-  private formatDelivery(displayName: string, event: RuntimeEvent): string | null {
+  private recordRuntimeEvent(event: RuntimeEvent): void {
+    if (event.type === 'assistant_message' && event.content.trim()) {
+      this.lastAssistantMessages.set(event.sessionId, event.content.trim());
+      return;
+    }
+    if (event.type === 'failed' || event.type === 'interrupted' || event.type === 'stopped') {
+      this.lastAssistantMessages.delete(event.sessionId);
+    }
+  }
+
+  private async forwardTerminalEvent(event: RuntimeEvent): Promise<void> {
+    if (!this.terminalNotifier) return;
+    const conversationId = this.sessionsToConversations.get(event.sessionId);
+    if (!conversationId) return;
+
+    const session = this.runtimeHost.getSession(event.sessionId);
+    const displayName = session ? this.displayName(session) : event.providerId;
+    const title = `${displayName}${session?.title ? `: ${session.title}` : ''}`;
+    const terminalEvent = this.formatTerminalEvent(event);
+    if (!terminalEvent) return;
+
+    await this.terminalNotifier({
+      conversationId,
+      sessionId: event.sessionId,
+      title,
+      ...terminalEvent,
+    });
+  }
+
+  private formatTerminalEvent(event: RuntimeEvent): { line?: string; status?: 'running' | 'done' | 'error' } | null {
+    if (event.type === 'session_started') return { line: event.content, status: 'running' };
+    if (event.type === 'notification') return { line: event.content, status: 'running' };
+    if (event.type === 'tool_call') return { line: event.content, status: 'running' };
+    if (event.type === 'tool_result') return { line: event.content, status: 'running' };
+    if (event.type === 'completed') return { status: 'done' };
+    if (event.type === 'failed') return { line: event.content, status: 'error' };
+    if (event.type === 'interrupted' || event.type === 'stopped') return { line: event.content, status: 'done' };
+    return null;
+  }
+
+  private formatDelivery(
+    displayName: string,
+    event: RuntimeEvent,
+    session: RuntimeSession | undefined
+  ): string | null {
     if (!event.content.trim()) return null;
 
-    if (event.type === 'assistant_message') {
-      return `${displayName} 回复：\n${event.content}`;
-    }
     if (event.type === 'approval_requested') {
       return `${displayName} 需要你批准：\n${event.content}`;
+    }
+    if (event.type === 'completed') {
+      const finalResponse = this.lastAssistantMessages.get(event.sessionId);
+      if (!finalResponse) return null;
+      this.lastAssistantMessages.delete(event.sessionId);
+      return [
+        `【系统通知】${displayName} 编程代理任务已完成。`,
+        session?.title ? `任务：${session.title}` : undefined,
+        '',
+        `这是 ${displayName} 的最终回复，请你理解结果后，用自己的话向用户转述；不要原样扮演 ${displayName}，也不要暴露执行过程细节。`,
+        '',
+        finalResponse,
+      ].filter((line): line is string => line !== undefined).join('\n');
     }
     if (event.type === 'failed') {
       return `${displayName} 执行失败：\n${event.content}`;
