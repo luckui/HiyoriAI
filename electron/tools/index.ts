@@ -28,6 +28,7 @@ import todoTool from './impl/todo';
 import requestAgentMode from './impl/requestAgentMode';  // 🆕 请求 Agent 模式
 import showAvailableTools from './impl/showAvailableTools';  // 🆕 显示可用工具列表
 import switchAgentMode from './impl/switchAgentMode';  // 🆕 切换 Agent 模式
+import codingAgentTool from './impl/codingAgent';
 
 // 🆕 打工人核心工具（文件操作）
 import readFileTool from './impl/readFile';
@@ -79,6 +80,7 @@ const registry = new ToolRegistry()
   .register(requestAgentMode)  // 🆕 请求 Agent 模式工具（Chat→Agent 渐进式升级）
   .register(showAvailableTools) // 🆕 显示可用工具列表（AI 自我感知能力边界）
   .register(switchAgentMode)   // 🆕 切换 Agent 模式（AI 主动切换）
+  .register(codingAgentTool)    // User-facing bridge to Codex and coding agents
   
   // 🆕 注册打工人核心工具（文件操作）
   .register(readFileTool)

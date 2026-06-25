@@ -152,6 +152,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "process",                 // ⭐ 后台进程管理（poll/kill/send，配合 run_command background）
       "show_available_tools",    // 显示可用工具列表
       "switch_agent_mode",       // 🆕 切换 Agent 模式
+      "coding_agent",
       
       // 浏览器 - 完整工具集
       "browser_open",            // 打开网页（Skill）
@@ -199,6 +200,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "manual_manage",
       "run_command",
       "show_available_tools",
+      "coding_agent",
       
       // 🆕 打工人核心工具（文件操作）
       "read_file",               // 读取文件（支持行范围）
