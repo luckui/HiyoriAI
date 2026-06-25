@@ -63,6 +63,21 @@ describe('CodingAgentSessionRouter', () => {
     expect(result.userMessage).toContain('fake received: continue');
   });
 
+  it('explains when the coding agent has not produced a visible response yet', async () => {
+    const { router, host } = createRouter();
+    const started = await router.start({
+      conversationId: 'conv-waiting',
+      agent: 'fake',
+      task: 'fix the build',
+    });
+    const session = host.getSession(started.sessionId);
+    if (!session) throw new Error('missing session');
+
+    const result = await router.status({ conversationId: 'conv-waiting' });
+
+    expect(result.userMessage).toContain('尚未收到');
+  });
+
   it('stops the active session', async () => {
     const { router } = createRouter();
     await router.start({

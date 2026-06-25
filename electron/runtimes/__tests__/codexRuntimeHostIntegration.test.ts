@@ -13,6 +13,7 @@ function createFakeCodexClient() {
           return {
             events: (async function* () {
               yield { type: 'thread.started' as const, thread_id: 'thread-1' };
+              yield { type: 'turn.started' as const };
               yield {
                 type: 'item.completed' as const,
                 item: { id: 'item-1', type: 'agent_message' as const, text: 'initial response' },
@@ -54,6 +55,9 @@ describe('Codex provider through RuntimeHost', () => {
 
     expect(host.listEvents(session.id).map((event) => event.content)).toContain(
       'initial response'
+    );
+    expect(host.listEvents(session.id).map((event) => event.content)).toContain(
+      'codex turn started'
     );
   });
 });

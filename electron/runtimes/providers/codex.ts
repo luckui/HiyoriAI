@@ -107,6 +107,13 @@ export function createCodexRuntimeProvider(
       return;
     }
 
+    if (event.type === 'turn.started') {
+      session.status = 'running';
+      session.updatedAt = Date.now();
+      emit(session, 'notification', 'codex turn started', event);
+      return;
+    }
+
     if (event.type === 'item.started' || event.type === 'item.updated' || event.type === 'item.completed') {
       emitItemEvent(session, event.item, event);
       return;
@@ -123,6 +130,12 @@ export function createCodexRuntimeProvider(
       session.status = 'failed';
       session.updatedAt = Date.now();
       emit(session, 'failed', event.error.message, event);
+      return;
+    }
+
+    if (event.type === 'error' && event.message.startsWith('Reconnecting...')) {
+      session.updatedAt = Date.now();
+      emit(session, 'notification', event.message, event);
       return;
     }
 

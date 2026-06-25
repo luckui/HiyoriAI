@@ -134,10 +134,13 @@ export class CodingAgentSessionRouter {
     events: RuntimeEvent[]
   ): string {
     const status = session?.status ?? 'unknown';
-    const recent = events.slice(-8);
+    const visibleEvents = events.filter((event) => this.isUserVisibleEvent(event));
+    const recent = visibleEvents.slice(-8);
     const lines = [
       `${binding.displayName} 当前状态：${status}`,
-      recent.length ? '最近进展：' : '最近还没有可见进展。',
+      recent.length
+        ? '最近进展：'
+        : `${binding.displayName} 已启动，正在处理；尚未收到可展示的回复、操作结果或完成消息。`,
     ];
 
     for (const event of recent) {
@@ -145,6 +148,20 @@ export class CodingAgentSessionRouter {
       lines.push(`- ${this.eventLabel(event.type)}：${event.content}`);
     }
     return lines.join('\n');
+  }
+
+  private isUserVisibleEvent(event: RuntimeEvent): boolean {
+    return (
+      event.type === 'assistant_message' ||
+      event.type === 'tool_call' ||
+      event.type === 'tool_result' ||
+      event.type === 'approval_requested' ||
+      event.type === 'notification' ||
+      event.type === 'completed' ||
+      event.type === 'failed' ||
+      event.type === 'interrupted' ||
+      event.type === 'stopped'
+    );
   }
 
   private eventLabel(type: RuntimeEvent['type']): string {
