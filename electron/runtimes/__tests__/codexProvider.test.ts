@@ -41,6 +41,10 @@ function createFakeCodexClient(events: FakeThreadEvent[]) {
   };
 }
 
+async function waitForEvents(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+}
+
 describe('createCodexRuntimeProvider', () => {
   it('is unavailable when the sdk cannot be created', async () => {
     const provider = createCodexRuntimeProvider({
@@ -76,6 +80,7 @@ describe('createCodexRuntimeProvider', () => {
       },
     });
     provider.subscribe(session.id, (event) => seen.push(event));
+    await waitForEvents();
     await provider.sendMessage(session.id, { content: 'continue' });
 
     expect(session.providerId).toBe('codex');

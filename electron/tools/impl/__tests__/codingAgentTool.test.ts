@@ -44,6 +44,34 @@ describe('coding_agent tool', () => {
     expect(String(status)).toContain('fake received: continue');
   });
 
+  it('treats result as a user-facing status alias', async () => {
+    await codingAgentTool.execute(
+      {
+        action: 'start',
+        agent: 'fake',
+        task: 'fix the build',
+      },
+      { conversationId: 'coding-tool-result' }
+    );
+    await codingAgentTool.execute(
+      {
+        action: 'continue',
+        message: 'continue',
+      },
+      { conversationId: 'coding-tool-result' }
+    );
+
+    const result = await codingAgentTool.execute(
+      {
+        action: 'result',
+      },
+      { conversationId: 'coding-tool-result' }
+    );
+
+    expect(String(result)).toContain('fake received: continue');
+  });
+
+
   it('does not require users to provide a runtime session id', async () => {
     const result = await codingAgentTool.execute(
       {

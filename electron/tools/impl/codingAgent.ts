@@ -1,7 +1,7 @@
 import { codingAgentSessionRouter } from '../../codingAgents';
 import type { ToolContext, ToolDefinition } from '../types';
 
-type CodingAgentAction = 'start' | 'continue' | 'status' | 'stop';
+type CodingAgentAction = 'start' | 'continue' | 'status' | 'result' | 'stop';
 
 interface CodingAgentParams {
   action: CodingAgentAction;
@@ -27,9 +27,9 @@ const codingAgentTool: ToolDefinition<CodingAgentParams> = {
         properties: {
           action: {
             type: 'string',
-            enum: ['start', 'continue', 'status', 'stop'],
+            enum: ['start', 'continue', 'status', 'result', 'stop'],
             description:
-              'start a new coding-agent task, continue the active task, report status, or stop the active task.',
+              'start a new coding-agent task, continue the active task, report status/result, or stop the active task.',
           },
           agent: {
             type: 'string',
@@ -75,7 +75,7 @@ const codingAgentTool: ToolDefinition<CodingAgentParams> = {
       return result.userMessage;
     }
 
-    if (params.action === 'status') {
+    if (params.action === 'status' || params.action === 'result') {
       const result = await codingAgentSessionRouter.status({ conversationId });
       return result.userMessage;
     }

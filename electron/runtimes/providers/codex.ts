@@ -87,6 +87,16 @@ export function createCodexRuntimeProvider(
     }
   }
 
+  function scheduleTurn(state: CodexSessionState, input: string): void {
+    setTimeout(() => {
+      void runTurn(state, input).catch((error) => {
+        state.session.status = 'failed';
+        state.session.updatedAt = Date.now();
+        emit(state.session, 'failed', (error as Error).message);
+      });
+    }, 0);
+  }
+
   function applyThreadEvent(state: CodexSessionState, event: ThreadEventLike): void {
     const { session } = state;
     if (event.type === 'thread.started') {
@@ -218,7 +228,7 @@ export function createCodexRuntimeProvider(
       };
       const state: CodexSessionState = { session, thread };
       sessions.set(session.id, state);
-      await runTurn(state, input.initialMessage);
+      scheduleTurn(state, input.initialMessage);
       return session;
     },
 
