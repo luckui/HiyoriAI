@@ -60,6 +60,14 @@ describe('runtime tools', () => {
     expect(result).toContain('fake');
   });
 
+  it('lists available runtime providers', async () => {
+    const result = await requireTool('runtime_providers').execute({});
+
+    expect(result).toContain('runtime providers');
+    expect(result).toContain('provider_id: fake');
+    expect(result).toContain('provider_id: codex');
+  });
+
   it('interrupts a runtime session', async () => {
     const startResult = await requireTool('runtime_start').execute(
       {

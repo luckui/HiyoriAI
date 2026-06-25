@@ -6,6 +6,10 @@ describe('runtime index', () => {
     expect(runtimeRegistry.getProvider('fake')?.id).toBe('fake');
   });
 
+  it('registers the Codex provider by default', () => {
+    expect(runtimeRegistry.getProvider('codex')?.id).toBe('codex');
+  });
+
   it('exposes an initially empty runtime host', () => {
     expect(runtimeHost.listSessions()).toEqual([]);
   });

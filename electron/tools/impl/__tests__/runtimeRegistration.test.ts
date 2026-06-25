@@ -8,6 +8,7 @@ const runtimeToolNames = [
   'runtime_status',
   'runtime_interrupt',
   'runtime_list',
+  'runtime_providers',
 ];
 
 describe('runtime tool registration', () => {

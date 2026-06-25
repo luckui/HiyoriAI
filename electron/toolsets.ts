@@ -216,6 +216,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "runtime_status",
       "runtime_interrupt",
       "runtime_list",
+      "runtime_providers",
       
       // 🆕 打工人核心工具（Git 操作）
       "git_status",              // Git 状态

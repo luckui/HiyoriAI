@@ -1,4 +1,4 @@
-import { runtimeHost } from '../../runtimes';
+import { runtimeHost, runtimeRegistry } from '../../runtimes';
 import type { ToolContext, ToolDefinition } from '../types';
 
 interface RuntimeStartParams {
@@ -193,12 +193,45 @@ const runtimeListTool: ToolDefinition<Record<string, never>> = {
   },
 };
 
+const runtimeProvidersTool: ToolDefinition<Record<string, never>> = {
+  schema: {
+    type: 'function',
+    function: {
+      name: 'runtime_providers',
+      description: 'List registered runtime providers and whether they are currently available.',
+      parameters: {
+        type: 'object',
+        properties: {},
+      },
+    },
+  },
+  async execute() {
+    const providers = runtimeRegistry.listProviders();
+    const lines = await Promise.all(
+      providers.map(async (provider) => {
+        const availability = await runtimeRegistry.requireProvider(provider.id).checkAvailability();
+        return [
+          `- provider_id: ${provider.id}`,
+          `  name: ${provider.displayName}`,
+          `  available: ${availability.available}`,
+          availability.reason ? `  reason: ${availability.reason}` : undefined,
+        ]
+          .filter(Boolean)
+          .join('\n');
+      })
+    );
+
+    return ['runtime providers', ...lines].join('\n');
+  },
+};
+
 export const runtimeTools = [
   runtimeStartTool,
   runtimeSendTool,
   runtimeStatusTool,
   runtimeInterruptTool,
   runtimeListTool,
+  runtimeProvidersTool,
 ];
 
 export default runtimeTools;
