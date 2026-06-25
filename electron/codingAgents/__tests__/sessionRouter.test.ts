@@ -133,7 +133,7 @@ describe('CodingAgentSessionRouter', () => {
     expect(status.userMessage).not.toContain('powershell.exe');
   });
 
-  it('routes low-level command details to the terminal notifier', async () => {
+  it('does not route raw low-level command details to the terminal notifier', async () => {
     const registry = new RuntimeRegistry();
     registry.register({
       id: 'detail-terminal',
@@ -188,7 +188,29 @@ describe('CodingAgentSessionRouter', () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    expect(terminalLines.join('\n')).toContain('powershell.exe');
+    expect(terminalLines.join('\n')).not.toContain('powershell.exe');
+  });
+
+  it('routes assistant replies to the terminal notifier', async () => {
+    const { router } = createRouter();
+    const terminalLines: string[] = [];
+    router.setTerminalNotifier((event) => {
+      if (event.line) terminalLines.push(event.line);
+    });
+
+    await router.start({
+      conversationId: 'conv-terminal-reply',
+      agent: 'fake',
+      task: 'fix the build',
+    });
+    await router.continue({
+      conversationId: 'conv-terminal-reply',
+      message: 'say good evening',
+    });
+    await waitForEvents();
+
+    expect(terminalLines.join('\n')).toContain('fake received: say good evening');
+    expect(terminalLines.join('\n')).not.toContain('fake turn completed');
   });
 
   it('keeps the coding agent terminal block open between turns', async () => {

@@ -299,11 +299,14 @@ export class CodingAgentSessionRouter {
   }
 
   private formatTerminalEvent(event: RuntimeEvent): { line?: string; status?: 'running' | 'idle' | 'done' | 'error' } | null {
-    if (event.type === 'session_started') return { line: event.content, status: 'running' };
-    if (event.type === 'notification') return { line: event.content, status: 'running' };
-    if (event.type === 'tool_call') return { line: event.content, status: 'running' };
-    if (event.type === 'tool_result') return { line: event.content, status: 'running' };
-    if (event.type === 'completed') return { line: event.content, status: 'idle' };
+    if (event.type === 'session_started') return { status: 'running' };
+    if (event.type === 'notification') {
+      if (event.content.startsWith('Reconnecting...')) return { line: event.content, status: 'running' };
+      return { status: 'running' };
+    }
+    if (event.type === 'assistant_message') return { line: event.content, status: 'running' };
+    if (event.type === 'tool_call' || event.type === 'tool_result') return { status: 'running' };
+    if (event.type === 'completed') return { status: 'idle' };
     if (event.type === 'failed') return { line: event.content, status: 'error' };
     if (event.type === 'interrupted' || event.type === 'stopped') return { line: event.content, status: 'done' };
     return null;

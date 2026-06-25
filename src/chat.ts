@@ -74,6 +74,7 @@ declare global {
 let currentConversationId: string | null = null;
 let isConvPanelOpen = false;
 let isSending = false;
+const pendingWakeups: Array<{ conversationId: string; text: string }> = [];
 
 /** 聊天面板展开状态（模块级，供打字机气泡判断） */
 let _chatExpanded = false;
@@ -710,6 +711,7 @@ async function autoSendMessage(text: string, type: 'dictation' | 'summary'): Pro
           <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
         </svg>`;
     }
+    void drainWakeups();
   }
 }
 
@@ -739,6 +741,7 @@ async function sendMessage(): Promise<void> {
           <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
         </svg>`;
     }
+    void drainWakeups();
     return;
   }
 
@@ -813,6 +816,7 @@ async function sendMessage(): Promise<void> {
           <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
         </svg>`;
     }
+    void drainWakeups();
     input?.focus();
   }
 }
@@ -1090,6 +1094,55 @@ function setupResizeGrip(): void {
 // =====================================================
 // 初始化入口
 // =====================================================
+async function drainWakeups(): Promise<void> {
+  if (isSending || pendingWakeups.length === 0) return;
+
+  const payload = pendingWakeups.shift();
+  if (!payload) return;
+  if (payload.conversationId !== currentConversationId) {
+    void drainWakeups();
+    return;
+  }
+
+  console.log('[Chat] async wakeup:', payload.text.slice(0, 60));
+
+  isSending = true;
+  const sendBtn = document.getElementById('send-btn') as HTMLButtonElement;
+  if (sendBtn) {
+    sendBtn.classList.add('stop-mode');
+    sendBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>`;
+  }
+  const typing = addTypingIndicator();
+
+  try {
+    const result = await window.chatAPI!.send(payload.conversationId, payload.text);
+    typing?.remove();
+    const { emotion, cleaned } = extractEmotionTag(result.content);
+    if (emotion) triggerEmotion(emotion);
+    addMessage('ai', cleaned, true, result.created_at);
+    playTTS(cleaned, (actualMs, sentenceText) => {
+      if (!_chatExpanded) {
+        showTypewriterBubble(sentenceText ?? cleaned, actualMs > 0 ? Math.max(300, actualMs * 0.92) : cleaned.length * 60);
+      }
+    }).catch((e) => console.error('[TTS] wakeup playTTS error:', e));
+    void refreshConvTitle(payload.conversationId);
+  } catch (e) {
+    typing?.remove();
+    const errMsg = (e as Error).message;
+    if (!errMsg.includes('aborted') && !errMsg.includes('stopped')) {
+      addMessage('ai', `（异步任务处理出错：${errMsg}）`);
+    }
+  } finally {
+    isSending = false;
+    if (sendBtn) {
+      sendBtn.disabled = false;
+      sendBtn.classList.remove('stop-mode');
+      sendBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>`;
+    }
+    void drainWakeups();
+  }
+}
+
 export async function initChat(): Promise<void> {
   setupWindowDrag();
   setupResizeGrip();
@@ -1350,7 +1403,7 @@ export async function initChat(): Promise<void> {
     autoSendMessage(ev.text, ev.type);
   });
 
-  // ── AI 主动消息注入（后台任务完成通知 / speak 工具）────────────
+  // ── AI 主动消息注入（兼容旧入口；新异步任务默认走 wakeup）────────────
   window.chatAPI?.onAgentMessage?.((payload) => {
     // 仅当当前对话与通知对话一致时显示
     if (payload.conversationId !== currentConversationId) return;
@@ -1363,10 +1416,13 @@ export async function initChat(): Promise<void> {
   });
 
   // ── background/batch 异步任务完成 → 唤醒主对话 AI 继续工作流 ──────
-  // （cron 定时任务不会进入此分支，它们由子智能体自己 speak 结果）
+  // wakeup 会触发主对话开启新一轮处理；如果当前轮正在发送，则先排队。
   window.chatAPI?.onWakeup?.((payload) => {
     if (payload.conversationId !== currentConversationId) return;
-    if (isSending) return;
+    if (isSending) {
+      pendingWakeups.push(payload);
+      return;
+    }
     console.log('[Chat] 异步任务完成，唤醒主对话 AI:', payload.text.slice(0, 60));
 
     isSending = true;
@@ -1404,6 +1460,7 @@ export async function initChat(): Promise<void> {
           sendBtn.classList.remove('stop-mode');
           sendBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>`;
         }
+        void drainWakeups();
       });
   });
 

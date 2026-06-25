@@ -12,4 +12,11 @@ describe('coding agent tool registration', () => {
     expect(resolveToolset('agent')).not.toContain('runtime_start');
     expect(resolveToolset('agent')).not.toContain('runtime_providers');
   });
+
+  it('does not expose the legacy proactive speak tool to agent modes', () => {
+    expect(resolveToolset('agent')).not.toContain('speak');
+    expect(resolveToolset('agent-debug')).not.toContain('speak');
+    expect(resolveToolset('developer')).not.toContain('speak');
+    expect(resolveToolset('streamer')).not.toContain('speak');
+  });
 });

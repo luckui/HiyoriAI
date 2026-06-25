@@ -178,7 +178,6 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       
       // B 站视频（供后台 agent 任务使用，如定时逛B站首页解说）
       "watch_bilibili_video",    // 打开B站视频并获取元数据      
-      "speak",                   // TTS 朗读（agent 任务可主动触发语音播报）      
       // OCR 工具
       // "sys_find_text",           // OCR 查找文字
       // "sys_find_text_click",     // OCR 查找并点击
@@ -249,7 +248,6 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       
       // B 站视频
       "watch_bilibili_video",    // 打开B站视频并获取元数据
-      "speak",                   // TTS 朗读
       
       // OCR 工具
       // "sys_find_text",
@@ -326,7 +324,6 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "manage_live2d",
       "manage_bilibili_live",
       "watch_bilibili_video",    // 🆕 观看B站视频并获取元数据（Streamer专用）
-      "speak",                   // 🆕 TTS 朗读工具（后台任务可主动触发语音播报）
       "browser_open",
       "browser_read_page",
       "browser_click_smart",

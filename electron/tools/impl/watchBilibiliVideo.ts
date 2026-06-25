@@ -242,7 +242,6 @@ const watchBilibiliVideoTool: ToolDefinition<WatchBilibiliVideoParams> = {
       ``,
       videoInfo,
       ``,
-      `🎦 【下一步】立即调用 speak 工具，text 参数填写根据上述视频信息现编的50～100字自然口语解说词，直接传入 speak，不要先输出文字。`,
     ].join('\n');
   },
 };

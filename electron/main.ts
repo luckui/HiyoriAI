@@ -899,10 +899,9 @@ function createWindow(): void {
         }
       });
     }
-    // background/batch 异步任务：唤醒主对话 AI 继续工作流
-    // cron（schedule_task）不需要：子智能体自己用 speak 通知用户
+    // background/batch/cron 异步任务：唤醒主对话 AI 继续工作流
     // 有 parent_task_id 的是批量子任务，不单独唤醒——等父任务完成后统一唤醒一次
-    if ((task.type === 'background' || task.type === 'batch') && task.conversation_id && !task.parent_task_id) {
+    if ((task.type === 'background' || task.type === 'batch' || task.type === 'cron') && task.conversation_id && !task.parent_task_id) {
       let wakeupText: string;
 
       if (task.type === 'batch') {
