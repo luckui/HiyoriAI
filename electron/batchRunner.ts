@@ -68,9 +68,12 @@ export async function runBatch(
   onProgress(0, `准备中，共 ${total} 项`);
 
   // ── 创建所有子任务（不立即启动，由 TaskManager 排队） ───
+  // 每个子任务间隔 300ms 创建，错开初始 API 请求时机，避免突发流量触发 429
+  const STAGGER_MS = 300;
   const childIds: string[] = [];
   for (let i = 0; i < total; i++) {
     if (signal.aborted) throw new Error('批量任务已被取消');
+    if (i > 0) await new Promise(r => setTimeout(r, STAGGER_MS));
 
     const itemPrompt = promptTemplate.replace(/\{\{item\}\}/g, items[i]);
     const child = taskManager.createAndStart({
@@ -205,9 +208,9 @@ function aggregateResults(parentTask: DBTask, children: DBTask[]): string {
     for (const child of completed) {
       const idx = getBatchIndex(child);
       const result = child.result ?? '(无结果)';
-      // 截断过长结果
-      const truncated = result.length > 500
-        ? result.slice(0, 500) + `...(截断，原文 ${result.length} 字)`
+      // 截断过长结果（2000 字足够容纳一条 JSON 摘要）
+      const truncated = result.length > 2000
+        ? result.slice(0, 2000) + `...(截断，原文 ${result.length} 字)`
         : result;
       lines.push(`### [${idx + 1}] ${child.title}`);
       lines.push(truncated);

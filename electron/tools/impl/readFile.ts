@@ -13,7 +13,8 @@
 
 import fs from 'fs/promises';
 import path from 'path';
-import type { ToolDefinition } from '../types';
+import { nativeImage } from 'electron';
+import type { ToolDefinition, ToolImageResult } from '../types';
 
 interface ReadFileParams {
   file_path: string;
@@ -21,39 +22,158 @@ interface ReadFileParams {
   end_line?: number;
 }
 
-async function execute(params: ReadFileParams): Promise<string> {
+/** 支持多模态直读的图片格式映射（mimeType 须在 ToolImageResult 允许范围内） */
+const IMG_MIME_MAP: Record<string, ToolImageResult['mimeType']> = {
+  '.jpg':  'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png':  'image/png',
+  '.webp': 'image/webp',
+};
+
+/**
+ * 将文件名中各种 Unicode 空白统一为普通空格（U+0020），便于模糊比对。
+ * 覆盖：NO-BREAK SPACE (U+00A0)、窄不换行空格 (U+202F)、细空格 (U+2009)、
+ *        表意空格 (U+3000)、以及常规 \t / \r / \n。
+ */
+function normalizeWhitespace(s: string): string {
+  return s.replace(/[\u00A0\u202F\u2009\u3000\t\r\n]/g, ' ');
+}
+
+/**
+ * 当精确路径不存在时，扫描父目录寻找最近似的文件名：
+ *   1. 先把所有 Unicode 空白统一为普通空格后精确匹配（解决 NBSP 问题）
+ *   2. 再把路径中的 `?` 作为通配符（.）进行正则匹配（解决字符被替换问题）
+ * 找到则返回正确的完整路径，否则返回 null。
+ */
+async function fuzzyResolvePath(resolvedPath: string): Promise<string | null> {
+  const dir = path.dirname(resolvedPath);
+  const basename = path.basename(resolvedPath);
+
+  let entries: string[];
+  try {
+    entries = await fs.readdir(dir);
+  } catch {
+    return null; // 目录本身不存在
+  }
+
+  // ── 策略 1：Unicode 空白归一化后精确比对 ──
+  const normTarget = normalizeWhitespace(basename);
+  const exactMatch = entries.find(e => normalizeWhitespace(e) === normTarget);
+  if (exactMatch) return path.join(dir, exactMatch);
+
+  // ── 策略 2：? 作为任意单字符通配符（同时做空白归一化）──
+  if (basename.includes('?')) {
+    const regexStr = '^' +
+      normalizeWhitespace(basename)
+        .split('')
+        .map(c => {
+          if (c === '?') return '.'; // ? → 匹配任意一个字符
+          // 转义正则特殊字符（. + * [ ] { } ( ) | \ ^ $）
+          return /[.+*[\]{}()|\\^$]/.test(c) ? `\\${c}` : c;
+        })
+        .join('') +
+      '$';
+    try {
+      const regex = new RegExp(regexStr, 'i');
+      const fuzzyMatch = entries.find(e => regex.test(normalizeWhitespace(e)));
+      if (fuzzyMatch) return path.join(dir, fuzzyMatch);
+    } catch { /* 正则构造异常时忽略 */ }
+  }
+
+  return null;
+}
+
+async function execute(params: ReadFileParams): Promise<string | ToolImageResult> {
   const { file_path, start_line = 1, end_line } = params;
 
   try {
     // 解析路径
-    const resolvedPath = path.isAbsolute(file_path)
+    let resolvedPath = path.isAbsolute(file_path)
       ? file_path
       : path.resolve(process.cwd(), file_path);
 
-    // 检查文件是否存在
-    try {
-      await fs.access(resolvedPath);
-    } catch {
-      return `❌ 文件不存在: ${file_path}`;
+    // 检查文件是否存在；不存在时尝试模糊路径匹配
+    let fileExists = false;
+    try { await fs.access(resolvedPath); fileExists = true; } catch { /* 下面处理 */ }
+
+    if (!fileExists) {
+      const fuzzy = await fuzzyResolvePath(resolvedPath);
+      if (fuzzy) {
+        console.log(`[readFile] 模糊路径匹配: "${path.basename(resolvedPath)}" → "${path.basename(fuzzy)}"`);
+        resolvedPath = fuzzy;
+      } else {
+        const hasQuestionMark = file_path.includes('?');
+        return [
+          `❌ 文件不存在: ${file_path}`,
+          hasQuestionMark
+            ? '💡 路径中含有 "?"，可能是文件名里的特殊字符（空格、间隔号等）被转义丢失。\n   建议用 list_directory 查看目录中的真实文件名后重试。'
+            : '💡 建议用 list_directory 确认文件名（注意 Windows 路径区分特殊空白字符）。',
+        ].join('\n');
+      }
     }
 
-    // 检查是否为二进制文件（简单检测：通过扩展名）
+    const ext = path.extname(resolvedPath).toLowerCase();
+
+    // ── 图片：多模态直读（超过 API 像素上限时自动缩放）─────────
+    /** API 允许的最大像素数（36MP），保留 10% 余量取 32.4MP */
+    const MAX_PIXELS = 32_400_000;
+    const imgMime = IMG_MIME_MAP[ext];
+    if (imgMime) {
+      const buf = await fs.readFile(resolvedPath);
+      let img = nativeImage.createFromBuffer(buf);
+
+      if (img.isEmpty()) {
+        return `❌ 无法解析图片文件: ${file_path}（格式可能不受支持）`;
+      }
+
+      const { width, height } = img.getSize();
+      let finalBuf: Buffer;
+      let finalMime: ToolImageResult['mimeType'] = imgMime;
+
+      if (width * height > MAX_PIXELS) {
+        const scale = Math.sqrt(MAX_PIXELS / (width * height));
+        const newWidth = Math.max(1, Math.floor(width * scale));
+        const newHeight = Math.max(1, Math.floor(height * scale));
+        img = img.resize({ width: newWidth });
+        finalBuf = img.toJPEG(85);
+        finalMime = 'image/jpeg';
+        console.log(
+          `[readFile] 图片像素过大 (${width}x${height}=${(width * height / 1e6).toFixed(1)}MP)，` +
+          `已缩放至 ${newWidth}x${newHeight} 再发送`,
+        );
+      } else {
+        finalBuf = buf;
+      }
+
+      return {
+        text: `图片已读取：${file_path}`,
+        imageBase64: finalBuf.toString('base64'),
+        mimeType: finalMime,
+      } satisfies ToolImageResult;
+    }
+
+    // ── gif / bmp：mimeType 不在多模态协议支持范围内 ───────────
+    if (ext === '.gif' || ext === '.bmp') {
+      return [
+        `❌ ${ext} 格式图片暂不支持多模态直读（mimeType 不在协议范围内）`,
+        '💡 建议先转换格式：',
+        `   run_command({ command: "python -c \"from PIL import Image; Image.open(r'${file_path.replace(/\\/g, '\\\\')}').save(r'${file_path.replace(/\\/g, '\\\\').replace(/\.[^.]+$/, '.png')}')\"" })`,
+        '   然后 read_file 重新读取 .png 文件',
+      ].join('\n');
+    }
+
+    // ── 其余二进制文件 ────────────────────────────────────────
     const binaryExtensions = [
       '.exe', '.dll', '.so', '.dylib', '.bin', '.dat',
-      '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp',
       '.mp4', '.avi', '.mov', '.mkv', '.mp3', '.wav',
       '.zip', '.tar', '.gz', '.rar', '.7z',
       '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
     ];
-    const ext = path.extname(resolvedPath).toLowerCase();
     if (binaryExtensions.includes(ext)) {
-      // 按类型给出不同的引导提示
       const docExtensions = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'];
-      const imgExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'];
 
       let hint: string;
       if (docExtensions.includes(ext)) {
-        // 根据扩展名给出一步到位的 python -c 命令
         const escapedPath = file_path.replace(/\\/g, '\\\\');
         let pySnippet = '';
         if (ext === '.docx' || ext === '.doc') {
@@ -75,8 +195,6 @@ async function execute(params: ReadFileParams): Promise<string> {
           '   ⚠️ 首次需安装依赖：run_command({ command: "pip install python-docx pymupdf openpyxl python-pptx" })',
           '   📖 更多格式详见 read_manual("文档读取")',
         ].join('\n');
-      } else if (imgExtensions.includes(ext)) {
-        hint = `❌ 无法读取图片文件: ${file_path} (${ext})\n提示：使用 take_screenshot 工具查看图片。`;
       } else {
         hint = `❌ 无法读取二进制文件: ${file_path} (${ext})`;
       }
@@ -143,7 +261,11 @@ const tool: ToolDefinition<ReadFileParams> = {
     type: 'function',
     function: {
       name: 'read_file',
-      description: '读取文件内容（支持行范围读取，用于查看代码文件）',
+      description:
+        '读取文件内容，支持文本文件（行范围读取）和图片文件（多模态直读）。' +
+        '文本/代码文件返回带行号的内容；' +
+        '图片文件（jpg/jpeg/png/webp）直接以多模态方式展示给 AI，无需 start_line/end_line。' +
+        '当用户要求「看看这张图」「分析这个图片」「读取图片」时调用。',
       parameters: {
         type: 'object',
         properties: {

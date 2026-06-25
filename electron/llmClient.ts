@@ -30,8 +30,21 @@ export interface ChatCompletionResponse {
   };
 }
 
+/** 可中断的 sleep，signal 触发时立即 reject */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new DOMException('Aborted', 'AbortError')); return; }
+    const id = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => { clearTimeout(id); reject(new DOMException('Aborted', 'AbortError')); }, { once: true });
+  });
+}
+
+/** 429 重试配置 */
+const RETRY_DELAYS_MS = [5_000, 10_000, 20_000]; // 最多重试 3 次
+
 /**
  * 向 /chat/completions 发起单次请求，返回原始响应。
+ * 自动对 HTTP 429 进行指数退避重试（最多 3 次），尊重 Retry-After header。
  *
  * @param provider - LLM Provider 配置（含 baseUrl / apiKey / model 等）
  * @param messages - 消息列表
@@ -46,30 +59,57 @@ export async function fetchCompletion(
 ): Promise<ChatCompletionResponse> {
   const withTools = tools && tools.length > 0;
 
-  const response = await fetch(`${provider.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${provider.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: provider.model,
-      messages,
-      max_tokens: provider.maxTokens ?? 1024,
-      temperature: provider.temperature ?? 0.85,
-      ...(withTools ? { tools } : {}),
-      // 推理参数 + 服务商扩展字段（统一由 buildProviderExtraBody 处理）
-      ...buildProviderExtraBody(provider),
-    }),
-    signal, // 🆕 传递中断信号
+  const body = JSON.stringify({
+    model: provider.model,
+    messages,
+    max_tokens: provider.maxTokens ?? 1024,
+    temperature: provider.temperature ?? 0.85,
+    ...(withTools ? { tools } : {}),
+    // 推理参数 + 服务商扩展字段（统一由 buildProviderExtraBody 处理）
+    ...buildProviderExtraBody(provider),
   });
 
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`HTTP ${response.status}: ${errText}`);
+  let lastError: Error | undefined;
+
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    if (attempt > 0) {
+      const delayMs = RETRY_DELAYS_MS[attempt - 1];
+      console.warn(`[llmClient] HTTP 429 rate limit，${delayMs / 1000}s 后重试 (${attempt}/${RETRY_DELAYS_MS.length})...`);
+      await sleep(delayMs, signal);
+    }
+
+    const response = await fetch(`${provider.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${provider.apiKey}`,
+      },
+      body,
+      signal,
+    });
+
+    if (response.status === 429) {
+      // 尊重服务端指定的等待时间（若有）
+      const retryAfter = response.headers.get('Retry-After');
+      const errText = await response.text();
+      if (retryAfter) {
+        const waitMs = (parseFloat(retryAfter) || 5) * 1000;
+        console.warn(`[llmClient] Retry-After: ${retryAfter}s`);
+        RETRY_DELAYS_MS[attempt] = Math.max(RETRY_DELAYS_MS[attempt] ?? 5000, waitMs);
+      }
+      lastError = new Error(`HTTP 429: ${errText}`);
+      continue; // 进入下一次重试
+    }
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errText}`);
+    }
+
+    const data = (await response.json()) as ChatCompletionResponse;
+    if (data.error) throw new Error(data.error.message);
+    return data;
   }
 
-  const data = (await response.json()) as ChatCompletionResponse;
-  if (data.error) throw new Error(data.error.message);
-  return data;
+  throw lastError ?? new Error('fetchCompletion: 未知错误');
 }

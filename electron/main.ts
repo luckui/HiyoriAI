@@ -902,10 +902,28 @@ function createWindow(): void {
     // cron（schedule_task）不需要：子智能体自己用 speak 通知用户
     // 有 parent_task_id 的是批量子任务，不单独唤醒——等父任务完成后统一唤醒一次
     if ((task.type === 'background' || task.type === 'batch') && task.conversation_id && !task.parent_task_id) {
-      const resultPreview = task.result && task.result.length > 300
-        ? task.result.slice(0, 300) + '…'
-        : task.result ?? '';
-      const wakeupText = `【系统通知】后台任务「${task.title}」已完成。${resultPreview ? `\n\n结果摘要：${resultPreview}` : ''}\n\n请检查结果并继续执行后续步骤。`;
+      let wakeupText: string;
+
+      if (task.type === 'batch') {
+        // 批量任务：聚合结果可能超万字，wakeup 只告知状态 + task_id
+        // AI 必须主动调用 async_task result 才能拿到所有数据
+        const statsLine = task.result?.split('\n').slice(0, 4).join(' ') ?? '';
+        wakeupText = [
+          `【系统通知】批量任务「${task.title}」全部子任务已执行完毕。`,
+          statsLine ? `统计：${statsLine}` : '',
+          '',
+          `⚠️ 聚合结果体积较大，未自动注入上下文。`,
+          `请立即调用以下工具获取完整数据后再回复用户：`,
+          `  async_task({"action":"result","task_id":"${task.id}"})`,
+        ].filter(s => s !== null).join('\n');
+      } else {
+        // 普通后台任务：结果通常较短，直接附在 wakeup 里
+        const resultPreview = task.result && task.result.length > 1500
+          ? task.result.slice(0, 1500) + `\n…(共 ${task.result.length} 字，如需完整结果请调用 async_task result task_id="${task.id}")`
+          : task.result ?? '';
+        wakeupText = `【系统通知】后台任务「${task.title}」已完成。${resultPreview ? `\n\n结果：\n${resultPreview}` : ''}\n\n请检查结果并继续执行后续步骤。`;
+      }
+
       sendAgentWakeup(task.conversation_id, wakeupText);
     }
   });
