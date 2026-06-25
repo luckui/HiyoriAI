@@ -8,6 +8,8 @@
     "build": "chcp 65001 > nul && electron-vite build",
     "preview": "electron-vite preview",
     "start": "electron-vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "pack:win": "chcp 65001 > nul && electron-vite build && electron-builder --win --x64"
   },
   "build": {
@@ -95,7 +97,8 @@
     "electron-vite": "^5.0.0",
     "typescript": "^5.9.3",
     "vite": "^6.4.2",
-    "vite-plugin-cesium": "^1.2.23"
+    "vite-plugin-cesium": "^1.2.23",
+    "vitest": "^4.1.9"
   },
   "dependencies": {
     "@nekopaw/tempora": "^0.4.0-alpha.1",
