@@ -18,7 +18,8 @@ export type RuntimeEventType =
   | 'notification'
   | 'completed'
   | 'failed'
-  | 'interrupted';
+  | 'interrupted'
+  | 'stopped';
 
 export interface RuntimeAvailability {
   available: boolean;
