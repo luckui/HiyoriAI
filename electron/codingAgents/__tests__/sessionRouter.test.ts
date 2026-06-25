@@ -186,6 +186,27 @@ describe('CodingAgentSessionRouter', () => {
     expect(terminalLines.join('\n')).toContain('powershell.exe');
   });
 
+  it('keeps the coding agent terminal block open between turns', async () => {
+    const { router } = createRouter();
+    const terminalStatuses: string[] = [];
+    router.setTerminalNotifier((event) => {
+      if (event.status) terminalStatuses.push(event.status);
+    });
+
+    await router.start({
+      conversationId: 'conv-terminal-turns',
+      agent: 'fake',
+      task: 'fix the build',
+    });
+    await router.continue({
+      conversationId: 'conv-terminal-turns',
+      message: 'continue',
+    });
+
+    expect(terminalStatuses).toContain('idle');
+    expect(terminalStatuses).not.toContain('done');
+  });
+
   it('reports visible status from the active session transcript', async () => {
     const { router } = createRouter();
     await router.start({

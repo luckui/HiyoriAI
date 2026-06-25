@@ -415,7 +415,7 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
 function handleTerminalBlock(ev: {
   blockId: string;
   line?: string;
-  status?: 'running' | 'done' | 'error';
+  status?: 'running' | 'idle' | 'done' | 'error';
   title?: string;
 }): void {
   const messagesDiv = document.getElementById('messages');
@@ -511,6 +511,9 @@ function handleTerminalBlock(ev: {
     switch (ev.status) {
       case 'running':
         block.statusEl.textContent = '运行中';
+        break;
+      case 'idle':
+        block.statusEl.textContent = '本轮完成';
         break;
       case 'done':
         block.statusEl.textContent = '完成';

@@ -186,7 +186,7 @@ contextBridge.exposeInMainWorld('hearingAPI', {
   onTerminalBlock: (cb: (ev: {
     blockId: string;
     line?: string;
-    status?: 'running' | 'done' | 'error';
+    status?: 'running' | 'idle' | 'done' | 'error';
     title?: string;
   }) => void) => {
     const handler = (_e: unknown, ev: any) => cb(ev);

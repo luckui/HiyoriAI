@@ -22,7 +22,7 @@ declare global {
       onTranscription(cb: (result: TranscriptionEvent) => void): () => void;
       reportTranscription(result: TranscriptionEvent): void;
       reportCaptureFailed(reason: string): void;
-      onTerminalBlock(cb: (ev: { blockId: string; line?: string; status?: 'running' | 'done' | 'error'; title?: string }) => void): () => void;
+      onTerminalBlock(cb: (ev: { blockId: string; line?: string; status?: 'running' | 'idle' | 'done' | 'error'; title?: string }) => void): () => void;
       onAutoSend(cb: (ev: { text: string; type: 'dictation' | 'summary' }) => void): () => void;
     };
   }
