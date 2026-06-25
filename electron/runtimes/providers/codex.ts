@@ -1,6 +1,5 @@
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
-import { Codex } from '@openai/codex-sdk';
 import type {
   AgentRuntimeProvider,
   RuntimeEvent,
@@ -32,6 +31,12 @@ interface ThreadLike {
 
 type ThreadEventLike = ThreadEvent;
 
+type CodexSdkModule = typeof import('@openai/codex-sdk');
+
+const dynamicImport = new Function('specifier', 'return import(specifier)') as (
+  specifier: string
+) => Promise<CodexSdkModule>;
+
 export interface CodexRuntimeProviderOptions {
   createClient?: () => CodexClientLike;
   codexOptions?: CodexOptions;
@@ -50,9 +55,14 @@ export function createCodexRuntimeProvider(
   const sessions = new Map<string, CodexSessionState>();
   let client: CodexClientLike | undefined;
 
-  function getClient(): CodexClientLike {
+  async function getClient(): Promise<CodexClientLike> {
     if (!client) {
-      client = options.createClient?.() ?? new Codex(options.codexOptions);
+      if (options.createClient) {
+        client = options.createClient();
+      } else {
+        const { Codex } = await dynamicImport('@openai/codex-sdk');
+        client = new Codex(options.codexOptions);
+      }
     }
     return client;
   }
@@ -184,7 +194,7 @@ export function createCodexRuntimeProvider(
 
     async checkAvailability() {
       try {
-        getClient();
+        await getClient();
         return { available: true };
       } catch (error) {
         return { available: false, reason: (error as Error).message };
@@ -193,7 +203,7 @@ export function createCodexRuntimeProvider(
 
     async startSession(input) {
       const now = Date.now();
-      const thread = getClient().startThread(createThreadOptions(input));
+      const thread = (await getClient()).startThread(createThreadOptions(input));
       const session: RuntimeSession = {
         id: randomUUID(),
         providerId: 'codex',
@@ -218,7 +228,7 @@ export function createCodexRuntimeProvider(
         throw new Error('Codex providerSessionRef is required to resume a thread');
       }
       const now = Date.now();
-      const thread = getClient().resumeThread(codexThreadId, {
+      const thread = (await getClient()).resumeThread(codexThreadId, {
         workingDirectory: input.cwd,
       });
       const session: RuntimeSession = {
