@@ -149,7 +149,7 @@ export class CodingAgentSessionRouter {
     events: RuntimeEvent[]
   ): string {
     const status = session?.status ?? 'unknown';
-    const visibleEvents = events.filter((event) => this.isUserVisibleEvent(event));
+    const visibleEvents = events.filter((event) => this.isStatusVisibleEvent(event));
     const recent = visibleEvents.slice(-8);
     const lines = [
       `${binding.displayName} 当前状态：${status}`,
@@ -165,11 +165,9 @@ export class CodingAgentSessionRouter {
     return lines.join('\n');
   }
 
-  private isUserVisibleEvent(event: RuntimeEvent): boolean {
+  private isStatusVisibleEvent(event: RuntimeEvent): boolean {
     return (
       event.type === 'assistant_message' ||
-      event.type === 'tool_call' ||
-      event.type === 'tool_result' ||
       event.type === 'approval_requested' ||
       event.type === 'notification' ||
       event.type === 'completed' ||
@@ -214,21 +212,8 @@ export class CodingAgentSessionRouter {
     if (event.type === 'approval_requested') {
       return `${displayName} 需要你批准：\n${event.content}`;
     }
-    if (event.type === 'completed') {
-      return `${displayName} 当前轮次已完成。`;
-    }
     if (event.type === 'failed') {
       return `${displayName} 执行失败：\n${event.content}`;
-    }
-    if (event.type === 'tool_result') {
-      return `${displayName} 产生了操作结果：\n${event.content}`;
-    }
-    if (event.type === 'tool_call') {
-      return `${displayName} 正在执行操作：\n${event.content}`;
-    }
-    if (event.type === 'notification') {
-      if (event.content === 'codex turn started') return `${displayName} 已开始处理。`;
-      if (event.content.startsWith('Reconnecting...')) return `${displayName} 网络连接不稳定：${event.content}`;
     }
     if (event.type === 'interrupted') return `${displayName} 已中断。`;
     if (event.type === 'stopped') return `${displayName} 已停止。`;
