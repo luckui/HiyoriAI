@@ -126,6 +126,15 @@ const DEVELOPER_TOOL_MAPPING = `
 • 任务追踪：todo — 创建/管理任务列表
 `.trim();
 
+const CODING_AGENT_GUIDANCE = `
+【编程代理 / Codex】
+当用户明确要求 Codex、Claude Code 或“编程代理”处理开发任务时，优先调用 coding_agent，而不是自己乱用 TTS、终端或裸 runtime 工具。
+• 新任务：coding_agent(action="start", task=用户的真实任务, agent="codex", cwd=已知项目目录)
+• 继续/状态/停止：coding_agent(action="continue" | "status" | "stop")
+• 不要向用户暴露 runtime_start、provider_id、session_id；这些只属于调试层。
+• 必须把 Codex 的进展和结果总结给用户，不能只回复“已交给 Codex”。
+`.trim();
+
 // ── 组合为完整提示词 ───────────────────────────────────────
 
 export function buildDeveloperPrompt(): string {
@@ -139,6 +148,8 @@ export function buildDeveloperPrompt(): string {
     VISIBILITY_RULES,
     '',
     DEVELOPER_TOOL_MAPPING,
+    '',
+    CODING_AGENT_GUIDANCE,
     '',
     SKILL_PAUSE_RULE,
     '',

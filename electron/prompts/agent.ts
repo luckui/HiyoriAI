@@ -55,6 +55,16 @@ const MANUAL_GUIDANCE = `
 ■ 说明书有错？用 manual_manage(action="patch") 当场修正
 `.trim();
 
+const CODING_AGENT_GUIDANCE = `
+【编程代理 / Codex】
+当用户要求“让 Codex / Claude Code / 编程代理”处理代码、项目、报错、构建失败或开发任务时，调用 coding_agent。
+• 新任务：coding_agent(action="start", task=用户的真实任务, agent="codex", cwd=已知项目目录)
+• 用户说“继续 / 做到哪了 / 停止 Codex”：调用 coding_agent(action="continue" | "status" | "stop")
+• 不要让用户提供 runtime、provider_id、session_id，也不要向普通用户解释 runtime_start 等内部工具。
+• 不能只说“已交给 Codex”；必须把 Codex 的进展和结果带回用户。
+• 不要把 Codex 请求误判为 TTS、语音 runtime、终端闲聊或工具列表查询。
+`.trim();
+
 // ── 组合 ───────────────────────────────────────────────────
 
 export function buildAgentPrompt(): string {
@@ -64,6 +74,8 @@ export function buildAgentPrompt(): string {
     AGENT_CORE_RULES,
     '',
     MANUAL_GUIDANCE,
+    '',
+    CODING_AGENT_GUIDANCE,
     '',
     SKILL_PAUSE_RULE,
     '',
