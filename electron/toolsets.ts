@@ -209,6 +209,13 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       
       // 🆕 后台进程管理（run_command background=true 启动，process 管理）
       "process",                 // poll/log/kill/send/list
+
+      // Delegated runtime sessions
+      "runtime_start",
+      "runtime_send",
+      "runtime_status",
+      "runtime_interrupt",
+      "runtime_list",
       
       // 🆕 打工人核心工具（Git 操作）
       "git_status",              // Git 状态

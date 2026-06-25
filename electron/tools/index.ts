@@ -61,6 +61,7 @@ import scheduleTaskTool from './impl/scheduleTask';
 import manageBilibiliLiveTool from './impl/manageBilibiliLive';
 import watchBilibiliVideoTool from './impl/watchBilibiliVideo';  // 🆕 B站视频观看工具
 import speakTool from './impl/speak';                           // 🆕 TTS 朗读工具
+import { runtimeTools } from './impl/runtime';
 
 import { setToolRegistry } from './toolContext';
 
@@ -124,6 +125,10 @@ for (const tool of systemTools) {
 
 // 批量注册 OCR 工具（WinRT，Win10/11 内置，无需额外依赖）
 for (const tool of ocrTools) {
+  registry.register(tool);
+}
+
+for (const tool of runtimeTools) {
   registry.register(tool);
 }
 
