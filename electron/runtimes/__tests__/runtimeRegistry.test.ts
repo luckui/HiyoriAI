@@ -63,4 +63,14 @@ describe('RuntimeRegistry', () => {
       { id: 'fake', displayName: 'Provider fake' },
     ]);
   });
+
+  it('rejects duplicate provider ids', () => {
+    const registry = new RuntimeRegistry();
+
+    registry.register(makeProvider('fake'));
+
+    expect(() => registry.register(makeProvider('fake'))).toThrow(
+      'Runtime provider already registered: fake'
+    );
+  });
 });
