@@ -61,7 +61,7 @@ export function createCodexRuntimeProvider(
         client = options.createClient();
       } else {
         const { Codex } = await dynamicImport('@openai/codex-sdk');
-        client = new Codex(options.codexOptions);
+        client = new Codex(createCodexSdkOptions(options.codexOptions));
       }
     }
     return client;
@@ -304,5 +304,27 @@ export function createCodexRuntimeProvider(
         },
       };
     },
+  };
+}
+
+export function createCodexSdkOptions(baseOptions?: CodexOptions): CodexOptions | undefined {
+  if (baseOptions?.env) return baseOptions;
+  const proxy =
+    process.env['CODEX_PROXY'] ||
+    process.env['HTTPS_PROXY'] ||
+    process.env['HTTP_PROXY'] ||
+    process.env['DISCORD_PROXY'];
+
+  if (!proxy) return baseOptions;
+
+  return {
+    ...baseOptions,
+    env: {
+      ...process.env,
+      HTTP_PROXY: process.env['HTTP_PROXY'] || proxy,
+      HTTPS_PROXY: process.env['HTTPS_PROXY'] || proxy,
+      http_proxy: process.env['http_proxy'] || proxy,
+      https_proxy: process.env['https_proxy'] || proxy,
+    } as Record<string, string>,
   };
 }

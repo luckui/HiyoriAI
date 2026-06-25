@@ -30,6 +30,8 @@ export interface ConversationCodingAgentInput {
   conversationId: string;
 }
 
+export type CodingAgentNotifier = (conversationId: string, content: string) => Promise<void> | void;
+
 interface CodingAgentBinding {
   conversationId: string;
   sessionId: string;
@@ -39,8 +41,19 @@ interface CodingAgentBinding {
 
 export class CodingAgentSessionRouter {
   private readonly bindings = new Map<string, CodingAgentBinding>();
+  private readonly sessionsToConversations = new Map<string, string>();
+  private readonly deliveredEvents = new Set<string>();
+  private notifier: CodingAgentNotifier | undefined;
 
-  constructor(private readonly runtimeHost: RuntimeHost) {}
+  constructor(private readonly runtimeHost: RuntimeHost) {
+    this.runtimeHost.onRuntimeEvent((event) => {
+      void this.handleRuntimeEvent(event);
+    });
+  }
+
+  setNotifier(notifier: CodingAgentNotifier | undefined): void {
+    this.notifier = notifier;
+  }
 
   async start(input: StartCodingAgentInput): Promise<CodingAgentActionResult> {
     const agent = input.agent?.trim() || 'codex';
@@ -58,6 +71,7 @@ export class CodingAgentSessionRouter {
       agent,
       displayName,
     });
+    this.sessionsToConversations.set(session.id, input.conversationId);
 
     return {
       kind: 'started',
@@ -97,6 +111,7 @@ export class CodingAgentSessionRouter {
 
     await this.runtimeHost.stop(binding.sessionId);
     this.bindings.delete(input.conversationId);
+    this.sessionsToConversations.delete(binding.sessionId);
     return {
       kind: 'stopped',
       sessionId: binding.sessionId,
@@ -174,5 +189,49 @@ export class CodingAgentSessionRouter {
     if (type === 'interrupted') return '已中断';
     if (type === 'stopped') return '已停止';
     return '事件';
+  }
+
+  private async handleRuntimeEvent(event: RuntimeEvent): Promise<void> {
+    if (this.deliveredEvents.has(event.id)) return;
+    const conversationId = this.sessionsToConversations.get(event.sessionId);
+    if (!conversationId || !this.notifier) return;
+
+    const session = this.runtimeHost.getSession(event.sessionId);
+    const displayName = session ? this.displayName(session) : event.providerId;
+    const content = this.formatDelivery(displayName, event);
+    if (!content) return;
+
+    this.deliveredEvents.add(event.id);
+    await this.notifier(conversationId, content);
+  }
+
+  private formatDelivery(displayName: string, event: RuntimeEvent): string | null {
+    if (!event.content.trim()) return null;
+
+    if (event.type === 'assistant_message') {
+      return `${displayName} 回复：\n${event.content}`;
+    }
+    if (event.type === 'approval_requested') {
+      return `${displayName} 需要你批准：\n${event.content}`;
+    }
+    if (event.type === 'completed') {
+      return `${displayName} 当前轮次已完成。`;
+    }
+    if (event.type === 'failed') {
+      return `${displayName} 执行失败：\n${event.content}`;
+    }
+    if (event.type === 'tool_result') {
+      return `${displayName} 产生了操作结果：\n${event.content}`;
+    }
+    if (event.type === 'tool_call') {
+      return `${displayName} 正在执行操作：\n${event.content}`;
+    }
+    if (event.type === 'notification') {
+      if (event.content === 'codex turn started') return `${displayName} 已开始处理。`;
+      if (event.content.startsWith('Reconnecting...')) return `${displayName} 网络连接不稳定：${event.content}`;
+    }
+    if (event.type === 'interrupted') return `${displayName} 已中断。`;
+    if (event.type === 'stopped') return `${displayName} 已停止。`;
+    return null;
   }
 }

@@ -95,6 +95,7 @@ import { triggerConversationLeave, memoryManager, globalMemoryManager, runStartu
 import { exportMemoryToMarkdown, importMemoryFromMarkdown } from './memory/memoryExport';
 import aiConfig from './ai.config';
 import { startBridges, stopBridges } from './bridges/index';
+import { setCodingAgentNotifier } from './codingAgents';
 import { DiscordAdapter } from './bridges/adapters/discord';
 import { WeChatAdapter, qrLogin } from './bridges/adapters/wechat';
 import { ttsService } from './ttsService';
@@ -942,6 +943,7 @@ function createWindow(): void {
 app.whenReady().then(() => {
   initDatabase();
   loadPersistedConfig();
+  setCodingAgentNotifier((conversationId, content) => injectAgentMessage(conversationId, content));
 
   // ── 系统音频捕获支持：拦截 renderer 的 getDisplayMedia 请求 ──
   // 自动选择主屏幕 + loopback 回环音频，无需用户手动选择

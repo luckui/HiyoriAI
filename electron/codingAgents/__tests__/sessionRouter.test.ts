@@ -47,6 +47,26 @@ describe('CodingAgentSessionRouter', () => {
     expect(result.userMessage).toContain('已发送');
   });
 
+  it('pushes visible runtime updates to the configured notifier', async () => {
+    const { router } = createRouter();
+    const delivered: string[] = [];
+    router.setNotifier((_conversationId, content) => {
+      delivered.push(content);
+    });
+    await router.start({
+      conversationId: 'conv-push',
+      agent: 'fake',
+      task: 'fix the build',
+    });
+
+    await router.continue({
+      conversationId: 'conv-push',
+      message: 'continue',
+    });
+
+    expect(delivered.some((message) => message.includes('fake received: continue'))).toBe(true);
+  });
+
   it('reports visible status from the active session transcript', async () => {
     const { router } = createRouter();
     await router.start({

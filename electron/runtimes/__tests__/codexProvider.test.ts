@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createCodexRuntimeProvider } from '../providers/codex';
+import { createCodexRuntimeProvider, createCodexSdkOptions } from '../providers/codex';
 import type { RuntimeEvent } from '../types';
 
 type FakeThreadEvent =
@@ -114,5 +114,19 @@ describe('createCodexRuntimeProvider', () => {
     expect(session.id).toBe('session-1');
     expect(session.providerSessionRef).toBe('thread-existing');
     expect(fake.resumed).toEqual(['thread-existing']);
+  });
+
+  it('passes proxy environment to the SDK client when CODEX_PROXY is configured', async () => {
+    const originalProxy = process.env.CODEX_PROXY;
+    process.env.CODEX_PROXY = 'http://127.0.0.1:7897';
+    try {
+      const options = createCodexSdkOptions();
+
+      expect(options?.env?.HTTPS_PROXY).toBe('http://127.0.0.1:7897');
+      expect(options?.env?.HTTP_PROXY).toBe('http://127.0.0.1:7897');
+    } finally {
+      if (originalProxy === undefined) delete process.env.CODEX_PROXY;
+      else process.env.CODEX_PROXY = originalProxy;
+    }
   });
 });
