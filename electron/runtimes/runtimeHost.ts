@@ -93,6 +93,14 @@ export class RuntimeHost {
 
   private applyEventStatus(event: RuntimeEvent): void {
     if (
+      event.type === 'session_started' ||
+      (event.type === 'notification' && event.content.includes('turn started'))
+    ) {
+      this.mirror.updateSessionStatus(event.sessionId, 'running');
+      return;
+    }
+
+    if (
       event.type === 'completed' ||
       event.type === 'failed' ||
       event.type === 'interrupted' ||

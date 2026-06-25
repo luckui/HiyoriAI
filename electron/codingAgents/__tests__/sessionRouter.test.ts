@@ -13,6 +13,10 @@ function createRouter() {
   return { router: new CodingAgentSessionRouter(host), host };
 }
 
+async function waitForEvents(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe('CodingAgentSessionRouter', () => {
   it('starts a coding agent session and binds it to the conversation', async () => {
     const { router, host } = createRouter();
@@ -63,6 +67,7 @@ describe('CodingAgentSessionRouter', () => {
       conversationId: 'conv-push',
       message: 'continue',
     });
+    await waitForEvents();
 
     expect(delivered.some((message) => message.includes('fake received: continue'))).toBe(true);
     expect(delivered[0]).toContain('最终回复');
@@ -189,8 +194,10 @@ describe('CodingAgentSessionRouter', () => {
   it('keeps the coding agent terminal block open between turns', async () => {
     const { router } = createRouter();
     const terminalStatuses: string[] = [];
+    const terminalBlockIds: string[] = [];
     router.setTerminalNotifier((event) => {
       if (event.status) terminalStatuses.push(event.status);
+      terminalBlockIds.push(event.blockId);
     });
 
     await router.start({
@@ -198,13 +205,45 @@ describe('CodingAgentSessionRouter', () => {
       agent: 'fake',
       task: 'fix the build',
     });
+    await new Promise((resolve) => setTimeout(resolve, 0));
     await router.continue({
       conversationId: 'conv-terminal-turns',
-      message: 'continue',
+      message: 'continue once',
     });
+    await waitForEvents();
+    await router.continue({
+      conversationId: 'conv-terminal-turns',
+      message: 'continue twice',
+    });
+    await waitForEvents();
 
     expect(terminalStatuses).toContain('idle');
     expect(terminalStatuses).not.toContain('done');
+    expect(new Set(terminalBlockIds).size).toBeGreaterThan(1);
+  });
+
+  it('marks a completed coding agent session running again when a follow-up turn starts', async () => {
+    const { router, host } = createRouter();
+    const started = await router.start({
+      conversationId: 'conv-status-turns',
+      agent: 'fake',
+      task: 'fix the build',
+    });
+
+    await router.continue({
+      conversationId: 'conv-status-turns',
+      message: 'continue once',
+    });
+    await waitForEvents();
+    expect(host.getSession(started.sessionId)?.status).toBe('completed');
+
+    const continuePromise = router.continue({
+      conversationId: 'conv-status-turns',
+      message: 'continue twice',
+    });
+    expect(host.getSession(started.sessionId)?.status).toBe('running');
+    await continuePromise;
+    await waitForEvents();
   });
 
   it('reports visible status from the active session transcript', async () => {
@@ -215,6 +254,7 @@ describe('CodingAgentSessionRouter', () => {
       task: 'fix the build',
     });
     await router.continue({ conversationId: 'conv-1', message: 'continue' });
+    await waitForEvents();
 
     const result = await router.status({ conversationId: 'conv-1' });
 

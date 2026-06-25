@@ -40,6 +40,7 @@ export type CodingAgentNotifier = (conversationId: string, content: string) => P
 export type CodingAgentTerminalNotifier = (event: {
   conversationId: string;
   sessionId: string;
+  blockId: string;
   title: string;
   line?: string;
   status?: 'running' | 'idle' | 'done' | 'error';
@@ -57,6 +58,7 @@ export class CodingAgentSessionRouter {
   private readonly sessionsToConversations = new Map<string, string>();
   private readonly deliveredEvents = new Set<string>();
   private readonly lastAssistantMessages = new Map<string, string>();
+  private readonly terminalTurns = new Map<string, { index: number; blockId: string; idle: boolean }>();
   private notifier: CodingAgentNotifier | undefined;
   private terminalNotifier: CodingAgentTerminalNotifier | undefined;
 
@@ -257,13 +259,43 @@ export class CodingAgentSessionRouter {
     const title = `${displayName}${session?.title ? `: ${session.title}` : ''}`;
     const terminalEvent = this.formatTerminalEvent(event);
     if (!terminalEvent) return;
+    const blockId = this.resolveTerminalBlockId(event);
 
     await this.terminalNotifier({
       conversationId,
       sessionId: event.sessionId,
+      blockId,
       title,
       ...terminalEvent,
     });
+  }
+
+  private resolveTerminalBlockId(event: RuntimeEvent): string {
+    const existing = this.terminalTurns.get(event.sessionId);
+    if (!existing) {
+      const next = { index: 1, blockId: `${event.sessionId}:turn-1`, idle: false };
+      this.terminalTurns.set(event.sessionId, next);
+      return next.blockId;
+    }
+
+    if (event.type === 'notification' && event.content.includes('turn started') && existing.idle) {
+      const nextIndex = existing.index + 1;
+      const next = {
+        index: nextIndex,
+        blockId: `${event.sessionId}:turn-${nextIndex}`,
+        idle: false,
+      };
+      this.terminalTurns.set(event.sessionId, next);
+      return next.blockId;
+    }
+
+    if (event.type === 'completed') {
+      existing.idle = true;
+    }
+    if (event.type === 'failed' || event.type === 'interrupted' || event.type === 'stopped') {
+      existing.idle = true;
+    }
+    return existing.blockId;
   }
 
   private formatTerminalEvent(event: RuntimeEvent): { line?: string; status?: 'running' | 'idle' | 'done' | 'error' } | null {

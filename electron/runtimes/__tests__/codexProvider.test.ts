@@ -48,6 +48,10 @@ async function waitForEvents(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 10));
 }
 
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 describe('createCodexRuntimeProvider', () => {
   it('is unavailable when the sdk cannot be created', async () => {
     const provider = createCodexRuntimeProvider({
@@ -101,6 +105,7 @@ describe('createCodexRuntimeProvider', () => {
       approvalPolicy: 'on-request',
       networkAccessEnabled: true,
     });
+    await waitForEvents();
     expect(fake.prompts).toEqual(['fix tests', 'continue']);
     expect(seen.map((event) => `${event.type}:${event.content}`)).toContain(
       'assistant_message:done'
@@ -125,6 +130,47 @@ describe('createCodexRuntimeProvider', () => {
     expect(session.id).toBe('session-1');
     expect(session.providerSessionRef).toBe('thread-existing');
     expect(fake.resumed).toEqual(['thread-existing']);
+  });
+
+  it('schedules follow-up turns without blocking the caller', async () => {
+    const prompts: unknown[] = [];
+    const provider = createCodexRuntimeProvider({
+      createClient: () => ({
+        startThread() {
+          return {
+            id: 'thread-async',
+            async runStreamed(input: unknown) {
+              prompts.push(input);
+              return {
+                events: (async function* () {
+                  await delay(50);
+                  yield { type: 'turn.completed', usage: {} } as FakeThreadEvent;
+                })(),
+              };
+            },
+          };
+        },
+        resumeThread() {
+          throw new Error('not used');
+        },
+      }),
+    });
+
+    const session = await provider.startSession({
+      providerId: 'codex',
+      hiyoriConversationId: 'conv-async',
+      title: 'Async',
+      initialMessage: 'first',
+    });
+    await delay(0);
+
+    const startedAt = Date.now();
+    await provider.sendMessage(session.id, { content: 'continue' });
+    const elapsed = Date.now() - startedAt;
+
+    expect(elapsed).toBeLessThan(30);
+    await delay(80);
+    expect(prompts).toContain('continue');
   });
 
   it('passes proxy environment to the SDK client when CODEX_PROXY is configured', async () => {

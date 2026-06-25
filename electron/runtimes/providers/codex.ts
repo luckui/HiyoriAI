@@ -286,7 +286,7 @@ export function createCodexRuntimeProvider(
       if (!state) throw new Error(`Codex runtime session not found: ${sessionId}`);
       state.session.status = 'running';
       state.session.updatedAt = Date.now();
-      await runTurn(state, message.content);
+      scheduleTurn(state, message.content);
     },
 
     async interrupt(sessionId) {

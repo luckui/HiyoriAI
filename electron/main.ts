@@ -947,7 +947,7 @@ app.whenReady().then(() => {
   setCodingAgentTerminalNotifier((event) => {
     if (!mainWin || mainWin.isDestroyed() || mainWin.webContents.isDestroyed()) return;
     mainWin.webContents.send('hearing:terminal-block', {
-      blockId: `coding-agent:${event.sessionId}`,
+      blockId: `coding-agent:${event.blockId}`,
       title: event.title,
       line: event.line,
       status: event.status,
