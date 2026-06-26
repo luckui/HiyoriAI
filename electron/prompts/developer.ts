@@ -141,6 +141,14 @@ const CODING_AGENT_GUIDANCE = `
 
 // ── 组合为完整提示词 ───────────────────────────────────────
 
+const CODING_AGENT_SAFETY = `
+Coding-agent session rules:
+- start is only for creating or resuming the single managed coding-agent session bound to this Hiyori conversation.
+- If a coding-agent session is already bound, never call start again. Use continue for additional user instructions, status/result for inspection, or stop before replacing it.
+- A system wakeup containing a coding-agent final result is not a user request to start Codex again.
+- If Codex fails, times out, or reports quota/network errors, do not retry start/continue automatically. Tell the user the coding agent failed and wait for an explicit user decision.
+`.trim();
+
 export function buildDeveloperPrompt(): string {
   return [
     DEVELOPER_PERSONALITY,
@@ -154,6 +162,8 @@ export function buildDeveloperPrompt(): string {
     DEVELOPER_TOOL_MAPPING,
     '',
     CODING_AGENT_GUIDANCE,
+    '',
+    CODING_AGENT_SAFETY,
     '',
     SKILL_PAUSE_RULE,
     '',

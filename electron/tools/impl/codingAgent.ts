@@ -28,7 +28,7 @@ const codingAgentTool: ToolDefinition<CodingAgentParams> = {
     function: {
       name: 'coding_agent',
       description:
-        'User-facing bridge to Codex or another coding agent. Use when the user asks to let Codex, Claude Code, or a coding agent handle a programming task, continue it, check status, list resumable sessions, or stop it. Do not expose raw runtime ids unless the user needs a Codex resume_session_id.',
+        'User-facing bridge to Codex or another coding agent. Use start only when the current conversation has no active coding-agent session; use continue to add instructions to the bound session; use status/result to inspect it; use stop before replacing it. Never retry start automatically after a failure or wakeup.',
       parameters: {
         type: 'object',
         properties: {
@@ -36,7 +36,7 @@ const codingAgentTool: ToolDefinition<CodingAgentParams> = {
             type: 'string',
             enum: ['start', 'continue', 'status', 'result', 'sessions', 'stop'],
             description:
-              'start a new coding-agent task, continue the active task, report status/result, list resumable sessions, or stop the active task.',
+              'start creates/resumes the one managed session for this conversation, continue sends a new turn to that same session, status/result inspects it, sessions lists Codex threads, stop releases the binding.',
           },
           agent: {
             type: 'string',

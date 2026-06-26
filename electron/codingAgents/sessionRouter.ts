@@ -3,6 +3,7 @@ import type { RuntimeHost } from '../runtimes/runtimeHost';
 
 export type CodingAgentActionResultKind =
   | 'started'
+  | 'already_active'
   | 'continued'
   | 'status'
   | 'stopped'
@@ -77,6 +78,17 @@ export class CodingAgentSessionRouter {
   }
 
   async start(input: StartCodingAgentInput): Promise<CodingAgentActionResult> {
+    const existing = this.bindings.get(input.conversationId);
+    if (existing) {
+      return {
+        kind: 'already_active',
+        sessionId: existing.sessionId,
+        userMessage:
+          `${existing.displayName} already has a managed session in this conversation. ` +
+          'Use continue to add instructions, or stop before starting a different coding-agent session.',
+      };
+    }
+
     const agent = input.agent?.trim() || 'codex';
     const session = await this.runtimeHost.startSession({
       providerId: agent,
@@ -94,6 +106,7 @@ export class CodingAgentSessionRouter {
       displayName,
     });
     this.sessionsToConversations.set(session.id, input.conversationId);
+    await this.forwardUserMessage(input.conversationId, session.id, displayName, input.task);
 
     return {
       kind: 'started',
@@ -107,6 +120,7 @@ export class CodingAgentSessionRouter {
     if (!binding) return this.missingSession();
 
     await this.runtimeHost.sendMessage(binding.sessionId, { content: input.message });
+    await this.forwardUserMessage(input.conversationId, binding.sessionId, binding.displayName, input.message);
     return {
       kind: 'continued',
       sessionId: binding.sessionId,
@@ -270,6 +284,34 @@ export class CodingAgentSessionRouter {
     });
   }
 
+  private async forwardUserMessage(
+    conversationId: string,
+    sessionId: string,
+    displayName: string,
+    content: string
+  ): Promise<void> {
+    if (!this.terminalNotifier) return;
+    const session = this.runtimeHost.getSession(sessionId);
+    const title = `${displayName}${session?.title ? `: ${session.title}` : ''}`;
+    const blockId = this.resolveTerminalBlockId({
+      id: `user-message:${Date.now()}`,
+      sessionId,
+      providerId: session?.providerId ?? displayName,
+      type: 'notification',
+      content: 'turn started',
+      createdAt: Date.now(),
+    });
+
+    await this.terminalNotifier({
+      conversationId,
+      sessionId,
+      blockId,
+      title,
+      line: `Hiyori -> ${displayName}: ${content}`,
+      status: 'running',
+    });
+  }
+
   private resolveTerminalBlockId(event: RuntimeEvent): string {
     const existing = this.terminalTurns.get(event.sessionId);
     if (!existing) {
@@ -335,9 +377,7 @@ export class CodingAgentSessionRouter {
         finalResponse,
       ].filter((line): line is string => line !== undefined).join('\n');
     }
-    if (event.type === 'failed') {
-      return `${displayName} 执行失败：\n${event.content}`;
-    }
+    if (event.type === 'failed') return null;
     if (event.type === 'interrupted') return `${displayName} 已中断。`;
     if (event.type === 'stopped') return `${displayName} 已停止。`;
     return null;

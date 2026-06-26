@@ -34,6 +34,25 @@ describe('CodingAgentSessionRouter', () => {
     expect(host.getSession(result.sessionId)?.hiyoriConversationId).toBe('conv-1');
   });
 
+  it('does not start another session when the conversation already has one', async () => {
+    const { router, host } = createRouter();
+    const first = await router.start({
+      conversationId: 'conv-single-session',
+      agent: 'fake',
+      task: 'first task',
+    });
+
+    const second = await router.start({
+      conversationId: 'conv-single-session',
+      agent: 'fake',
+      task: 'second task',
+    });
+
+    expect(second.kind).toBe('already_active');
+    expect(second.sessionId).toBe(first.sessionId);
+    expect(host.listSessions().filter((session) => session.hiyoriConversationId === 'conv-single-session')).toHaveLength(1);
+  });
+
   it('continues the active session without exposing runtime ids to the caller', async () => {
     const { router } = createRouter();
     await router.start({
@@ -71,6 +90,61 @@ describe('CodingAgentSessionRouter', () => {
 
     expect(delivered.some((message) => message.includes('fake received: continue'))).toBe(true);
     expect(delivered[0]).toContain('最终回复');
+  });
+
+  it('does not wake the conversation on coding agent failure', async () => {
+    const registry = new RuntimeRegistry();
+    registry.register({
+      id: 'failing',
+      displayName: 'Failing Runtime',
+      async checkAvailability() {
+        return { available: true };
+      },
+      async startSession(input) {
+        return {
+          id: 'failing-session',
+          providerId: 'failing',
+          providerSessionRef: 'failing-native',
+          hiyoriConversationId: input.hiyoriConversationId,
+          title: input.title,
+          status: 'running' as const,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          metadata: {},
+        };
+      },
+      async resumeSession() {
+        throw new Error('not used');
+      },
+      async sendMessage() {},
+      async interrupt() {},
+      async stop() {},
+      subscribe(_sessionId, onEvent) {
+        setTimeout(() => {
+          onEvent({
+            id: 'failed-1',
+            sessionId: 'failing-session',
+            providerId: 'failing',
+            type: 'failed',
+            content: 'quota exhausted',
+            createdAt: Date.now(),
+          });
+        }, 0);
+        return { unsubscribe() {} };
+      },
+    });
+    const router = new CodingAgentSessionRouter(new RuntimeHost(registry, new TranscriptMirror()));
+    const delivered: string[] = [];
+    router.setNotifier((_conversationId, content) => delivered.push(content));
+
+    await router.start({
+      conversationId: 'conv-failure',
+      agent: 'failing',
+      task: 'say hello',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(delivered).toEqual([]);
   });
 
   it('does not push low-level command details to the chat notifier', async () => {
