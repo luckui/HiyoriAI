@@ -73,9 +73,9 @@ const CODING_AGENT_GUIDANCE = `
 
 const CODING_AGENT_SAFETY = `
 Coding-agent session rules:
-- start is only for creating or resuming the single managed coding-agent session bound to this Hiyori conversation.
+- start creates or resumes the managed coding-agent session for a project cwd. One Hiyori conversation may manage multiple project sessions.
 - When a project cwd is known, start follows resume-first behavior: one matching Codex session is resumed, multiple matches require asking the user, and no matches creates a new session.
-- If a coding-agent session is already bound, never call start again. Use continue for additional user instructions, status/result for inspection, or stop before replacing it.
+- If the same project cwd is already bound, do not call start again. Use continue/status/result/stop with that cwd to target the project session.
 - A system wakeup containing a coding-agent final result is not a user request to start Codex again.
 - If Codex fails, times out, or reports quota/network errors, do not retry start/continue automatically. Tell the user the coding agent failed and wait for an explicit user decision.
 `.trim();

@@ -67,7 +67,7 @@ const codingAgentTool: ToolDefinition<CodingAgentParams> = {
     function: {
       name: 'coding_agent',
       description:
-        'User-facing bridge to Codex or another coding agent. Use start only when the current conversation has no active coding-agent session; use continue to add instructions to the bound session; use status/result to inspect it; use stop before replacing it. Never retry start automatically after a failure or wakeup.',
+        'User-facing bridge to Codex or another coding agent. One Hiyori conversation can manage multiple project sessions. Use start to create/resume the session for a cwd, continue/status/stop with cwd to target that project, and never retry start automatically after a failure or wakeup.',
       parameters: {
         type: 'object',
         properties: {
@@ -75,7 +75,7 @@ const codingAgentTool: ToolDefinition<CodingAgentParams> = {
             type: 'string',
             enum: ['start', 'continue', 'status', 'result', 'sessions', 'stop'],
             description:
-              'start creates/resumes the one managed session for this conversation, continue sends a new turn to that same session, status/result inspects it, sessions lists Codex threads, stop releases the binding.',
+              'start creates/resumes the managed session for a project cwd, continue sends a new turn to the selected cwd session, status/result inspects it, sessions lists Codex threads, stop releases that project binding.',
           },
           agent: {
             type: 'string',
@@ -154,13 +154,19 @@ const codingAgentTool: ToolDefinition<CodingAgentParams> = {
     if (params.action === 'continue') {
       const result = await codingAgentSessionRouter.continue({
         conversationId,
+        agent: params.agent,
+        cwd: params.cwd,
         message: params.message?.trim() || '继续',
       });
       return result.userMessage;
     }
 
     if (params.action === 'status' || params.action === 'result') {
-      const result = await codingAgentSessionRouter.status({ conversationId });
+      const result = await codingAgentSessionRouter.status({
+        conversationId,
+        agent: params.agent,
+        cwd: params.cwd,
+      });
       return result.userMessage;
     }
 
@@ -182,7 +188,11 @@ const codingAgentTool: ToolDefinition<CodingAgentParams> = {
     }
 
     if (params.action === 'stop') {
-      const result = await codingAgentSessionRouter.stop({ conversationId });
+      const result = await codingAgentSessionRouter.stop({
+        conversationId,
+        agent: params.agent,
+        cwd: params.cwd,
+      });
       return result.userMessage;
     }
 

@@ -1,3 +1,4 @@
+import { normalize } from 'path';
 import type { RuntimeEvent, RuntimeSession } from '../runtimes/types';
 import type { RuntimeHost } from '../runtimes/runtimeHost';
 
@@ -30,11 +31,15 @@ export interface StartCodingAgentInput {
 
 export interface ContinueCodingAgentInput {
   conversationId: string;
+  agent?: string;
+  cwd?: string;
   message: string;
 }
 
 export interface ConversationCodingAgentInput {
   conversationId: string;
+  agent?: string;
+  cwd?: string;
 }
 
 export type CodingAgentNotifier = (conversationId: string, content: string) => Promise<void> | void;
@@ -52,10 +57,13 @@ interface CodingAgentBinding {
   sessionId: string;
   agent: string;
   displayName: string;
+  cwd?: string;
+  scopeKey: string;
 }
 
 export class CodingAgentSessionRouter {
   private readonly bindings = new Map<string, CodingAgentBinding>();
+  private readonly scopedBindings = new Map<string, CodingAgentBinding>();
   private readonly sessionsToConversations = new Map<string, string>();
   private readonly deliveredEvents = new Set<string>();
   private readonly lastAssistantMessages = new Map<string, string>();
@@ -78,18 +86,20 @@ export class CodingAgentSessionRouter {
   }
 
   async start(input: StartCodingAgentInput): Promise<CodingAgentActionResult> {
-    const existing = this.bindings.get(input.conversationId);
+    const agent = input.agent?.trim() || 'codex';
+    const scopeKey = this.scopeKey(input.conversationId, agent, input.cwd);
+    const existing = this.scopedBindings.get(scopeKey);
     if (existing) {
+      this.bindings.set(input.conversationId, existing);
       return {
         kind: 'already_active',
         sessionId: existing.sessionId,
         userMessage:
-          `${existing.displayName} already has a managed session in this conversation. ` +
-          'Use continue to add instructions, or stop before starting a different coding-agent session.',
+          `${existing.displayName} already has a managed session for this project. ` +
+          'Use continue to add instructions, or stop this project session before starting a replacement.',
       };
     }
 
-    const agent = input.agent?.trim() || 'codex';
     const session = await this.runtimeHost.startSession({
       providerId: agent,
       hiyoriConversationId: input.conversationId,
@@ -104,6 +114,16 @@ export class CodingAgentSessionRouter {
       sessionId: session.id,
       agent,
       displayName,
+      cwd: input.cwd,
+      scopeKey,
+    });
+    this.scopedBindings.set(scopeKey, {
+      conversationId: input.conversationId,
+      sessionId: session.id,
+      agent,
+      displayName,
+      cwd: input.cwd,
+      scopeKey,
     });
     this.sessionsToConversations.set(session.id, input.conversationId);
     await this.forwardUserMessage(input.conversationId, session.id, displayName, input.task);
@@ -116,7 +136,7 @@ export class CodingAgentSessionRouter {
   }
 
   async continue(input: ContinueCodingAgentInput): Promise<CodingAgentActionResult> {
-    const binding = this.bindings.get(input.conversationId);
+    const binding = this.resolveBinding(input);
     if (!binding) return this.missingSession();
 
     await this.runtimeHost.sendMessage(binding.sessionId, { content: input.message });
@@ -129,7 +149,7 @@ export class CodingAgentSessionRouter {
   }
 
   async status(input: ConversationCodingAgentInput): Promise<CodingAgentActionResult> {
-    const binding = this.bindings.get(input.conversationId);
+    const binding = this.resolveBinding(input);
     if (!binding) return this.missingSession();
 
     const session = this.runtimeHost.getSession(binding.sessionId);
@@ -142,11 +162,14 @@ export class CodingAgentSessionRouter {
   }
 
   async stop(input: ConversationCodingAgentInput): Promise<CodingAgentActionResult> {
-    const binding = this.bindings.get(input.conversationId);
+    const binding = this.resolveBinding(input);
     if (!binding) return this.missingSession();
 
     await this.runtimeHost.stop(binding.sessionId);
-    this.bindings.delete(input.conversationId);
+    if (this.bindings.get(input.conversationId)?.sessionId === binding.sessionId) {
+      this.bindings.delete(input.conversationId);
+    }
+    this.scopedBindings.delete(binding.scopeKey);
     this.sessionsToConversations.delete(binding.sessionId);
     return {
       kind: 'stopped',
@@ -158,6 +181,31 @@ export class CodingAgentSessionRouter {
   getActiveSession(conversationId: string): RuntimeSession | undefined {
     const binding = this.bindings.get(conversationId);
     return binding ? this.runtimeHost.getSession(binding.sessionId) : undefined;
+  }
+
+  private resolveBinding(input: ConversationCodingAgentInput): CodingAgentBinding | undefined {
+    if (input.cwd?.trim()) {
+      const requestedCwd = this.normalizedCwd(input.cwd);
+      const agent = input.agent?.trim();
+      const matches = Array.from(this.scopedBindings.values()).filter((binding) => (
+        binding.conversationId === input.conversationId &&
+        this.normalizedCwd(binding.cwd) === requestedCwd &&
+        (!agent || binding.agent === agent)
+      ));
+      const scoped = matches.length === 1 ? matches[0] : undefined;
+      if (scoped) this.bindings.set(input.conversationId, scoped);
+      return scoped;
+    }
+    return this.bindings.get(input.conversationId);
+  }
+
+  private scopeKey(conversationId: string, agent: string, cwd?: string): string {
+    const normalizedCwd = this.normalizedCwd(cwd);
+    return `${conversationId}\0${agent.trim() || 'codex'}\0${normalizedCwd}`;
+  }
+
+  private normalizedCwd(cwd?: string): string {
+    return cwd?.trim() ? normalize(cwd).toLowerCase() : '<default>';
   }
 
   private missingSession(): CodingAgentActionResult {
@@ -181,6 +229,7 @@ export class CodingAgentSessionRouter {
       approvalPolicy: input.approvalPolicy?.trim() || undefined,
       sandboxMode: input.sandboxMode?.trim() || undefined,
       networkAccessEnabled: input.networkAccessEnabled,
+      skipGitRepoCheck: !!input.cwd?.trim(),
     };
   }
 

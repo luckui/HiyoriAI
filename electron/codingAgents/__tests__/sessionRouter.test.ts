@@ -34,23 +34,76 @@ describe('CodingAgentSessionRouter', () => {
     expect(host.getSession(result.sessionId)?.hiyoriConversationId).toBe('conv-1');
   });
 
-  it('does not start another session when the conversation already has one', async () => {
+  it('does not start another session when the same project already has one', async () => {
     const { router, host } = createRouter();
     const first = await router.start({
       conversationId: 'conv-single-session',
       agent: 'fake',
       task: 'first task',
+      cwd: 'D:/repo',
     });
 
     const second = await router.start({
       conversationId: 'conv-single-session',
       agent: 'fake',
       task: 'second task',
+      cwd: 'D:/repo',
     });
 
     expect(second.kind).toBe('already_active');
     expect(second.sessionId).toBe(first.sessionId);
     expect(host.listSessions().filter((session) => session.hiyoriConversationId === 'conv-single-session')).toHaveLength(1);
+  });
+
+  it('allows one conversation to manage coding agent sessions for different projects', async () => {
+    const { router, host } = createRouter();
+    const first = await router.start({
+      conversationId: 'conv-multi-project',
+      agent: 'fake',
+      task: 'first project',
+      cwd: 'D:/repo-a',
+    });
+    const second = await router.start({
+      conversationId: 'conv-multi-project',
+      agent: 'fake',
+      task: 'second project',
+      cwd: 'D:/repo-b',
+    });
+
+    expect(first.kind).toBe('started');
+    expect(second.kind).toBe('started');
+    expect(second.sessionId).not.toBe(first.sessionId);
+    expect(host.listSessions().filter((session) => session.hiyoriConversationId === 'conv-multi-project')).toHaveLength(2);
+    expect(router.getActiveSession('conv-multi-project')?.id).toBe(second.sessionId);
+  });
+
+  it('continues the project selected by cwd instead of only the latest active session', async () => {
+    const { router, host } = createRouter();
+    const first = await router.start({
+      conversationId: 'conv-continue-by-cwd',
+      agent: 'fake',
+      task: 'first project',
+      cwd: 'D:/repo-a',
+    });
+    const second = await router.start({
+      conversationId: 'conv-continue-by-cwd',
+      agent: 'fake',
+      task: 'second project',
+      cwd: 'D:/repo-b',
+    });
+
+    const continued = await router.continue({
+      conversationId: 'conv-continue-by-cwd',
+      cwd: 'D:/repo-a',
+      message: 'continue first project',
+    });
+    await waitForEvents();
+    const firstEvents = host.listEvents(first.sessionId).map((event) => event.content).join('\n');
+    const secondEvents = host.listEvents(second.sessionId).map((event) => event.content).join('\n');
+
+    expect(continued.sessionId).toBe(first.sessionId);
+    expect(firstEvents).toContain('fake received: continue first project');
+    expect(secondEvents).not.toContain('continue first project');
   });
 
   it('continues the active session without exposing runtime ids to the caller', async () => {

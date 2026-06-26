@@ -88,6 +88,7 @@ describe('createCodexRuntimeProvider', () => {
         sandboxMode: 'workspace-write',
         approvalPolicy: 'on-request',
         networkAccessEnabled: true,
+        skipGitRepoCheck: true,
       },
     });
     provider.subscribe(session.id, (event) => seen.push(event));
@@ -104,6 +105,7 @@ describe('createCodexRuntimeProvider', () => {
       sandboxMode: 'workspace-write',
       approvalPolicy: 'on-request',
       networkAccessEnabled: true,
+      skipGitRepoCheck: true,
     });
     await waitForEvents();
     expect(fake.prompts).toEqual(['fix tests', 'continue']);
