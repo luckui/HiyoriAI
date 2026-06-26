@@ -18,8 +18,47 @@ interface CodingAgentParams {
   network_access_enabled?: boolean;
 }
 
+type CodexSessionDiscovery = typeof listCodexSessionCandidates;
+
+interface StartSessionDecision {
+  resumeSessionId?: string;
+  userMessage?: string;
+  resumedNotice?: string;
+}
+
 function conversationIdFrom(context?: ToolContext): string {
   return context?.conversationId || 'default';
+}
+
+export async function resolveStartSessionDecision(
+  params: CodingAgentParams,
+  discover: CodexSessionDiscovery = listCodexSessionCandidates
+): Promise<StartSessionDecision> {
+  const agent = params.agent?.trim() || 'codex';
+  if (agent !== 'codex' || params.resume_session_id?.trim() || !params.cwd?.trim()) {
+    return {};
+  }
+
+  const candidates = await discover({ cwd: params.cwd, limit: 2 });
+  if (candidates.length === 0) return {};
+  if (candidates.length === 1) {
+    return {
+      resumeSessionId: candidates[0].id,
+      resumedNotice: `已自动恢复该目录最近的 Codex 会话：${candidates[0].id}`,
+    };
+  }
+
+  return {
+    userMessage: [
+      `找到多个可恢复的 Codex 会话（目录：${params.cwd}）。请让用户选择要继续哪一个，或明确要求新建会话：`,
+      ...candidates.map((session, index) => (
+        `${index + 1}. ${session.id}${session.cwd ? `\n   cwd: ${session.cwd}` : ''}`
+      )),
+      '',
+      '用户选择后，用 coding_agent(action="start", resume_session_id="<选择的 id>", cwd="<项目目录>", task="<用户的新指令>")。',
+      '如果用户明确要新建，请先说明会开启新的 Codex 会话，再调用 start 且不要传 resume_session_id。',
+    ].join('\n'),
+  };
 }
 
 const codingAgentTool: ToolDefinition<CodingAgentParams> = {
@@ -93,19 +132,23 @@ const codingAgentTool: ToolDefinition<CodingAgentParams> = {
 
     if (params.action === 'start') {
       if (!params.task?.trim()) return '请告诉我要交给编程代理处理的具体任务。';
+      const startDecision = await resolveStartSessionDecision(params);
+      if (startDecision.userMessage) return startDecision.userMessage;
       const result = await codingAgentSessionRouter.start({
         conversationId,
         agent: params.agent || 'codex',
         task: params.task,
         cwd: params.cwd,
-        resumeSessionId: params.resume_session_id,
+        resumeSessionId: params.resume_session_id || startDecision.resumeSessionId,
         model: params.model,
         reasoningEffort: params.reasoning_effort,
         approvalPolicy: params.approval_policy,
         sandboxMode: params.sandbox_mode,
         networkAccessEnabled: params.network_access_enabled,
       });
-      return result.userMessage;
+      return startDecision.resumedNotice
+        ? `${startDecision.resumedNotice}\n${result.userMessage}`
+        : result.userMessage;
     }
 
     if (params.action === 'continue') {

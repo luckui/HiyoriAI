@@ -1,7 +1,59 @@
 import { describe, expect, it } from 'vitest';
-import codingAgentTool from '../codingAgent';
+import codingAgentTool, { resolveStartSessionDecision } from '../codingAgent';
 
 describe('coding_agent tool', () => {
+  it('auto-resumes the only Codex session candidate for a project directory', async () => {
+    const decision = await resolveStartSessionDecision(
+      {
+        action: 'start',
+        task: 'continue work',
+        cwd: 'D:/repo',
+      },
+      async () => [{ id: 'thread-one', cwd: 'D:/repo', file: 'session.jsonl', updatedAt: 1 }]
+    );
+
+    expect(decision.resumeSessionId).toBe('thread-one');
+    expect(decision.resumedNotice).toContain('thread-one');
+  });
+
+  it('asks the user to choose when multiple Codex sessions match a project directory', async () => {
+    const decision = await resolveStartSessionDecision(
+      {
+        action: 'start',
+        task: 'continue work',
+        cwd: 'D:/repo',
+      },
+      async () => [
+        { id: 'thread-newer', cwd: 'D:/repo', file: 'newer.jsonl', updatedAt: 2 },
+        { id: 'thread-older', cwd: 'D:/repo', file: 'older.jsonl', updatedAt: 1 },
+      ]
+    );
+
+    expect(decision.userMessage).toContain('找到多个可恢复的 Codex 会话');
+    expect(decision.userMessage).toContain('thread-newer');
+    expect(decision.userMessage).toContain('thread-older');
+    expect(decision.resumeSessionId).toBeUndefined();
+  });
+
+  it('does not search Codex sessions when a resume id is explicit', async () => {
+    let called = false;
+    const decision = await resolveStartSessionDecision(
+      {
+        action: 'start',
+        task: 'continue work',
+        cwd: 'D:/repo',
+        resume_session_id: 'explicit-thread',
+      },
+      async () => {
+        called = true;
+        return [];
+      }
+    );
+
+    expect(called).toBe(false);
+    expect(decision).toEqual({});
+  });
+
   it('starts a Codex task from user-facing parameters', async () => {
     const result = await codingAgentTool.execute(
       {
