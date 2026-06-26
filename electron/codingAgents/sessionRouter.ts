@@ -422,6 +422,7 @@ export class CodingAgentSessionRouter {
         session?.title ? `任务：${session.title}` : undefined,
         '',
         `这是 ${displayName} 的最终回复，请你理解结果后，用自己的话向用户转述；不要原样扮演 ${displayName}，也不要暴露执行过程细节。`,
+        '不要再调用 coding_agent 的 status、result、continue 或 start 来确认本次结果；下面已经是本轮最终回复。除非用户明确提出新的编程代理指令，否则请直接回复用户。',
         '',
         finalResponse,
       ].filter((line): line is string => line !== undefined).join('\n');

@@ -147,6 +147,7 @@ Coding-agent session rules:
 - When a project cwd is known, start follows resume-first behavior: one matching Codex session is resumed, multiple matches require asking the user, and no matches creates a new session.
 - If the same project cwd is already bound, do not call start again. Use continue/status/result/stop with that cwd to target the project session.
 - A system wakeup containing a coding-agent final result is not a user request to start Codex again.
+- When a wakeup says the coding-agent final response is included, do not call coding_agent status/result/continue/start to verify it. Reply to the user directly from the included final response.
 - If Codex fails, times out, or reports quota/network errors, do not retry start/continue automatically. Tell the user the coding agent failed and wait for an explicit user decision.
 `.trim();
 

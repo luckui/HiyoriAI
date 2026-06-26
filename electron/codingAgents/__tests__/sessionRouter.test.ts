@@ -143,6 +143,7 @@ describe('CodingAgentSessionRouter', () => {
 
     expect(delivered.some((message) => message.includes('fake received: continue'))).toBe(true);
     expect(delivered[0]).toContain('最终回复');
+    expect(delivered[0]).toContain('不要再调用 coding_agent');
   });
 
   it('does not wake the conversation on coding agent failure', async () => {
