@@ -8,7 +8,8 @@
 import type { LLMProviderConfig } from '../ai.config';
 import type { DBMessage } from '../db';
 import type { MemoryConfig, SummarizeResult } from './types';
-import { stripThinkTags, buildProviderExtraBody } from '../utils/textUtils';
+import { fetchCompletion } from '../llmClient';
+import { stripThinkTags } from '../utils/textUtils';
 
 // ── 提示词 ────────────────────────────────────────────────
 
@@ -87,35 +88,19 @@ export async function summarizeMessages(
     })
     .join('\n');
 
-  const response = await fetch(`${provider.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${provider.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: provider.model,
-      messages: [
-        { role: 'system', content: SUMMARY_SYSTEM_PROMPT },
-        { role: 'user', content: SUMMARY_USER_TEMPLATE(conversationText) },
-      ],
-      max_tokens: config.summaryMaxTokens,
+  const data = await fetchCompletion(
+    provider,
+    [
+      { role: 'system', content: SUMMARY_SYSTEM_PROMPT },
+      { role: 'user', content: SUMMARY_USER_TEMPLATE(conversationText) },
+    ],
+    undefined,
+    undefined,
+    {
+      maxTokens: config.summaryMaxTokens,
       temperature: config.summaryTemperature,
-      // 总结不需要工具调用，但需透传推理参数（防止思考内容污染摘要）
-      ...buildProviderExtraBody(provider),
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`记忆总结 HTTP ${response.status}: ${await response.text()}`);
-  }
-
-  const data = (await response.json()) as {
-    choices: Array<{ message: { content: string } }>;
-    error?: { message: string };
-  };
-
-  if (data.error) throw new Error(data.error.message);
+    },
+  );
 
   const raw = data.choices[0]?.message.content?.trim() ?? '';
   const text = stripThinkTags(raw);

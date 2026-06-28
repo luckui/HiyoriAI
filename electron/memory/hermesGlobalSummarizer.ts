@@ -11,7 +11,8 @@
 import type { LLMProviderConfig } from '../ai.config';
 import type { MemoryFragment } from '../db';
 import type { GlobalMemoryConfig } from './types';
-import { stripThinkTags, buildProviderExtraBody } from '../utils/textUtils';
+import { fetchCompletion } from '../llmClient';
+import { stripThinkTags } from '../utils/textUtils';
 import { toolRegistry } from '../tools';
 
 // ── 工具名称验证 ────────────────────────────────────────────
@@ -246,7 +247,6 @@ export async function refineStructuredGlobalMemory(
   newFragments: MemoryFragment[],
   config: GlobalMemoryConfig
 ): Promise<HermesMemoryOutput | null> {
-  const reqUrl = `${provider.baseUrl}/chat/completions`;
   const maxEntriesPerBlock = 10; // 每个分块最多 10 条（约 800 字）
 
   const messages = [
@@ -257,65 +257,17 @@ export async function refineStructuredGlobalMemory(
     },
   ];
 
-  const reqBody = JSON.stringify({
-    model: provider.model,
-    messages,
-    max_tokens: config.refinementMaxTokens,
-    temperature: 0.3, // 记忆提取需要稳定性
-    ...buildProviderExtraBody(provider),
-  });
-
-  // ── 带重试的请求（参考旧 globalSummarizer 的 3 次退避策略） ──
-  const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
-  const MAX_ATTEMPTS = 3;
   const TIMEOUT_MS = 60_000; // 60 秒超时（推理模型需要更久）
-
-  let response: Response | null = null;
-  let lastErr: unknown = null;
-
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    try {
-      response = await fetch(reqUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${provider.apiKey}`,
-        },
-        body: reqBody,
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-      });
-
-      if (response.ok) break; // 成功，跳出重试
-
-      // 可重试的 HTTP 状态码
-      if (RETRYABLE_STATUS.has(response.status) && attempt < MAX_ATTEMPTS) {
-        const waitMs = attempt * 1000;
-        console.warn(`[HermesMemory] 精炼请求 HTTP ${response.status}，${waitMs}ms 后重试（${attempt}/${MAX_ATTEMPTS}）`);
-        await new Promise((r) => setTimeout(r, waitMs));
-        response = null;
-        continue;
-      }
-
-      throw new Error(`HTTP ${response.status}: ${await response.text()}`);
-    } catch (e) {
-      lastErr = e;
-      if (attempt < MAX_ATTEMPTS) {
-        const waitMs = attempt * 1000;
-        console.warn(`[HermesMemory] 精炼请求异常，${waitMs}ms 后重试（${attempt}/${MAX_ATTEMPTS}）: ${(e as Error).message}`);
-        await new Promise((r) => setTimeout(r, waitMs));
-        response = null;
-        continue;
-      }
-    }
-  }
-
-  if (!response?.ok) {
-    throw (lastErr instanceof Error
-      ? lastErr
-      : new Error('结构化记忆精炼请求失败（无可用响应）'));
-  }
-
-  const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  const data = await fetchCompletion(
+    provider,
+    messages,
+    undefined,
+    AbortSignal.timeout(TIMEOUT_MS),
+    {
+      maxTokens: config.refinementMaxTokens,
+      temperature: 0.3,
+    },
+  );
   const rawText = data.choices?.[0]?.message?.content || '';
   
   if (!rawText.trim()) return null;

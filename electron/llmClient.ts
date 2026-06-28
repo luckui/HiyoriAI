@@ -30,6 +30,11 @@ export interface ChatCompletionResponse {
   };
 }
 
+export interface FetchCompletionOptions {
+  maxTokens?: number;
+  temperature?: number;
+}
+
 /** 可中断的 sleep，signal 触发时立即 reject */
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -39,8 +44,9 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-/** 429 重试配置 */
+/** 短暂 API / 网关错误重试配置 */
 const RETRY_DELAYS_MS = [5_000, 10_000, 20_000]; // 最多重试 3 次
+const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
 
 /**
  * 向 /chat/completions 发起单次请求，返回原始响应。
@@ -56,14 +62,15 @@ export async function fetchCompletion(
   messages: ChatMessage[],
   tools?: ToolSchema[],
   signal?: AbortSignal,
+  options: FetchCompletionOptions = {},
 ): Promise<ChatCompletionResponse> {
   const withTools = tools && tools.length > 0;
 
   const body = JSON.stringify({
     model: provider.model,
     messages,
-    max_tokens: provider.maxTokens ?? 1024,
-    temperature: provider.temperature ?? 0.85,
+    max_tokens: options.maxTokens ?? provider.maxTokens ?? 1024,
+    temperature: options.temperature ?? provider.temperature ?? 0.85,
     ...(withTools ? { tools } : {}),
     // 推理参数 + 服务商扩展字段（统一由 buildProviderExtraBody 处理）
     ...buildProviderExtraBody(provider),
@@ -74,7 +81,7 @@ export async function fetchCompletion(
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     if (attempt > 0) {
       const delayMs = RETRY_DELAYS_MS[attempt - 1];
-      console.warn(`[llmClient] HTTP 429 rate limit，${delayMs / 1000}s 后重试 (${attempt}/${RETRY_DELAYS_MS.length})...`);
+      console.warn(`[llmClient] transient API error，${delayMs / 1000}s 后重试 (${attempt}/${RETRY_DELAYS_MS.length})...`);
       await sleep(delayMs, signal);
     }
 
@@ -88,16 +95,16 @@ export async function fetchCompletion(
       signal,
     });
 
-    if (response.status === 429) {
-      // 尊重服务端指定的等待时间（若有）
+    if (RETRYABLE_STATUS.has(response.status)) {
       const retryAfter = response.headers.get('Retry-After');
       const errText = await response.text();
-      if (retryAfter) {
+      if (response.status === 429 && retryAfter) {
+        // 尊重服务端指定的等待时间（若有）
         const waitMs = (parseFloat(retryAfter) || 5) * 1000;
         console.warn(`[llmClient] Retry-After: ${retryAfter}s`);
         RETRY_DELAYS_MS[attempt] = Math.max(RETRY_DELAYS_MS[attempt] ?? 5000, waitMs);
       }
-      lastError = new Error(`HTTP 429: ${errText}`);
+      lastError = new Error(`HTTP ${response.status}: ${errText}`);
       continue; // 进入下一次重试
     }
 
