@@ -266,6 +266,7 @@ export async function refineStructuredGlobalMemory(
     {
       maxTokens: config.refinementMaxTokens,
       temperature: 0.3,
+      disableThinking: true,
     },
   );
   const rawText = data.choices?.[0]?.message?.content || '';

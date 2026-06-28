@@ -7,7 +7,7 @@
  */
 
 import type { LLMProviderConfig } from './ai.config';
-import { buildProviderExtraBody } from './utils/textUtils';
+import { buildProviderExtraBody, modelSupportsThinking } from './utils/textUtils';
 import type { ChatMessage, ToolSchema, ToolCall } from './tools/types';
 
 // 重新导出，让调用方无需直接依赖 tools/types
@@ -33,6 +33,7 @@ export interface ChatCompletionResponse {
 export interface FetchCompletionOptions {
   maxTokens?: number;
   temperature?: number;
+  disableThinking?: boolean;
 }
 
 /** 可中断的 sleep，signal 触发时立即 reject */
@@ -74,6 +75,9 @@ export async function fetchCompletion(
     ...(withTools ? { tools } : {}),
     // 推理参数 + 服务商扩展字段（统一由 buildProviderExtraBody 处理）
     ...buildProviderExtraBody(provider),
+    ...(options.disableThinking && modelSupportsThinking(provider.model)
+      ? { thinking: { type: 'disabled' } }
+      : {}),
   });
 
   let lastError: Error | undefined;

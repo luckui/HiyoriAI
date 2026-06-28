@@ -99,6 +99,7 @@ export async function summarizeMessages(
     {
       maxTokens: config.summaryMaxTokens,
       temperature: config.summaryTemperature,
+      disableThinking: true,
     },
   );
 

@@ -25,6 +25,16 @@ export function stripThinkTags(text: string): string {
   return result.trim();
 }
 
+export function modelSupportsThinking(model?: string): boolean {
+  const modelName = (model ?? '').toLowerCase();
+  return (
+    modelName.includes('seed') ||
+    modelName.includes('reasoner') ||
+    modelName.includes('r1') ||
+    modelName.includes('thinking')
+  );
+}
+
 /**
  * 将 LLMProviderConfig 的推理/扩展参数拼入请求体。
  * summarizer / globalSummarizer 和 aiService 均需传入，避免推理模型泄漏思考内容。
@@ -65,12 +75,7 @@ export function buildProviderExtraBody(provider: {
   //   - gpt-4o / gpt-4o-mini（OpenAI 标准模型）
   //   - glm-4-xxx（智谱 GLM 系列）
   //   - qwen-xxx（非 thinking 后缀）
-  const modelName = (provider.model ?? '').toLowerCase();
-  const supportsThinking = 
-    modelName.includes('seed') ||           // doubao-seed / doubao-pro-seed
-    modelName.includes('reasoner') ||       // deepseek-reasoner
-    modelName.includes('r1') ||             // deepseek-r1
-    modelName.includes('thinking');         // qwen-plus-thinking
+  const supportsThinking = modelSupportsThinking(provider.model);
 
   return {
     ...(provider.thinkingBudgetTokens &&

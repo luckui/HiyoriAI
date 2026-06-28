@@ -40,6 +40,48 @@ describe('fetchCompletion', () => {
     expect(body.temperature).toBe(0.2);
   });
 
+  it('can disable thinking for memory calls on thinking-capable models', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchCompletion(
+      { ...provider, model: 'doubao-seed-2-1-pro-260628' },
+      [{ role: 'user', content: 'summarize' }],
+      undefined,
+      undefined,
+      { disableThinking: true },
+    );
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.thinking).toEqual({ type: 'disabled' });
+  });
+
+  it('does not send provider-specific thinking controls to ordinary chat models', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchCompletion(
+      { ...provider, model: 'gpt-4o-mini' },
+      [{ role: 'user', content: 'summarize' }],
+      undefined,
+      undefined,
+      { disableThinking: true },
+    );
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.thinking).toBeUndefined();
+  });
+
   it('retries transient gateway failures', async () => {
     vi.useFakeTimers();
     const fetchMock = vi
