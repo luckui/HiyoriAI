@@ -257,6 +257,7 @@
                 <label class="s-label">音色
                   <input id="tts-speaker" type="text" class="s-input" placeholder="xiaoxiao" />
                   <select id="tts-speaker-select" class="s-input" style="display:none"></select>
+                  <button id="tts-genie-import-btn" class="s-small-btn" style="display:none;margin-top:6px" type="button">导入 Genie 音色</button>
                 </label>
                 <label class="s-label">语言
                   <select id="tts-language" class="s-input">
@@ -279,11 +280,6 @@
             <section class="s-section" id="tts-local-section" style="display:none">
               <h3 class="s-title">本地服务管理</h3>
               <span class="s-hint" id="tts-local-hint" style="margin-bottom:8px;display:block">一键部署免费的 edge-tts 本地服务（需 Python 3.10+）</span>
-              <div style="display:flex;gap:8px;flex-wrap:wrap">
-                <button id="tts-local-install-btn" class="s-small-btn">🚀 一键安装并启动</button>
-                <button id="tts-local-start-btn" class="s-small-btn">▶ 启动</button>
-                <button id="tts-local-stop-btn" class="s-small-btn">⏹ 停止</button>
-              </div>
               <pre id="tts-local-log" class="s-hint" style="margin-top:6px;white-space:pre-wrap;word-break:break-all;max-height:260px;overflow-y:auto;display:none;user-select:text;cursor:text;background:rgba(0,0,0,.03);padding:8px;border-radius:6px;font-size:12px;line-height:1.5"></pre>
             </section>
 

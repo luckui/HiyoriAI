@@ -1,11 +1,8 @@
 /**
- * Skill: manage_tts
+ * manage_tts
  *
- * 管理 TTS 语音合成功能（多引擎：edge-tts / moss-tts-nano / genie-tts）。
- * 支持操作：status / install / start / stop / install_and_start / enable / disable / switch
- *
- * 该工具让 AI Agent 能响应用户的语音系统安装/管理请求，
- * 自动完成 Python 虚拟环境创建、依赖安装、服务启停、引擎切换。
+ * User-facing voice broadcast control. The tool exposes intent-level actions
+ * only; install/start/stop are implementation details handled internally.
  */
 
 import { BrowserWindow } from 'electron';
@@ -13,7 +10,14 @@ import type { ToolDefinition, ToolExecuteResult } from '../types';
 import * as mgr from '../../ttsServerManager';
 import { getTTSConfig, updateTTSConfig } from '../../main';
 
-/* ── 终端气泡推送 helper（复用 hearing:terminal-block 频道） ────── */
+type TTSAction = 'status' | 'set_enabled' | 'set_provider';
+
+interface ManageTTSParams {
+  action: TTSAction;
+  enabled?: boolean;
+  provider?: string;
+}
+
 function sendTerminalBlock(ev: {
   blockId: string;
   line?: string;
@@ -26,13 +30,48 @@ function sendTerminalBlock(ev: {
   }
 }
 
-interface ManageTTSParams {
-  /** 要执行的操作 */
-  action: 'status' | 'install' | 'start' | 'stop' | 'install_and_start' | 'enable' | 'disable' | 'switch';
-  /** 引擎名称，可选。switch 操作必填。其余操作不填时自动使用当前 provider 的引擎。 */
-  engine?: 'edge-tts' | 'moss-tts-nano' | 'genie-tts';
-  /** 切换到的 provider key，switch 操作用 */
-  provider?: string;
+function toolReply(status: string, next: string, suggestedReply: string): string {
+  return [
+    '【工具结果】',
+    `状态：${status}`,
+    `下一步：${next}`,
+    '建议回复：',
+    suggestedReply,
+  ].join('\n');
+}
+
+async function ensureLocalProviderReady(
+  providerName: string,
+  engine: string | undefined,
+): Promise<{ ok: boolean; detail: string }> {
+  const engineLabel = engine ?? 'edge-tts';
+  const blockId = `tts-install-start-${Date.now()}`;
+  sendTerminalBlock({
+    blockId,
+    title: `安装并启动 TTS (${engineLabel})`,
+    status: 'running',
+  });
+
+  const logs: string[] = [];
+  const result = await mgr.installAndStart((msg) => {
+    logs.push(msg);
+    sendTerminalBlock({ blockId, line: msg, status: 'running' });
+  }, engine);
+
+  sendTerminalBlock({ blockId, status: result.ok ? 'done' : 'error' });
+
+  if (!result.ok) {
+    return {
+      ok: false,
+      detail: [
+        `TTS 服务 ${providerName} 启动失败。`,
+        ...logs,
+        result.detail,
+      ].join('\n'),
+    };
+  }
+
+  return { ok: true, detail: result.detail };
 }
 
 const manageTTSTool: ToolDefinition<ManageTTSParams> = {
@@ -41,47 +80,26 @@ const manageTTSTool: ToolDefinition<ManageTTSParams> = {
     function: {
       name: 'manage_tts',
       description:
-        '管理 TTS 语音合成功能（多引擎：edge-tts / moss-tts-nano / genie-tts）。\n' +
-        '当用户说"开启语音"、"关闭语音"、"安装语音"、"切换语音引擎"等时使用此工具。\n\n' +
-        '操作说明：\n' +
-        '  - enable：开启语音（会自动启动本地服务，如未安装会提示）\n' +
-        '  - disable：关闭语音（同时停止本地服务）\n' +
-        '  - install_and_start：首次安装并启动\n' +
-        '  - switch：切换到指定引擎（需指定 provider 参数）\n' +
-        '  - status：查看当前状态\n\n' +
-        '可用引擎：\n' +
-        '  - edge-tts（默认）：在线，快速，免费\n' +
-        '  - moss-tts-nano：离线，本地推理，支持音色克隆\n' +
-        '  - genie-tts：离线，GPT-SoVITS ONNX，CPU 高质量推理，菲比音色，支持中/英/日/韩\n\n' +
-        '可用 provider key：\n' +
-        '  - local_edge_tts（edge-tts 引擎）\n' +
-        '  - local_moss_nano（moss-tts-nano 引擎）\n' +
-        '  - local_genie_tts（genie-tts 引擎，菲比音色）\n\n' +
-        '【简单规则】\n' +
-        '  用户说 开启/启用/打开 语音 → enable\n' +
-        '  用户说 关闭/禁用/停止 语音 → disable\n' +
-        '  用户说 安装语音 → install_and_start（默认 edge-tts）\n' +
-        '  用户说 安装 MOSS/Nano 语音 → install_and_start + engine=moss-tts-nano\n' +
-        '  用户说 切换到 MOSS → switch + provider=local_moss_nano\n' +
-        '  用户说 安装 Genie/菲比 语音 → install_and_start + engine=genie-tts\n' +
-        '  用户说 切换到 Genie/菲比 → switch + provider=local_genie_tts\n' +
-        '  用户问语音状态 → status',
+        '管理语音播报。只使用用户意图动作：开启/关闭语音播报、切换当前语音服务、查看状态。\n' +
+        '用户说开启语音、打开语音、让你说话时，使用 set_enabled 并设置 enabled=true。\n' +
+        '用户说关闭语音、不要朗读、禁用 TTS 时，使用 set_enabled 并设置 enabled=false。\n' +
+        '用户要求换成某个声音或服务商时，使用 set_provider。只有语音播报已经开启时才能切换服务商；未开启时应提示用户先开启语音播报。\n' +
+        '不要把安装、启动、停止作为用户要选择的概念；本工具会在需要时自动安装并启动当前服务商。',
       parameters: {
         type: 'object',
         properties: {
           action: {
             type: 'string',
-            enum: ['status', 'install', 'start', 'stop', 'install_and_start', 'enable', 'disable', 'switch'],
-            description: '要执行的操作。常用：enable=开启, disable=关闭, install_and_start=首次安装, switch=切换引擎',
+            enum: ['status', 'set_enabled', 'set_provider'],
+            description: 'status=查看状态；set_enabled=开启或关闭语音播报；set_provider=切换语音服务商。',
           },
-          engine: {
-            type: 'string',
-            enum: ['edge-tts', 'moss-tts-nano', 'genie-tts'],
-            description: '引擎名称。install/start/stop 时指定操作哪个引擎，不填则自动使用当前 provider 的引擎。',
+          enabled: {
+            type: 'boolean',
+            description: 'set_enabled 时必填。true=开启语音播报，false=关闭语音播报。',
           },
           provider: {
             type: 'string',
-            description: 'switch 操作时指定切换到的 provider key，如 local_edge_tts 或 local_moss_nano。',
+            description: 'set_provider 时指定服务商 key，如 local_edge_tts、local_moss_nano、local_genie_tts。',
           },
         },
         required: ['action'],
@@ -89,163 +107,123 @@ const manageTTSTool: ToolDefinition<ManageTTSParams> = {
     },
   },
 
-
   async execute(params: ManageTTSParams): Promise<ToolExecuteResult> {
-    // 自动推断引擎：优先用参数，否则从当前 provider 取
-    const resolveEngine = (): string | undefined => {
-      if (params.engine) return params.engine;
-      const cfg = getTTSConfig();
-      return cfg.providers[cfg.activeProvider]?.localEngine;
-    };
+    const cfg = getTTSConfig();
 
     switch (params.action) {
       case 'status': {
-        const cfg = getTTSConfig();
-        const activeP = cfg.providers[cfg.activeProvider];
-        const engine = resolveEngine();
-        const s = await mgr.getStatus(engine);
-        const providerList = Object.entries(cfg.providers)
-          .map(([k, v]) => `  ${k === cfg.activeProvider ? '▶' : ' '} ${k}: ${v.name}`)
+        const activeProvider = cfg.providers[cfg.activeProvider];
+        const engine = activeProvider?.localEngine;
+        const localStatus = activeProvider?.isLocal
+          ? await mgr.getStatus(engine)
+          : null;
+        const providerLines = Object.entries(cfg.providers)
+          .map(([key, provider]) => `${key === cfg.activeProvider ? '*' : '-'} ${provider.name} (${key})`)
           .join('\n');
-        const lines = [
-          `=== TTS 状态 ===`,
-          `启用:     ${cfg.enabled ? '✅ 是' : '❌ 否'}`,
-          `当前服务: ${activeP?.name ?? '(无)'} [${cfg.activeProvider}]`,
-          `引擎:     ${activeP?.localEngine ?? '(外部)'}`,
-          `服务地址: ${activeP?.baseUrl ?? '(未配置)'}`,
+
+        const statusText = [
+          `语音播报：${cfg.enabled ? '已开启' : '未开启'}`,
+          `当前服务：${activeProvider?.name ?? '(未配置)'} (${cfg.activeProvider})`,
+          activeProvider?.isLocal && localStatus
+            ? `本地服务：${localStatus.running ? '运行中' : '未运行'}，健康检查：${localStatus.healthy ? '正常' : '不可达'}`
+            : '本地服务：外部服务商',
           '',
-          `=== 可用服务商 ===`,
-          providerList,
-          '',
-          `=== 本地服务 (${engine ?? 'edge-tts'}) ===`,
-          `已安装:   ${s.installed ? '✅ 是' : '❌ 否'}`,
-          `运行中:   ${s.running ? '✅ 是 (PID ' + s.pid + ')' : '❌ 否'}`,
-          `健康检查: ${s.healthy ? '✅ 正常' : '❌ 不可达'}`,
-        ];
-        return lines.join('\n');
+          '可用服务商：',
+          providerLines,
+        ].join('\n');
+
+        return toolReply('已查询', '回复用户', statusText);
       }
 
-      case 'install': {
-        const engine = resolveEngine();
-        const blockId = `tts-install-${Date.now()}`;
-        sendTerminalBlock({ blockId, title: `安装 TTS (${engine ?? 'edge-tts'})`, status: 'running' });
-        const logs: string[] = [];
-        const result = await mgr.install((msg) => {
-          logs.push(msg);
-          sendTerminalBlock({ blockId, line: msg, status: 'running' });
-        }, engine);
-        sendTerminalBlock({ blockId, status: result.ok ? 'done' : 'error' });
-        return result.ok
-          ? `✅ 安装成功 (${engine ?? 'edge-tts'})\n${logs.join('\n')}\n${result.detail}`
-          : `❌ 安装失败 (${engine ?? 'edge-tts'})\n${logs.join('\n')}\n${result.detail}`;
-      }
+      case 'set_enabled': {
+        if (typeof params.enabled !== 'boolean') {
+          return toolReply(
+            '需要参数',
+            '回复用户',
+            '请说明是开启还是关闭语音播报。',
+          );
+        }
 
-      case 'start': {
-        const engine = resolveEngine();
-        const result = await mgr.startServer(engine);
-        return result.ok
-          ? `✅ ${result.detail}`
-          : `❌ ${result.detail}`;
-      }
+        const activeProvider = cfg.providers[cfg.activeProvider];
+        if (!activeProvider) {
+          return toolReply(
+            '失败',
+            '回复用户',
+            `找不到当前语音服务商：${cfg.activeProvider}`,
+          );
+        }
 
-      case 'stop': {
-        const engine = resolveEngine();
-        const result = await mgr.stopServer(engine);
-        updateTTSConfig({ enabled: false });
-        return result.ok
-          ? `✅ ${result.detail}\nTTS 语音已禁用。`
-          : `❌ ${result.detail}`;
-      }
-
-      case 'enable': {
-        const cfg = getTTSConfig();
-        const activeP = cfg.providers[cfg.activeProvider];
-        const engine = activeP?.localEngine;
-        // 如果当前 provider 是本地的，确保服务在运行
-        if (activeP?.isLocal) {
-          const status = await mgr.getStatus(engine);
-          if (!status.installed) {
-            return `❌ 本地 TTS 服务 (${engine ?? 'edge-tts'}) 尚未安装，请先使用 install_and_start 安装。`;
+        if (!params.enabled) {
+          updateTTSConfig({ enabled: false });
+          if (activeProvider.isLocal) {
+            await mgr.stopServer(activeProvider.localEngine);
           }
-          if (!status.running) {
-            const startResult = await mgr.startServer(engine);
-            if (!startResult.ok) {
-              return `❌ 启动本地服务失败: ${startResult.detail}`;
-            }
+          return toolReply('已关闭', '回复用户', '语音播报已关闭。');
+        }
+
+        if (activeProvider.isLocal) {
+          const result = await ensureLocalProviderReady(activeProvider.name, activeProvider.localEngine);
+          if (!result.ok) {
+            updateTTSConfig({ enabled: false });
+            return toolReply('启动失败', '回复用户', result.detail);
           }
         }
+
         updateTTSConfig({ enabled: true });
-        return `✅ TTS 语音已开启\n服务: ${activeP?.name ?? cfg.activeProvider}`;
+        return toolReply(
+          '已开启',
+          '回复用户',
+          `语音播报已开启，当前服务商：${activeProvider.name}。`,
+        );
       }
 
-      case 'disable': {
-        const cfg2 = getTTSConfig();
-        const engine = cfg2.providers[cfg2.activeProvider]?.localEngine;
-        updateTTSConfig({ enabled: false });
-        const st = await mgr.getStatus(engine);
-        if (st.running) {
-          await mgr.stopServer(engine);
+      case 'set_provider': {
+        if (!cfg.enabled) {
+          return toolReply(
+            '无法切换',
+            '回复用户',
+            '语音播报未开启。请先开启语音播报，再切换语音服务商。',
+          );
         }
-        return '✅ TTS 语音已关闭，服务已停止。';
-      }
 
-      case 'install_and_start': {
-        const engine = resolveEngine();
-        const blockId = `tts-install-start-${Date.now()}`;
-        sendTerminalBlock({ blockId, title: `安装并启动 TTS (${engine ?? 'edge-tts'})`, status: 'running' });
-        const logs: string[] = [];
-        const result = await mgr.installAndStart((msg) => {
-          logs.push(msg);
-          sendTerminalBlock({ blockId, line: msg, status: 'running' });
-        }, engine);
-        sendTerminalBlock({ blockId, status: result.ok ? 'done' : 'error' });
-        if (result.ok) {
-          updateTTSConfig({ enabled: true });
-          return [
-            `✅ TTS 语音系统安装并启动成功！(${engine ?? 'edge-tts'})`,
-            '',
-            `进度日志:`,
-            ...logs.map(l => `  ${l}`),
-            '',
-            result.detail,
-            '',
-            `语音已自动开启，回复将自动播放语音。`,
-          ].join('\n');
-        } else {
-          return `❌ TTS 安装失败 (${engine ?? 'edge-tts'})\n${logs.join('\n')}\n${result.detail}`;
+        const targetKey = params.provider;
+        if (!targetKey) {
+          return toolReply(
+            '需要参数',
+            '回复用户',
+            '请指定要切换的语音服务商。',
+          );
         }
-      }
 
-      case 'switch': {
-        const targetProvider = params.provider;
+        const targetProvider = cfg.providers[targetKey];
         if (!targetProvider) {
-          return '❌ switch 操作需要指定 provider 参数（如 local_edge_tts 或 local_moss_nano）';
+          const available = Object.entries(cfg.providers)
+            .map(([key, provider]) => `${provider.name} (${key})`)
+            .join('\n');
+          return toolReply(
+            '未找到服务商',
+            '回复用户',
+            `没有找到语音服务商：${targetKey}\n可用服务商：\n${available}`,
+          );
         }
-        const cfg3 = getTTSConfig();
-        if (!(targetProvider in cfg3.providers)) {
-          const available = Object.keys(cfg3.providers).join(', ');
-          return `❌ 未找到 provider: ${targetProvider}\n可用: ${available}`;
-        }
-        const targetP = cfg3.providers[targetProvider];
-        // 如果目标是本地的，检查是否已安装
-        if (targetP.isLocal) {
-          const targetStatus = await mgr.getStatus(targetP.localEngine);
-          if (!targetStatus.installed) {
-            return `❌ ${targetP.name} 尚未安装，请先用 install_and_start + engine=${targetP.localEngine} 安装。`;
-          }
-          if (!targetStatus.running) {
-            const startResult = await mgr.startServer(targetP.localEngine);
-            if (!startResult.ok) {
-              return `❌ 启动 ${targetP.name} 失败: ${startResult.detail}`;
-            }
+
+        if (targetProvider.isLocal) {
+          const result = await ensureLocalProviderReady(targetProvider.name, targetProvider.localEngine);
+          if (!result.ok) {
+            return toolReply('切换失败', '回复用户', result.detail);
           }
         }
-        updateTTSConfig({ activeProvider: targetProvider, enabled: true });
-        return `✅ 已切换到 ${targetP.name}\n引擎: ${targetP.localEngine ?? '外部'}\n语音已自动开启。`;
+
+        updateTTSConfig({ activeProvider: targetKey, enabled: true });
+        return toolReply(
+          '已切换',
+          '回复用户',
+          `已切换到 ${targetProvider.name}，语音播报保持开启。`,
+        );
       }
 
       default:
-        return `❌ 未知操作: ${(params as any).action}`;
+        return toolReply('失败', '回复用户', `未知语音播报操作：${(params as { action: string }).action}`);
     }
   },
 };

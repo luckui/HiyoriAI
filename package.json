@@ -55,6 +55,19 @@
         ]
       },
       {
+        "from": "tts-server-genie",
+        "to": "tts-server-genie",
+        "filter": [
+          "**/*",
+          "!.venv/**",
+          "!__pycache__/**",
+          "!.server.pid",
+          "!GenieData/**",
+          "!CharacterModels/**",
+          "!.cache/**"
+        ]
+      },
+      {
         "from": "stt-server",
         "to": "stt-server",
         "filter": [

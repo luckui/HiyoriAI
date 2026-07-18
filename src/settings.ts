@@ -136,6 +136,7 @@ declare global {
       installAndStart(engine?: string): Promise<{ ok: boolean; detail: string; logs?: string[] }>;
       start(engine?: string): Promise<{ ok: boolean; detail: string }>;
       stop(engine?: string): Promise<{ ok: boolean; detail: string }>;
+      importGenieVoice(): Promise<{ ok: boolean; canceled?: boolean; voice?: VoicePresetItem; detail: string }>;
       onLog(cb: (msg: string) => void): () => void;
     };
     memoryAPI?: {
@@ -631,6 +632,7 @@ function renderTTSForm(): void {
   // ── 音色区域：preset 模式显示下拉，text 模式显示文本框 ──
   const speakerInput  = document.getElementById('tts-speaker')        as HTMLInputElement;
   const speakerSelect = document.getElementById('tts-speaker-select') as HTMLSelectElement;
+  const genieImportBtn = document.getElementById('tts-genie-import-btn') as HTMLButtonElement | null;
 
   if (p.speakerMode === 'preset' && p.voicePresets && p.voicePresets.length > 0) {
     speakerInput.style.display  = 'none';
@@ -647,6 +649,10 @@ function renderTTSForm(): void {
     speakerInput.style.display  = '';
     speakerSelect.style.display = 'none';
     speakerInput.value = p.speaker ?? '';
+  }
+
+  if (genieImportBtn) {
+    genieImportBtn.style.display = ttsEditKey === 'local_genie_tts' ? '' : 'none';
   }
 
 
@@ -678,6 +684,23 @@ async function saveTTSSettings(): Promise<void> {
   // 下拉框当前选中的即为活跃 provider
   if (ttsEditKey) ttsCfg.activeProvider = ttsEditKey;
   ttsCfg.enabled = (document.getElementById('tts-enabled') as HTMLInputElement).checked;
+  const provider = ttsCfg.providers[ttsCfg.activeProvider];
+  const log = document.getElementById('tts-local-log') as HTMLElement | null;
+  const showRuntimeLog = Boolean(ttsCfg.enabled && provider?.isLocal);
+  const unsubscribe = showRuntimeLog
+    ? (window as any).ttsLocalAPI?.onLog?.((msg: string) => {
+        if (!log) return;
+        log.textContent += msg + '\n';
+        log.scrollTop = log.scrollHeight;
+      })
+    : undefined;
+  if (showRuntimeLog) {
+    setTTSRuntimePending(`正在应用 ${provider?.name ?? 'TTS'}...`);
+    if (log) {
+      log.style.display = 'block';
+      log.textContent = '';
+    }
+  }
 
   const btn = document.getElementById('tts-save-btn') as HTMLButtonElement;
   btn.textContent = '保存中…';
@@ -780,111 +803,162 @@ async function runTTSHealthCheck(): Promise<void> {
 
 // ── Local TTS UI ──────────────────────────────────────
 
-async function localTTSInstallAndStart(): Promise<void> {
+async function importGenieVoice(): Promise<void> {
   const api = (window as any).ttsLocalAPI as Window['ttsLocalAPI'];
-  if (!api) return;
+  if (!api || !ttsCfg) return;
+  syncTTSFormToCfg();
 
-  const engine = ttsCfg?.providers[ttsEditKey!]?.localEngine;
-  const btn = document.getElementById('tts-local-install-btn') as HTMLButtonElement;
-  const log = document.getElementById('tts-local-log')         as HTMLElement;
-  btn.disabled = true;
-  btn.textContent = '安装中…';
-  log.style.display = 'block';
-  log.textContent = '';
+  const provider = ttsCfg.providers['local_genie_tts'];
+  if (!provider) return;
 
-  // 订阅实时日志
+  const btn = document.getElementById('tts-genie-import-btn') as HTMLButtonElement | null;
+  const log = document.getElementById('tts-local-log') as HTMLElement | null;
   const unsubscribe = api.onLog?.((msg: string) => {
+    if (!log) return;
     log.textContent += msg + '\n';
     log.scrollTop = log.scrollHeight;
   });
 
-  try {
-    const result = await api.installAndStart(engine);
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '导入中...';
+  }
+  if (log) {
+    log.style.display = 'block';
+    log.textContent = '';
+  }
+  setTTSRuntimePending('正在导入 Genie 音色...');
 
-    // 追加最终结果
-    if (result.ok) {
-      log.textContent += '\n✅ ' + result.detail;
-      btn.textContent = '✅ 完成';
-      // 安装启动成功 → 自动勾选启用 + 保存
-      const toggle = document.getElementById('tts-enabled') as HTMLInputElement;
-      toggle.checked = true;
-      await saveTTSSettings();
-    } else {
-      log.textContent += '\n❌ ' + result.detail;
-      btn.textContent = '❌ 失败，点击重试';
+  try {
+    const result = await api.importGenieVoice();
+    if (result.canceled) return;
+    if (!result.ok || !result.voice) {
+      if (log) log.textContent += `\n导入失败：${result.detail}\n`;
+      setTTSRuntimePending('Genie 音色导入失败');
+      return;
     }
-    log.scrollTop = log.scrollHeight;
+
+    const presets = provider.voicePresets ?? [];
+    provider.voicePresets = [
+      ...presets.filter(v => v.id !== result.voice!.id),
+      result.voice,
+    ];
+    provider.speakerMode = 'preset';
+    provider.speaker = result.voice.id;
+    ttsEditKey = 'local_genie_tts';
+    ttsCfg.activeProvider = 'local_genie_tts';
+    renderTTSProviderSelect();
+    renderTTSForm();
+    markSettingsDirty('tts');
+    await saveTTSSettings();
   } catch (e) {
-    log.textContent += `\n错误: ${String(e)}`;
-    btn.textContent = '❌ 失败，点击重试';
+    if (log) log.textContent += `\n导入失败：${String(e)}\n`;
+    setTTSRuntimePending('Genie 音色导入失败');
+    console.error('[Genie voice import]', e);
   } finally {
     unsubscribe?.();
-    btn.disabled = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '导入 Genie 音色';
+    }
     void refreshTTSRuntimeStatus();
   }
 }
 
-async function localTTSStart(): Promise<void> {
+function setTTSRuntimePending(message: string): void {
+  const dot = document.getElementById('tts-runtime-dot') as HTMLElement | null;
+  const text = document.getElementById('tts-runtime-text') as HTMLElement | null;
+  if (dot) dot.className = 's-status-dot s-status-pending';
+  if (text) text.textContent = message;
+}
+
+async function enableTTSFromToggle(): Promise<void> {
   const api = (window as any).ttsLocalAPI as Window['ttsLocalAPI'];
-  if (!api) return;
+  const toggle = document.getElementById('tts-enabled') as HTMLInputElement;
+  if (!ttsCfg || !ttsEditKey) return;
 
-  const engine = ttsCfg?.providers[ttsEditKey!]?.localEngine;
-  const btn = document.getElementById('tts-local-start-btn') as HTMLButtonElement;
-  const log = document.getElementById('tts-local-log') as HTMLElement;
-  btn.disabled = true;
-  btn.textContent = '启动中…';
-  log.style.display = 'block';
-  log.textContent = '启动 TTS Server…\n';
+  syncTTSFormToCfg();
+  ttsCfg.activeProvider = ttsEditKey;
+  const provider = ttsCfg.providers[ttsCfg.activeProvider];
+  const log = document.getElementById('tts-local-log') as HTMLElement | null;
 
-  const unsubscribe = api.onLog?.((msg: string) => {
-    log.textContent += msg + '\n';
-    log.scrollTop = log.scrollHeight;
-  });
-
+  toggle.disabled = true;
   try {
-    const result = await api.start(engine);
-    if (result.ok) {
-      log.textContent += '✅ ' + result.detail;
-      // 启动成功 → 自动勾选启用 + 保存
-      const toggle = document.getElementById('tts-enabled') as HTMLInputElement;
-      toggle.checked = true;
-      await saveTTSSettings();
+    if (provider?.isLocal) {
+      if (!api) throw new Error('TTS local API is unavailable');
+      setTTSRuntimePending(`正在安装/启动 ${provider.name}...`);
+      if (log) {
+        log.style.display = 'block';
+        log.textContent = '';
+      }
+      const unsubscribe = api.onLog?.((msg: string) => {
+        if (!log) return;
+        log.textContent += msg + '\n';
+        log.scrollTop = log.scrollHeight;
+      });
+
+      try {
+        const result = await api.installAndStart(provider.localEngine);
+        if (log) {
+          log.textContent += `\n${result.ok ? '✅' : '❌'} ${result.detail}`;
+          log.scrollTop = log.scrollHeight;
+        }
+        if (!result.ok) throw new Error(result.detail);
+      } finally {
+        unsubscribe?.();
+      }
     } else {
-      log.textContent += '❌ ' + result.detail;
+      setTTSRuntimePending(`正在启用 ${provider?.name ?? '语音服务'}...`);
     }
-    log.scrollTop = log.scrollHeight;
+
+    toggle.checked = true;
+    ttsCfg.enabled = true;
+    await saveTTSSettings();
   } catch (e) {
-    log.textContent += `错误: ${String(e)}`;
-    console.error('[TTS local start]', e);
+    console.error('[TTS toggle enable]', e);
+    toggle.checked = false;
+    ttsCfg.enabled = false;
+    await saveTTSSettings();
   } finally {
     unsubscribe?.();
-    btn.textContent = '▶ 启动';
-    btn.disabled = false;
+    toggle.disabled = false;
     void refreshTTSRuntimeStatus();
   }
 }
 
-async function localTTSStop(): Promise<void> {
+async function disableTTSFromToggle(): Promise<void> {
   const api = (window as any).ttsLocalAPI as Window['ttsLocalAPI'];
-  if (!api) return;
+  const toggle = document.getElementById('tts-enabled') as HTMLInputElement;
+  if (!ttsCfg || !ttsEditKey) return;
 
-  const engine = ttsCfg?.providers[ttsEditKey!]?.localEngine;
-  const btn = document.getElementById('tts-local-stop-btn') as HTMLButtonElement;
-  btn.disabled = true;
-  btn.textContent = '停止中…';
+  syncTTSFormToCfg();
+  const provider = ttsCfg.providers[ttsCfg.activeProvider] ?? ttsCfg.providers[ttsEditKey];
 
+  toggle.disabled = true;
   try {
-    await api.stop(engine);
+    toggle.checked = false;
+    ttsCfg.enabled = false;
+    await saveTTSSettings();
+    if (provider?.isLocal && api) {
+      await api.stop(provider.localEngine);
+    }
   } catch (e) {
-    console.error('[TTS local stop]', e);
+    console.error('[TTS toggle disable]', e);
   } finally {
-    btn.textContent = '⏹ 停止';
-    btn.disabled = false;
+    toggle.disabled = false;
     void refreshTTSRuntimeStatus();
   }
 }
 
-// ── 保存（LLM） ────────────────────────────────────────
+async function handleTTSEnabledToggleChanged(): Promise<void> {
+  const toggle = document.getElementById('tts-enabled') as HTMLInputElement | null;
+  if (!toggle) return;
+  if (toggle.checked) {
+    await enableTTSFromToggle();
+  } else {
+    await disableTTSFromToggle();
+  }
+}
 
 async function saveSettings(): Promise<void> {
   if (!cfg) return;
@@ -1596,12 +1670,11 @@ export function initSettings(): void {
   document.getElementById('wc-qr-start-btn')?.addEventListener('click', () => void startWeChatQRLogin());
   // ── TTS 表单事件 ─────────────────────────────────────
   document.getElementById('tts-save-btn')?.addEventListener('click', () => void saveTTSSettings());
+  document.getElementById('tts-enabled')?.addEventListener('change', () => void handleTTSEnabledToggleChanged());
   document.getElementById('tts-test-btn')?.addEventListener('click', () => void runTTSHealthCheck());
   document.getElementById('tts-add-btn')?.addEventListener('click', addTTSProvider);
   document.getElementById('tts-del-btn')?.addEventListener('click', deleteTTSProvider);
-  document.getElementById('tts-local-install-btn')?.addEventListener('click', () => void localTTSInstallAndStart());
-  document.getElementById('tts-local-start-btn')?.addEventListener('click', () => void localTTSStart());
-  document.getElementById('tts-local-stop-btn')?.addEventListener('click', () => void localTTSStop());
+  document.getElementById('tts-genie-import-btn')?.addEventListener('click', () => void importGenieVoice());
 
   document.getElementById('tts-eye-btn')?.addEventListener('click', () => {
     const input = document.getElementById('tts-apikey') as HTMLInputElement;

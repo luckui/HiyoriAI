@@ -81,6 +81,7 @@ contextBridge.exposeInMainWorld('ttsLocalAPI', {
   installAndStart: (engine?: string) => ipcRenderer.invoke('tts:local:install-and-start', engine),
   start:           (engine?: string) => ipcRenderer.invoke('tts:local:start', engine),
   stop:            (engine?: string) => ipcRenderer.invoke('tts:local:stop', engine),
+  importGenieVoice: () => ipcRenderer.invoke('tts:genie:import-voice'),
   onLog:           (cb: (msg: string) => void) => {
     const handler = (_e: unknown, msg: string) => cb(msg);
     ipcRenderer.on('tts:local:log', handler);

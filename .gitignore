@@ -34,6 +34,7 @@ Thumbs.db
 devtools/
 docs/
 .worktrees/
+.tmp-*/
 
 # 内嵌工具二进制（打包时从 extraResources 引用，不进 git）
 tools/uv.exe

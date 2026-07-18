@@ -114,7 +114,7 @@ const defaultTTSConfig: TTSConfig = {
     },
     local_genie_tts: {
       type: 'http-tts',
-      name: 'Genie-TTS 本地（菲比）',
+      name: 'Genie-TTS 本地',
       baseUrl: 'http://127.0.0.1:9882',
       apiKey: '',
       speaker: 'feibi',

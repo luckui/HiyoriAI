@@ -101,6 +101,8 @@ import { WeChatAdapter, qrLogin } from './bridges/adapters/wechat';
 import { ttsService } from './ttsService';
 import defaultTTSConfig from './tts.config';
 import type { TTSConfig } from './tts.config';
+import { ensureTTSRuntimeReady } from './ttsLifecycle';
+import { importGenieVoiceFromFolder, mergeBuiltinTTSProviders } from './genieVoiceManager';
 import { getAgentMode, setAgentMode } from './agentMode';
 import { DEFAULT_SKILLS_CONFIG, getSkillsConfig, saveSkillsConfig } from './skillsConfig';
 import type { BridgeAppConfig, AppConfig } from './config/appConfig';
@@ -286,7 +288,9 @@ function loadPersistedConfig(): void {
       skills: DEFAULT_SKILLS_CONFIG,
       bridges: bridgeConfig,
     }, { getSetting: () => null, setSetting });
+    cfg.tts = mergeBuiltinTTSProviders(cfg.tts, defaultTTSConfig);
     applyAppConfigToRuntime(cfg);
+    persistCurrentAppConfig();
     console.info('[Config] runtime config loaded from synchronized SQLite mirror');
   } catch (error) {
     console.error('[Config] failed to load config.json; using in-memory defaults:', (error as Error).message);
@@ -635,7 +639,7 @@ function createWindow(): void {
     deletedProviders: ttsConfig.deletedProviders ?? [],
   }));
 
-  ipcMain.handle('tts:config:save', (_e, newCfg: TTSConfig) => {
+  ipcMain.handle('tts:config:save', async (e, newCfg: TTSConfig) => {
     console.log(`[TTS] tts:config:save: enabled=${newCfg.enabled}, activeProvider=${newCfg.activeProvider}, providerKeys=[${Object.keys(newCfg.providers).join(',')}]`);
     ttsConfig.enabled = newCfg.enabled;
     ttsConfig.activeProvider = newCfg.activeProvider;
@@ -644,24 +648,24 @@ function createWindow(): void {
     ttsConfig.deletedProviders = (newCfg.deletedProviders ?? []).filter(k => !BUILTIN_TTS_PROVIDERS.has(k));
 
     // 内置方案关键字段强制用代码版本（用户只能改 speaker/language）
-    for (const [key, codeProv] of Object.entries(defaultTTSConfig.providers)) {
-      if (key in ttsConfig.providers) {
-        const uiProv = ttsConfig.providers[key];
-        ttsConfig.providers[key] = {
-          ...codeProv,
-          speaker: uiProv.speaker ?? codeProv.speaker,
-          language: uiProv.language ?? codeProv.language,
-        };
-      } else {
-        ttsConfig.providers[key] = codeProv;
-      }
+    ttsConfig = mergeBuiltinTTSProviders(ttsConfig, defaultTTSConfig);
+
+    const runtimeResult = await ensureTTSRuntimeReady(ttsConfig, {
+      installAndStart: ttsServerManager.installAndStart,
+      onProgress: (msg) => {
+        console.info(`[TTS] config save apply: ${msg}`);
+        try { e.sender.send('tts:local:log', msg); } catch { /* window closed */ }
+      },
+    });
+    if (!runtimeResult.ok) {
+      console.warn('[TTS] config save apply failed:', runtimeResult.detail);
     }
 
     activateTTSProvider();
     persistCurrentAppConfig();
     broadcastTTSChanged();
     console.log(`[TTS] tts:config:save 完成: isEnabled=${ttsService.isEnabled}`);
-    return { isEnabled: ttsService.isEnabled };
+    return { isEnabled: ttsService.isEnabled, runtime: runtimeResult };
   });
 
   ipcMain.handle('tts:config:test', async (_e, url: string) => {
@@ -699,6 +703,30 @@ function createWindow(): void {
   });
 
   ipcMain.handle('tts:local:stop', (_e, engine?: string) => ttsServerManager.stopServer(engine));
+
+  ipcMain.handle('tts:genie:import-voice', async (e) => {
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    const pick = await dialog.showOpenDialog(win, {
+      title: '选择 GPT-SoVITS V2/V2ProPlus 音色文件夹',
+      properties: ['openDirectory'],
+    });
+    if (pick.canceled || pick.filePaths.length === 0) {
+      return { ok: false, canceled: true, detail: '已取消' };
+    }
+
+    const sender = e.sender;
+    const result = await importGenieVoiceFromFolder(pick.filePaths[0], {
+      onProgress: (msg) => {
+        console.info(`[Genie Voice] ${msg}`);
+        try { sender.send('tts:local:log', msg); } catch { /* window closed */ }
+      },
+    });
+    if (result.ok) {
+      await ttsServerManager.stopServer('genie-tts');
+      try { sender.send('tts:local:log', '已停止 Genie-TTS，保存设置后会重新加载新音色。'); } catch { /* window closed */ }
+    }
+    return result;
+  });
 
   // ── STT 本地服务管理（听觉系统） ──────────────────────────────
   ipcMain.handle('stt:local:status', () => sttServerManager.getStatus());
@@ -884,18 +912,18 @@ app.whenReady().then(() => {
   activateTTSProvider();
 
   // 若 TTS 已启用且为本地服务，后台静默拉起（重启后无需用户手动 enable）
-  if (ttsConfig.enabled) {
-    const activeP = ttsConfig.providers[ttsConfig.activeProvider];
-    if (activeP?.isLocal && activeP.localEngine) {
-      ttsServerManager.getStatus(activeP.localEngine).then((status) => {
-        if (status.installed && !status.running) {
-          console.info(`[TTS] 启动时自动拉起本地服务: ${activeP.localEngine}`);
-          return ttsServerManager.startServer(activeP.localEngine);
-        }
-      }).catch((e) => console.warn('[TTS] 启动时自动拉起失败（忽略）:', (e as Error).message));
+  void ensureTTSRuntimeReady(ttsConfig, {
+    installAndStart: ttsServerManager.installAndStart,
+    onProgress: (msg) => console.info(`[TTS] startup apply: ${msg}`),
+  }).then((result) => {
+    if (!result.ok) {
+      console.warn('[TTS] startup apply failed:', result.detail);
     }
-  }
-
+    activateTTSProvider();
+    broadcastTTSChanged();
+  }).catch((e) => {
+    console.warn('[TTS] startup apply failed:', (e as Error).message);
+  });
   createWindow();
 
   // ── 启动平台桥接（Discord 等）：使用首个对话 ID 作为默认绑定对话 ──

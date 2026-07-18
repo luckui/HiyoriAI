@@ -77,9 +77,9 @@ manage_bilibili_live(action="ingest_test", event_type="danmu", uname="测试用�
 ### 启用/禁用 TTS
 
 ```
-manage_tts(action="enable")   # 开启语音播报
-manage_tts(action="disable")  # 关闭语音播报
-manage_tts(action="status")   # 查看当前状态
+manage_tts(action="set_enabled", enabled=true)   # 开启语音播报
+manage_tts(action="set_enabled", enabled=false)  # 关闭语音播报
+manage_tts(action="status")                      # 查看当前状态
 ```
 
 ### 听觉（语音识别）

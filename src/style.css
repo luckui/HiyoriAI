@@ -1962,6 +1962,7 @@ html, body {
 
 .s-status-off  { background: #aaa; }
 .s-status-on   { background: #4caf50; box-shadow: 0 0 5px #4caf5088; }
+.s-status-pending { background: #f6b73c; box-shadow: 0 0 5px #f6b73c88; }
 .s-status-err  { background: #f44336; }
 
 #dc-status-text,
