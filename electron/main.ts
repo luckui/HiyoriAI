@@ -80,7 +80,6 @@ import {
   getMessages,
   deleteConversation,
   renameConversation,
-  getSetting,
   setSetting,
   countNonSystemMessages,
   getMemoryCursor,
@@ -95,14 +94,17 @@ import { triggerConversationLeave, memoryManager, globalMemoryManager, runStartu
 import { exportMemoryToMarkdown, importMemoryFromMarkdown } from './memory/memoryExport';
 import aiConfig from './ai.config';
 import { startBridges, stopBridges } from './bridges/index';
+import { routeAsyncBridgeMessage } from './bridges/asyncDelivery';
 import { setCodingAgentNotifier, setCodingAgentTerminalNotifier } from './codingAgents';
 import { DiscordAdapter } from './bridges/adapters/discord';
 import { WeChatAdapter, qrLogin } from './bridges/adapters/wechat';
 import { ttsService } from './ttsService';
 import defaultTTSConfig from './tts.config';
-import type { TTSConfig, TTSProviderConfig } from './tts.config';
+import type { TTSConfig } from './tts.config';
 import { getAgentMode, setAgentMode } from './agentMode';
-import { getSkillsConfig, saveSkillsConfig } from './skillsConfig';
+import { DEFAULT_SKILLS_CONFIG, getSkillsConfig, saveSkillsConfig } from './skillsConfig';
+import type { BridgeAppConfig, AppConfig } from './config/appConfig';
+import { loadAppConfigFromFile, saveAppConfig } from './config/configStore';
 import { listTopicsForUI, listCollections, importSkillFolder, removeUserCollection } from './tools/impl/manual';
 import * as ttsServerManager from './ttsServerManager';
 import * as sttServerManager from './sttServerManager';
@@ -113,19 +115,25 @@ import { initLive2DBridge } from './live2dBridge';
 
 // ── 实运行时加载持久化的 LLM 配置 ──────────────────────────────
 
-/**
- * 用户可在 UI 修改的字段：apiKey / baseUrl / model / temperature / maxTokens / name
- * 其余字段（systemPrompt / extraParams / thinkingBudgetTokens）属于开发者配置，
- * 始终以 ai.config.ts 代码为准，不从数据库覆盖。
- * 这样每次更新提示词后重启即可生效，不需要用户手动清空数据库。
- */
-const USER_EDITABLE_FIELDS = ['apiKey', 'baseUrl', 'model', 'temperature', 'maxTokens', 'name'] as const;
-/** 内置 LLM 方案 key，禁止删除，始终从代码默认值恢复 */
-const BUILTIN_LLM_PROVIDERS = new Set(Object.keys(aiConfig.providers));
 /** 内置 TTS 方案 key，禁止删除，始终从代码默认值恢复 */
 const BUILTIN_TTS_PROVIDERS = new Set(Object.keys(defaultTTSConfig.providers));
 // ── TTS 多 Provider 内存配置 ──────────────────────────────────────
 let ttsConfig: TTSConfig = JSON.parse(JSON.stringify(defaultTTSConfig));
+let bridgeConfig: BridgeAppConfig = {
+  discord: {
+    enabled: process.env['DISCORD_ENABLED'] === 'true',
+    token: process.env['DISCORD_TOKEN'] ?? '',
+    allowedChannels: process.env['DISCORD_ALLOWED_CHANNELS'] ?? '',
+    proxyUrl: process.env['DISCORD_PROXY'] ?? '',
+  },
+  wechat: {
+    enabled: process.env['WECHAT_ENABLED'] === 'true',
+    token: process.env['WECHAT_TOKEN'] ?? '',
+    accountId: process.env['WECHAT_ACCOUNT_ID'] ?? '',
+    baseUrl: process.env['WECHAT_BASE_URL'] ?? 'https://ilinkai.weixin.qq.com',
+    sendChunkDelay: parseFloat(process.env['WECHAT_SEND_CHUNK_DELAY'] ?? '0.35'),
+  },
+};
 
 /**
  * 根据 ttsConfig 当前状态激活/禁用 ttsService
@@ -155,6 +163,45 @@ function broadcastTTSChanged(): void {
   }
 }
 
+function applyBridgeEnv(cfg: BridgeAppConfig): void {
+  process.env['DISCORD_ENABLED'] = String(cfg.discord.enabled);
+  process.env['DISCORD_TOKEN'] = cfg.discord.token;
+  process.env['DISCORD_ALLOWED_CHANNELS'] = cfg.discord.allowedChannels;
+  process.env['DISCORD_PROXY'] = cfg.discord.proxyUrl;
+
+  process.env['WECHAT_ENABLED'] = String(cfg.wechat.enabled);
+  process.env['WECHAT_TOKEN'] = cfg.wechat.token;
+  process.env['WECHAT_ACCOUNT_ID'] = cfg.wechat.accountId;
+  process.env['WECHAT_BASE_URL'] = cfg.wechat.baseUrl;
+  process.env['WECHAT_SEND_CHUNK_DELAY'] = String(cfg.wechat.sendChunkDelay);
+}
+
+function currentAppConfig(): AppConfig {
+  return {
+    version: 1,
+    llm: aiConfig,
+    tts: ttsConfig,
+    skills: getSkillsConfig(),
+    bridges: bridgeConfig,
+  };
+}
+
+function persistCurrentAppConfig(): void {
+  saveAppConfig(currentAppConfig(), { getSetting: () => null, setSetting });
+}
+
+function applyAppConfigToRuntime(cfg: AppConfig): void {
+  aiConfig.activeProvider = cfg.llm.activeProvider;
+  aiConfig.contextWindowRounds = cfg.llm.contextWindowRounds;
+  aiConfig.providers = cfg.llm.providers;
+  aiConfig.deletedProviders = cfg.llm.deletedProviders ?? [];
+
+  ttsConfig = cfg.tts;
+  bridgeConfig = cfg.bridges;
+  applyBridgeEnv(bridgeConfig);
+  saveSkillsConfig(cfg.skills);
+}
+
 /** 供 manageTTS 工具调用：获取当前 TTS 配置 */
 export function getTTSConfig(): TTSConfig {
   return ttsConfig;
@@ -169,7 +216,7 @@ export function updateTTSConfig(newCfg: Partial<TTSConfig>): void {
     ttsConfig.deletedProviders = newCfg.deletedProviders.filter(k => !BUILTIN_TTS_PROVIDERS.has(k));
   }
   activateTTSProvider();
-  setSetting('tts_config', JSON.stringify(ttsConfig));
+  persistCurrentAppConfig();
   broadcastTTSChanged();
 }
 
@@ -232,105 +279,17 @@ export function sendAgentWakeup(conversationId: string, triggerText: string): vo
 }
 
 function loadPersistedConfig(): void {
-  const stored = getSetting('llm_config');
-  if (!stored) return;
   try {
-    const saved = JSON.parse(stored) as typeof aiConfig;
-    if (saved.activeProvider) aiConfig.activeProvider = saved.activeProvider;
-    if (saved.contextWindowRounds) aiConfig.contextWindowRounds = saved.contextWindowRounds;
-
-    // 记录用户曾主动删除的 provider key（排除内置方案）
-    const deletedProviders: string[] = (saved.deletedProviders ?? []).filter((k: string) => !BUILTIN_LLM_PROVIDERS.has(k));
-    aiConfig.deletedProviders = deletedProviders;
-
-    if (saved.providers && Object.keys(saved.providers).length > 0) {
-      for (const [key, codeProv] of Object.entries(aiConfig.providers)) {
-        const dbProv = saved.providers[key];
-        if (!dbProv) continue; // DB 里没有此 provider，保留代码默认值
-        // 只把用户可编辑字段从 DB 合并进来，开发者字段（systemPrompt 等）始终用代码版本
-        for (const field of USER_EDITABLE_FIELDS) {
-          if (dbProv[field] !== undefined) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (codeProv as any)[field] = dbProv[field];
-          }
-        }
-      }
-      // 将 DB 里用户自行新增的 provider（代码里没有的）也加进来
-      for (const [key, dbProv] of Object.entries(saved.providers)) {
-        if (!(key in aiConfig.providers) && !deletedProviders.includes(key)) {
-          aiConfig.providers[key] = dbProv;
-        }
-      }
-    }
-  } catch {
-    // 解析失败时保持默认配置
-  }
-
-  // ── 从 SQLite 恢复 TTS 配置（多 Provider 格式 + 合并新增默认） ──
-  const storedTTS = getSetting('tts_config');
-  if (storedTTS) {
-    try {
-      const saved = JSON.parse(storedTTS);
-      if (saved.providers && saved.activeProvider) {
-        // 新格式：多 Provider
-        ttsConfig.enabled = saved.enabled ?? false;
-        ttsConfig.activeProvider = saved.activeProvider;
-        ttsConfig.providers = {}; // 先清空，重新构建
-        // 清洗 deletedProviders：内置方案不允许残留在删除列表中
-        ttsConfig.deletedProviders = (saved.deletedProviders ?? []).filter((k: string) => !BUILTIN_TTS_PROVIDERS.has(k));
-
-        // 内置方案：强制从代码默认值恢复，仅保留用户的 speaker / language
-        for (const [key, codeProv] of Object.entries(defaultTTSConfig.providers)) {
-          const dbProv = saved.providers[key];
-          if (dbProv) {
-            // DB 中有此内置方案：仅保留用户可编辑字段
-            ttsConfig.providers[key] = {
-              ...codeProv,
-              speaker: dbProv.speaker ?? codeProv.speaker,
-              language: dbProv.language ?? codeProv.language,
-            };
-          } else {
-            // DB 中缺失（被删除过）：整个补回
-            ttsConfig.providers[key] = codeProv;
-          }
-        }
-
-        // 将 DB 里用户自行新增的 provider 保留（非内置且未删除）
-        const deleted = new Set(ttsConfig.deletedProviders);
-        for (const [key, dbProv] of Object.entries(saved.providers)) {
-          if (!BUILTIN_TTS_PROVIDERS.has(key) && !deleted.has(key)) {
-            ttsConfig.providers[key] = dbProv as TTSProviderConfig;
-          }
-        }
-
-        // 若 activeProvider 指向已不存在的 key，回退到默认
-        if (!(ttsConfig.activeProvider in ttsConfig.providers)) {
-          ttsConfig.activeProvider = defaultTTSConfig.activeProvider;
-        }
-      } else if (saved.url !== undefined) {
-        // 旧格式迁移：{ enabled, url, apiKey, speaker, language }
-        const migrated: TTSConfig = {
-          enabled: saved.enabled ?? false,
-          activeProvider: 'migrated',
-          providers: {
-            migrated: {
-              type: 'http-tts',
-              name: '迁移的 TTS 服务',
-              baseUrl: saved.url || 'http://127.0.0.1:9880',
-              apiKey: saved.apiKey || '',
-              speaker: saved.speaker || 'xiaoxiao',
-              language: saved.language || 'Auto',
-            },
-            ...defaultTTSConfig.providers,
-          },
-          deletedProviders: [],
-        };
-        ttsConfig = migrated;
-        // 回写新格式
-        setSetting('tts_config', JSON.stringify(ttsConfig));
-        console.info('[TTS] 已从旧格式迁移到多 Provider 格式');
-      }
-    } catch { /* 解析失败保持默认 */ }
+    const cfg = loadAppConfigFromFile({
+      llm: aiConfig,
+      tts: defaultTTSConfig,
+      skills: DEFAULT_SKILLS_CONFIG,
+      bridges: bridgeConfig,
+    }, { getSetting: () => null, setSetting });
+    applyAppConfigToRuntime(cfg);
+    console.info('[Config] runtime config loaded from synchronized SQLite mirror');
+  } catch (error) {
+    console.error('[Config] failed to load config.json; using in-memory defaults:', (error as Error).message);
   }
 }
 
@@ -456,23 +415,17 @@ function createWindow(): void {
     aiConfig.activeProvider = newCfg.activeProvider;
     aiConfig.contextWindowRounds = newCfg.contextWindowRounds;
     aiConfig.providers = newCfg.providers; // 完全替换
-    // 内置方案不允许出现在删除列表中
-    aiConfig.deletedProviders = (newCfg.deletedProviders ?? []).filter(k => !BUILTIN_LLM_PROVIDERS.has(k));
-    setSetting('llm_config', JSON.stringify({
-      activeProvider: newCfg.activeProvider,
-      contextWindowRounds: newCfg.contextWindowRounds,
-      providers: newCfg.providers,
-      deletedProviders: aiConfig.deletedProviders,
-    }));
+    aiConfig.deletedProviders = newCfg.deletedProviders ?? [];
+    persistCurrentAppConfig();
   });
 
   // ── Discord 设置 ──────────────────────────────────────────
   ipcMain.handle('discord:get', () => {
     return {
-      enabled:         process.env['DISCORD_ENABLED'] === 'true',
-      token:           process.env['DISCORD_TOKEN'] ?? '',
-      allowedChannels: process.env['DISCORD_ALLOWED_CHANNELS'] ?? '',
-      proxyUrl:        process.env['DISCORD_PROXY'] ?? '',
+      enabled: bridgeConfig.discord.enabled,
+      token: bridgeConfig.discord.token,
+      allowedChannels: bridgeConfig.discord.allowedChannels,
+      proxyUrl: bridgeConfig.discord.proxyUrl,
     };
   });
 
@@ -483,29 +436,10 @@ function createWindow(): void {
   ipcMain.handle('discord:save', async (_e, cfg: {
     enabled: boolean; token: string; allowedChannels: string; proxyUrl: string;
   }) => {
-    // ① 先更新内存 env（当前会话立即生效，与文件写入无关）
-    process.env['DISCORD_ENABLED']          = String(cfg.enabled);
-    process.env['DISCORD_TOKEN']            = cfg.token;
-    process.env['DISCORD_ALLOWED_CHANNELS'] = cfg.allowedChannels;
-    process.env['DISCORD_PROXY']            = cfg.proxyUrl;
+    bridgeConfig.discord = cfg;
+    applyBridgeEnv(bridgeConfig);
+    persistCurrentAppConfig();
 
-    // ② 再持久化到 .env 文件（失败只影响下次重启，不影响当前会话）
-    try {
-      const fs = require('fs') as typeof import('fs');
-      const envPath = getEnvFilePath();
-      let envContent = '';
-      try { envContent = fs.readFileSync(envPath, 'utf-8'); } catch { }
-      const lines = envContent.split('\n').filter(l => !/^DISCORD_/.test(l.trim()));
-      lines.push(`DISCORD_ENABLED=${cfg.enabled}`);
-      lines.push(`DISCORD_TOKEN=${cfg.token}`);
-      lines.push(`DISCORD_ALLOWED_CHANNELS=${cfg.allowedChannels}`);
-      lines.push(`DISCORD_PROXY=${cfg.proxyUrl}`);
-      fs.writeFileSync(envPath, lines.join('\n'), 'utf-8');
-    } catch (e) {
-      console.warn('[Discord config] 写入 .env 失败（仅影响持久化）:', (e as Error).message);
-    }
-
-    // ③ 重启 bridges
     await stopBridges();
     const convs = listConversations();
     const convId = convs.length > 0 ? convs[0].id : createConversation().id;
@@ -537,11 +471,11 @@ function createWindow(): void {
   // ── WeChat 设置 ──────────────────────────────────────────────
   ipcMain.handle('wechat:get', () => {
     return {
-      enabled:         process.env['WECHAT_ENABLED'] === 'true',
-      token:           process.env['WECHAT_TOKEN'] ?? '',
-      accountId:       process.env['WECHAT_ACCOUNT_ID'] ?? '',
-      baseUrl:         process.env['WECHAT_BASE_URL'] ?? 'https://ilinkai.weixin.qq.com',
-      sendChunkDelay:  parseFloat(process.env['WECHAT_SEND_CHUNK_DELAY'] ?? '0.35'),
+      enabled: bridgeConfig.wechat.enabled,
+      token: bridgeConfig.wechat.token,
+      accountId: bridgeConfig.wechat.accountId,
+      baseUrl: bridgeConfig.wechat.baseUrl,
+      sendChunkDelay: bridgeConfig.wechat.sendChunkDelay,
     };
   });
 
@@ -552,35 +486,17 @@ function createWindow(): void {
   ipcMain.handle('wechat:save', async (_e, cfg: {
     enabled: boolean; token?: string; accountId?: string; baseUrl?: string; sendChunkDelay?: number;
   }) => {
-    // 更新内存 env
-    process.env['WECHAT_ENABLED']         = String(cfg.enabled);
-    if (cfg.token) process.env['WECHAT_TOKEN'] = cfg.token;
-    if (cfg.accountId) process.env['WECHAT_ACCOUNT_ID'] = cfg.accountId;
-    if (cfg.baseUrl) process.env['WECHAT_BASE_URL'] = cfg.baseUrl;
-    if (cfg.sendChunkDelay !== undefined) {
-      process.env['WECHAT_SEND_CHUNK_DELAY'] = String(cfg.sendChunkDelay);
-    }
+    bridgeConfig.wechat = {
+      ...bridgeConfig.wechat,
+      enabled: cfg.enabled,
+      token: cfg.token ?? bridgeConfig.wechat.token,
+      accountId: cfg.accountId ?? bridgeConfig.wechat.accountId,
+      baseUrl: cfg.baseUrl ?? bridgeConfig.wechat.baseUrl,
+      sendChunkDelay: cfg.sendChunkDelay ?? bridgeConfig.wechat.sendChunkDelay,
+    };
+    applyBridgeEnv(bridgeConfig);
+    persistCurrentAppConfig();
 
-    // 持久化到 .env 文件
-    try {
-      const fs = require('fs') as typeof import('fs');
-      const envPath = getEnvFilePath();
-      let envContent = '';
-      try { envContent = fs.readFileSync(envPath, 'utf-8'); } catch { }
-      const lines = envContent.split('\n').filter(l => !/^WECHAT_/.test(l.trim()));
-      lines.push(`WECHAT_ENABLED=${cfg.enabled}`);
-      if (cfg.token) lines.push(`WECHAT_TOKEN=${cfg.token}`);
-      if (cfg.accountId) lines.push(`WECHAT_ACCOUNT_ID=${cfg.accountId}`);
-      if (cfg.baseUrl) lines.push(`WECHAT_BASE_URL=${cfg.baseUrl}`);
-      if (cfg.sendChunkDelay !== undefined) {
-        lines.push(`WECHAT_SEND_CHUNK_DELAY=${cfg.sendChunkDelay}`);
-      }
-      fs.writeFileSync(envPath, lines.join('\n'), 'utf-8');
-    } catch (e) {
-      console.warn('[WeChat config] 写入 .env 失败（仅影响持久化）:', (e as Error).message);
-    }
-
-    // 重启 bridges
     await stopBridges();
     const convs = listConversations();
     const convId = convs.length > 0 ? convs[0].id : createConversation().id;
@@ -592,27 +508,16 @@ function createWindow(): void {
       for await (const state of qrLogin()) {
         event.sender.send('wechat:qr-login-update', state);
         if (state.status === 'confirmed' && state.credentials) {
-          // 保存凭证到 .env
           const creds = state.credentials;
-          process.env['WECHAT_ENABLED']    = 'true';
-          process.env['WECHAT_TOKEN']      = creds.token;
-          process.env['WECHAT_ACCOUNT_ID'] = creds.accountId;
-          process.env['WECHAT_BASE_URL']   = creds.baseUrl;
-          
-          try {
-            const fs = require('fs') as typeof import('fs');
-            const envPath = getEnvFilePath();
-            let envContent = '';
-            try { envContent = fs.readFileSync(envPath, 'utf-8'); } catch { }
-            const lines = envContent.split('\n').filter(l => !/^WECHAT_/.test(l.trim()));
-            lines.push(`WECHAT_ENABLED=true`);
-            lines.push(`WECHAT_TOKEN=${creds.token}`);
-            lines.push(`WECHAT_ACCOUNT_ID=${creds.accountId}`);
-            lines.push(`WECHAT_BASE_URL=${creds.baseUrl}`);
-            fs.writeFileSync(envPath, lines.join('\n'), 'utf-8');
-          } catch (e) {
-            console.warn('[WeChat QR] 写入 .env 失败:', (e as Error).message);
-          }
+          bridgeConfig.wechat = {
+            ...bridgeConfig.wechat,
+            enabled: true,
+            token: creds.token,
+            accountId: creds.accountId,
+            baseUrl: creds.baseUrl,
+          };
+          applyBridgeEnv(bridgeConfig);
+          persistCurrentAppConfig();
           
           // 登录成功后自动启动 adapter
           try {
@@ -668,6 +573,7 @@ function createWindow(): void {
 
   ipcMain.handle('skills:save-config', (_e, cfg: ReturnType<typeof getSkillsConfig>) => {
     saveSkillsConfig(cfg);
+    persistCurrentAppConfig();
   });
 
   /**
@@ -752,7 +658,7 @@ function createWindow(): void {
     }
 
     activateTTSProvider();
-    setSetting('tts_config', JSON.stringify(ttsConfig));
+    persistCurrentAppConfig();
     broadcastTTSChanged();
     console.log(`[TTS] tts:config:save 完成: isEnabled=${ttsService.isEnabled}`);
     return { isEnabled: ttsService.isEnabled };
@@ -942,7 +848,18 @@ function createWindow(): void {
 app.whenReady().then(() => {
   initDatabase();
   loadPersistedConfig();
-  setCodingAgentNotifier((conversationId, content) => sendAgentWakeup(conversationId, content));
+  setCodingAgentNotifier((conversationId, content) => {
+    sendAgentWakeup(conversationId, content);
+    void routeAsyncBridgeMessage({
+      sendDiscord: async (channelId, text) => {
+        const channel = await DiscordAdapter.activeClient?.channels.fetch(channelId);
+        if (!channel || !('send' in channel) || typeof channel.send !== 'function') {
+          throw new Error(`Discord channel is not sendable: ${channelId}`);
+        }
+        await channel.send(text);
+      },
+    }, conversationId, content);
+  });
   setCodingAgentTerminalNotifier((event) => {
     if (!mainWin || mainWin.isDestroyed() || mainWin.webContents.isDestroyed()) return;
     mainWin.webContents.send('hearing:terminal-block', {

@@ -1,14 +1,14 @@
-/**
+﻿/**
  * 工具: request_agent_mode
  *
  * Chat 模式工具不足时，向用户请求升级为 Agent 模式。
  * 用户可能忘记切换模式，AI 应主动检测并提醒。
  *
- * 返回 SkillPauseResult，AI 会暂停等待用户响应。
+ * 返回 ToolPauseResult，AI 会暂停等待用户响应。
  * 用户确认后，前端发送 IPC 切换模式，AI 自动继续对话并获得新工具权限。
  */
 
-import type { ToolDefinition, SkillPauseResult } from '../types';
+import type { ToolDefinition, ToolPauseResult } from '../types';
 import { BrowserWindow } from 'electron';
 
 interface RequestAgentModeParams {
@@ -52,7 +52,7 @@ const requestAgentMode: ToolDefinition<RequestAgentModeParams> = {
     },
   },
 
-  async execute({ reason, needed_tools }): Promise<SkillPauseResult> {
+  async execute({ reason, needed_tools }): Promise<ToolPauseResult> {
     // 不发送 IPC 事件，只返回文本提示（用户手动点击 toggle 切换）
     return {
       __pause: true as const,

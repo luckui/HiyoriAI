@@ -40,14 +40,17 @@ export const TOOL_MAPPING = `
 `.trim();
 
 /**
- * Skill 暂停机制说明
+ * 工具交互结果说明
  */
-export const SKILL_PAUSE_RULE = `
-【Skill 暂停】
-工具返回 ⏸️ 开头的结果时，表示需要用户介入：
-1. 向用户说明【当前状态】
-2. 引导用户完成操作
-3. 用户确认后按【用户完成后】的提示继续
+export const TOOL_INTERACTION_RULE = `
+【工具交互结果】
+工具结果可能要求你选择下一步：
+• 需要回复用户：基于结果直接回答用户，然后结束本轮。
+• 需要询问用户：把缺少的信息或候选项说清楚，然后等待用户回复；不要替用户选择。
+• 需要继续执行：只有工具结果明确要求继续、且你已有足够信息时，才继续调用合适的工具。
+• 需要用户操作：说明当前状态和用户要做的事，然后等待用户完成。
+
+工具结果的指示优先于通用行动规则。不要因为“工具优先”而覆盖“询问用户”或“回复用户”的结果。
 `.trim();
 
 /**
@@ -72,7 +75,7 @@ export function buildSystemPrompt(): string {
     '',
     TOOL_MAPPING,
     '',
-    SKILL_PAUSE_RULE,
+    TOOL_INTERACTION_RULE,
     '',
     DISCORD_RULE,
   ].join('\n');

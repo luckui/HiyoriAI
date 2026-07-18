@@ -10,7 +10,6 @@ interface ProviderConfig {
   model: string;
   maxTokens?: number;
   temperature?: number;
-  systemPrompt?: string;
 }
 
 interface RuntimeConfig {
@@ -177,6 +176,31 @@ let savedWindowWidth = 0;
 let savedWindowHeight = 0;
 /** Tab 溢出重排回调（由 initTabOverflow 设置） */
 let _reflowTabs: (() => void) | null = null;
+let _settingsLoading = false;
+const _dirtySections = new Set<'llm' | 'tts' | 'discord' | 'wechat' | 'skills'>();
+let _saveCurrentSkillsConfig: (() => Promise<void>) | null = null;
+let _settingsNavGuardOpen = false;
+
+function markSettingsDirty(section: 'llm' | 'tts' | 'discord' | 'wechat' | 'skills'): void {
+  if (_settingsLoading) return;
+  _dirtySections.add(section);
+  updateUnsavedState();
+}
+
+function clearSettingsDirty(section?: 'llm' | 'tts' | 'discord' | 'wechat' | 'skills'): void {
+  if (section) _dirtySections.delete(section);
+  else _dirtySections.clear();
+  updateUnsavedState();
+}
+
+function hasUnsavedSettings(): boolean {
+  return _dirtySections.size > 0;
+}
+
+function updateUnsavedState(): void {
+  const panel = document.getElementById('settings-panel');
+  panel?.classList.toggle('settings-dirty', hasUnsavedSettings());
+}
 
 // ── 表单 ↔ 内存同步 ───────────────────────────────────
 
@@ -191,8 +215,6 @@ function syncFormToCfg(): void {
     parseFloat((document.getElementById('s-temp')   as HTMLInputElement).value) || 0.85;
   p.maxTokens  =
     parseInt((document.getElementById('s-tokens') as HTMLInputElement).value, 10) || 1024;
-  p.systemPrompt = (document.getElementById('s-sysprompt') as HTMLTextAreaElement).value;
-
   const rounds = parseInt((document.getElementById('s-rounds') as HTMLInputElement).value, 10);
   if (rounds > 0) cfg.contextWindowRounds = rounds;
 }
@@ -208,8 +230,6 @@ function renderForm(): void {
   (document.getElementById('s-model')     as HTMLInputElement).value  = p.model     ?? '';
   (document.getElementById('s-temp')      as HTMLInputElement).value  = String(p.temperature ?? 0.85);
   (document.getElementById('s-tokens')    as HTMLInputElement).value  = String(p.maxTokens  ?? 1024);
-  (document.getElementById('s-sysprompt') as HTMLTextAreaElement).value = p.systemPrompt ?? '';
-
   // 内置方案或只有一个 provider 时隐藏删除按钮
   const delBtn = document.getElementById('s-del-btn') as HTMLButtonElement;
   const isBuiltin = BUILTIN_LLM_PROVIDERS.includes(editKey);
@@ -241,6 +261,7 @@ function renderProviderSelect(): void {
   // 监听下拉框变化
   select.onchange = () => {
     syncFormToCfg();
+    markSettingsDirty('llm');
     editKey = select.value;
     renderProviderSelect();
     renderForm();
@@ -293,6 +314,7 @@ async function saveDiscordSettings(): Promise<void> {
   btn.disabled = true;
   try {
     await window.discordAPI.save(cfg);
+    clearSettingsDirty('discord');
     btn.textContent = '✓ 已保存';
     // 给 bot 2 秒启动时间再刷新状态
     setTimeout(() => {
@@ -352,6 +374,7 @@ async function saveWeChatSettings(): Promise<void> {
   btn.disabled = true;
   try {
     await window.wechatAPI.save(cfg);
+    clearSettingsDirty('wechat');
     btn.textContent = '✓ 已保存';
     setTimeout(() => {
       void refreshWeChatStatus();
@@ -663,6 +686,7 @@ async function saveTTSSettings(): Promise<void> {
   _ttsSavingFromUI = true;
   try {
     await window.ttsSettingsAPI.save(ttsCfg);
+    clearSettingsDirty('tts');
     btn.textContent = '✓ 已保存';
     void refreshTTSRuntimeStatus();
     renderTTSProviderSelect();
@@ -868,6 +892,7 @@ async function saveSettings(): Promise<void> {
   // 下拉框当前选中的即为活跃 provider
   if (editKey) cfg.activeProvider = editKey;
   await window.settingsAPI!.save(cfg);
+  clearSettingsDirty('llm');
 
   const btn = document.getElementById('settings-save-btn') as HTMLButtonElement;
   btn.textContent = '✓ 已保存';
@@ -894,7 +919,6 @@ function addProvider(): void {
     model: 'gpt-4o-mini',
     temperature: 0.85,
     maxTokens: 1024,
-    systemPrompt: '',
   };
   editKey = key;
   renderProviderSelect();
@@ -1109,6 +1133,7 @@ async function loadSkillsUI(): Promise<void> {
     '在 agent 模式下将技能注入系统提示词（chat 模式始终不注入）',
     draft.enabled,
     (v) => {
+      markSettingsDirty('skills');
       draft.enabled = v;
       container.querySelectorAll<HTMLElement>('.skills-coll-body').forEach((el) => {
         el.style.opacity = v ? '1' : '0.4';
@@ -1127,6 +1152,7 @@ async function loadSkillsUI(): Promise<void> {
     ],
     draft.listingMode,
     (v) => {
+      markSettingsDirty('skills');
       draft.listingMode = v as SkillListingMode;
       // Sync every collection's "inherit" placeholder text immediately
       const inherited = `继承全局（${skillsModeLabel(draft.listingMode)}）`;
@@ -1188,6 +1214,7 @@ async function loadSkillsUI(): Promise<void> {
 
     // Collection enabled toggle
     collBody.appendChild(skillsMkToggleRow('启用此集合', null, collEnabled, (v) => {
+      markSettingsDirty('skills');
       if (v) {
         draft.disabledCollections = draft.disabledCollections.filter((c) => c !== collId);
       } else if (!draft.disabledCollections.includes(collId)) {
@@ -1209,6 +1236,7 @@ async function loadSkillsUI(): Promise<void> {
       ],
       draft.collectionModes[collId] ?? '',
       (v) => {
+        markSettingsDirty('skills');
         if (v === '') { delete draft.collectionModes[collId]; }
         else { draft.collectionModes[collId] = v as SkillListingMode; }
       },
@@ -1261,6 +1289,7 @@ async function loadSkillsUI(): Promise<void> {
       cb.type = 'checkbox';
       cb.checked = !draft.disabledSkills.includes(skill.skillKey);
       cb.addEventListener('change', () => {
+        markSettingsDirty('skills');
         if (cb.checked) {
           draft.disabledSkills = draft.disabledSkills.filter((k) => k !== skill.skillKey);
         } else if (!draft.disabledSkills.includes(skill.skillKey)) {
@@ -1307,20 +1336,23 @@ async function loadSkillsUI(): Promise<void> {
 
   // ── 保存按钮 ────────────────────────────────────────
   const saveRow = document.createElement('div');
-  saveRow.style.cssText = 'display:flex;justify-content:flex-end;padding:4px 0 8px';
+  saveRow.className = 's-save-row';
   const saveBtn = document.createElement('button');
   saveBtn.className = 's-save-btn';
-  saveBtn.textContent = '保存 Skills 配置';
-  saveBtn.addEventListener('click', async () => {
+  saveBtn.textContent = '保存设置';
+  const saveSkillsDraft = async () => {
     try {
       await window.skillsAPI!.saveConfig(draft);
+      clearSettingsDirty('skills');
       saveBtn.textContent = '✓ 已保存';
-      setTimeout(() => { saveBtn.textContent = '保存 Skills 配置'; }, 2000);
+      setTimeout(() => { saveBtn.textContent = '保存设置'; }, 2000);
     } catch {
       saveBtn.textContent = '保存失败';
-      setTimeout(() => { saveBtn.textContent = '保存 Skills 配置'; }, 2000);
+      setTimeout(() => { saveBtn.textContent = '保存设置'; }, 2000);
     }
-  });
+  };
+  _saveCurrentSkillsConfig = saveSkillsDraft;
+  saveBtn.addEventListener('click', () => void saveSkillsDraft());
   saveRow.appendChild(saveBtn);
   container.appendChild(saveRow);
 }
@@ -1405,6 +1437,8 @@ function skillsMkSelectRow(
 }
 
 export function openSettings(): void {
+  _settingsLoading = true;
+  clearSettingsDirty();
   savedWindowWidth  = window.innerWidth;
   savedWindowHeight = window.innerHeight;
   // 打开设置时确保窗口足够高（620px）以显示完整表单
@@ -1414,11 +1448,16 @@ export function openSettings(): void {
   // 暂停 canvas 区域的 Electron 拖拽捕获，否则设置面板上半部分点击会被 OS 拦截
   document.getElementById('canvas-container')?.classList.add('drag-region-suspended');
   document.getElementById('settings-panel')?.classList.add('visible');
-  void loadSettingsUI();
-  void loadDiscordUI();
-  void loadWeChatUI();
-  void loadTTSUI();
-  void loadSkillsUI();
+  Promise.all([
+    loadSettingsUI(),
+    loadDiscordUI(),
+    loadWeChatUI(),
+    loadTTSUI(),
+    loadSkillsUI(),
+  ]).finally(() => {
+    _settingsLoading = false;
+    clearSettingsDirty();
+  });
 
   // 当 Agent 或主进程修改了 TTS 配置时自动刷新设置界面（仅注册一次）
   if (!(window as any).__ttsConfigListenerRegistered) {
@@ -1429,7 +1468,32 @@ export function openSettings(): void {
   }
 }
 
-export function closeSettings(): void {
+async function saveDirtySettingsBeforeClose(): Promise<void> {
+  const dirty = new Set(_dirtySections);
+  if (dirty.has('llm')) await saveSettings();
+  if (dirty.has('tts')) await saveTTSSettings();
+  if (dirty.has('discord')) await saveDiscordSettings();
+  if (dirty.has('wechat')) await saveWeChatSettings();
+  if (dirty.has('skills')) await _saveCurrentSkillsConfig?.();
+}
+
+async function reloadSettingsFromSavedConfig(): Promise<void> {
+  _settingsLoading = true;
+  try {
+    await Promise.all([
+      loadSettingsUI(),
+      loadDiscordUI(),
+      loadWeChatUI(),
+      loadTTSUI(),
+      loadSkillsUI(),
+    ]);
+    clearSettingsDirty();
+  } finally {
+    _settingsLoading = false;
+  }
+}
+
+function closeSettingsNow(): void {
   document.getElementById('settings-panel')?.classList.remove('visible');
   // 恢复 canvas 区域的拖拽功能
   document.getElementById('canvas-container')?.classList.remove('drag-region-suspended');
@@ -1439,6 +1503,25 @@ export function closeSettings(): void {
   }
   savedWindowWidth  = 0;
   savedWindowHeight = 0;
+  clearSettingsDirty();
+}
+
+export function closeSettings(): void {
+  if (!hasUnsavedSettings()) {
+    closeSettingsNow();
+    return;
+  }
+
+  void showUnsavedSettingsDialog({
+    body: '离开设置前，要保存刚才的修改吗？',
+    saveText: '保存并离开',
+  }).then((action) => {
+    if (action === 'save') {
+      void saveDirtySettingsBeforeClose().then(closeSettingsNow);
+    } else {
+      void reloadSettingsFromSavedConfig().then(closeSettingsNow);
+    }
+  });
 }
 
 // ── 初始化入口 ────────────────────────────────────────
@@ -1461,6 +1544,7 @@ export function initSettings(): void {
 
   // 保存
   document.getElementById('settings-save-btn')?.addEventListener('click', saveSettings);
+  bindDirtyTracking();
 
   // 记忆导出/导入
   document.getElementById('memory-export-btn')?.addEventListener('click', () => void exportMemory());
@@ -1483,14 +1567,7 @@ export function initSettings(): void {
   document.querySelectorAll<HTMLButtonElement>('.s-tab').forEach((tabBtn) => {
     tabBtn.addEventListener('click', () => {
       const target = tabBtn.dataset['tab'];
-      document.querySelectorAll<HTMLButtonElement>('.s-tab').forEach((b) =>
-        b.classList.toggle('s-tab-active', b === tabBtn)
-      );
-      document.querySelectorAll<HTMLElement>('.s-tab-pane').forEach((pane) => {
-        const match = pane.id === `s-tab-${target}`;
-        pane.classList.toggle('s-tab-pane-hidden', !match);
-      });
-      _reflowTabs?.();
+      void switchSettingsTab(target, tabBtn);
     });
   });
 
@@ -1500,14 +1577,7 @@ export function initSettings(): void {
   document.querySelectorAll<HTMLElement>('.s-bridge-item').forEach((item) => {
     item.addEventListener('click', () => {
       const bridge = item.dataset['bridge'];
-      // 切换激活项
-      document.querySelectorAll<HTMLElement>('.s-bridge-item').forEach((el) =>
-        el.classList.toggle('s-bridge-active', el === item)
-      );
-      // 切换详情面板
-      document.querySelectorAll<HTMLElement>('.s-bridge-pane').forEach((pane) =>
-        pane.classList.toggle('s-bridge-pane-hidden', pane.id !== `s-bridge-${bridge}`)
-      );
+      void switchBridgePane(bridge, item);
     });
   });
 
@@ -1542,5 +1612,99 @@ export function initSettings(): void {
   // 防止面板内所有输入触发窗口拖动
   document.querySelectorAll('#settings-panel input, #settings-panel textarea').forEach((el) => {
     el.addEventListener('mousedown', (e) => e.stopPropagation());
+  });
+}
+
+function bindDirtyTracking(): void {
+  const bind = (selector: string, section: 'llm' | 'tts' | 'discord' | 'wechat') => {
+    document.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(selector)
+      .forEach((el) => {
+        el.addEventListener('input', () => markSettingsDirty(section));
+        el.addEventListener('change', () => markSettingsDirty(section));
+      });
+  };
+
+  bind('#s-tab-llm input, #s-tab-llm select, #s-tab-llm textarea', 'llm');
+  bind('#s-tab-tts input, #s-tab-tts select, #s-tab-tts textarea', 'tts');
+  bind('#s-bridge-discord input, #s-bridge-discord select, #s-bridge-discord textarea', 'discord');
+  bind('#s-bridge-wechat input, #s-bridge-wechat select, #s-bridge-wechat textarea', 'wechat');
+}
+
+async function switchSettingsTab(target: string | undefined, tabBtn: HTMLButtonElement): Promise<void> {
+  if (!target || tabBtn.classList.contains('s-tab-active')) return;
+  await confirmPendingSettingsChange('保存并切换', () => {
+    document.querySelectorAll<HTMLButtonElement>('.s-tab').forEach((b) =>
+      b.classList.toggle('s-tab-active', b === tabBtn)
+    );
+    document.querySelectorAll<HTMLElement>('.s-tab-pane').forEach((pane) => {
+      const match = pane.id === `s-tab-${target}`;
+      pane.classList.toggle('s-tab-pane-hidden', !match);
+    });
+    _reflowTabs?.();
+  });
+}
+
+async function switchBridgePane(bridge: string | undefined, item: HTMLElement): Promise<void> {
+  if (!bridge || item.classList.contains('s-bridge-active')) return;
+  await confirmPendingSettingsChange('保存并切换', () => {
+    document.querySelectorAll<HTMLElement>('.s-bridge-item').forEach((el) =>
+      el.classList.toggle('s-bridge-active', el === item)
+    );
+    document.querySelectorAll<HTMLElement>('.s-bridge-pane').forEach((pane) =>
+      pane.classList.toggle('s-bridge-pane-hidden', pane.id !== `s-bridge-${bridge}`)
+    );
+  });
+}
+
+async function confirmPendingSettingsChange(saveText: string, afterConfirm: () => void): Promise<void> {
+  if (!hasUnsavedSettings()) {
+    afterConfirm();
+    return;
+  }
+  if (_settingsNavGuardOpen) return;
+  _settingsNavGuardOpen = true;
+  try {
+    const action = await showUnsavedSettingsDialog({
+      body: '切换页面前，要保存刚才的修改吗？',
+      saveText,
+    });
+    if (action === 'save') {
+      await saveDirtySettingsBeforeClose();
+    } else {
+      await reloadSettingsFromSavedConfig();
+    }
+    afterConfirm();
+  } finally {
+    _settingsNavGuardOpen = false;
+  }
+}
+
+function showUnsavedSettingsDialog(options: { body: string; saveText: string }): Promise<'save' | 'discard'> {
+  const dialog = document.getElementById('settings-unsaved-dialog');
+  const body = dialog?.querySelector('p');
+  const saveBtn = document.getElementById('settings-unsaved-save');
+  const discardBtn = document.getElementById('settings-unsaved-discard');
+  if (!dialog || !saveBtn || !discardBtn) {
+    return Promise.resolve('discard');
+  }
+  if (body) body.textContent = options.body;
+  saveBtn.textContent = options.saveText;
+
+  dialog.classList.add('visible');
+  dialog.setAttribute('aria-hidden', 'false');
+
+  return new Promise((resolve) => {
+    const cleanup = (result: 'save' | 'discard') => {
+      dialog.classList.remove('visible');
+      dialog.setAttribute('aria-hidden', 'true');
+      saveBtn.removeEventListener('click', onSave);
+      discardBtn.removeEventListener('click', onDiscard);
+      resolve(result);
+    };
+    const onSave = () => cleanup('save');
+    const onDiscard = () => cleanup('discard');
+
+    saveBtn.addEventListener('click', onSave);
+    discardBtn.addEventListener('click', onDiscard);
   });
 }

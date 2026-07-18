@@ -28,7 +28,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { desktopCapturer, nativeImage } from 'electron';
 import { AttachmentBuilder, TextChannel } from 'discord.js';
-import type { ToolDefinition, SkillPauseResult } from '../types';
+import type { ToolDefinition, ToolPauseResult } from '../types';
 import { DiscordAdapter } from '../../bridges/adapters/discord';
 
 interface DiscordSendFileParams {
@@ -189,7 +189,7 @@ const discordSendFileSkill: ToolDefinition<DiscordSendFileParams> = {
     },
   },
 
-  async execute({ channel_id, file_path, file_name, message, screenshot }): Promise<string | SkillPauseResult> {
+  async execute({ channel_id, file_path, file_name, message, screenshot }): Promise<string | ToolPauseResult> {
     // ── 1. 守卫：Bot 必须在线 ────────────────────────────────────
     const client = DiscordAdapter.activeClient;
     if (!client) {
@@ -230,7 +230,7 @@ const discordSendFileSkill: ToolDefinition<DiscordSendFileParams> = {
           trace: [`搜索路径：${normalized}`, '结果：文件不存在'],
           userMessage: `文件不存在：\`${normalized}\`\n请检查路径是否正确，或文件是否已被移动/删除。`,
           resumeHint: '请用户提供正确的文件路径，然后重新调用 discord_send_file(file_path="正确路径")',
-        } satisfies SkillPauseResult;
+        } satisfies ToolPauseResult;
       }
       resolvedPath = normalized;
     } else if (file_name) {
@@ -246,7 +246,7 @@ const discordSendFileSkill: ToolDefinition<DiscordSendFileParams> = {
             `在常用目录（桌面、下载、文档）中未找到文件：\`${file_name}\`\n` +
             `搜索范围：\n${searchDirs.map(d => `  • ${d}`).join('\n')}`,
           resumeHint: '请用户提供文件的完整路径，然后重新调用 discord_send_file(file_path="完整路径")',
-        } satisfies SkillPauseResult;
+        } satisfies ToolPauseResult;
       }
 
       if (found.length > 1) {
@@ -257,7 +257,7 @@ const discordSendFileSkill: ToolDefinition<DiscordSendFileParams> = {
             `找到多个同名文件 \`${file_name}\`：\n` +
             found.map((p, i) => `  ${i + 1}. ${p}`).join('\n'),
           resumeHint: '请用户确认要发送哪一个，然后重新调用 discord_send_file(file_path="选定路径")',
-        } satisfies SkillPauseResult;
+        } satisfies ToolPauseResult;
       }
 
       resolvedPath = found[0];

@@ -16,6 +16,7 @@ import { ProxyAgent } from 'undici';
 import type { DiscordBridgeConfig } from '../bridge.config';
 import { sendChatMessage } from '../../aiService';
 import { listConversations } from '../../db';  // 🆕 导入对话列表，用于自动获取最新对话
+import { noteBridgeInboundMessage } from '../asyncDelivery';
 
 const DISCORD_MAX_LEN = 1900;
 
@@ -122,6 +123,12 @@ export class DiscordAdapter {
 
       try {
         const platformTag = `[来源：Discord | 频道：${msg.channelId} | 用户：${msg.author.username}]`;
+        noteBridgeInboundMessage({
+          conversationId,
+          platform: 'discord',
+          channelId: msg.channelId,
+          userId: msg.author.id,
+        });
         const taggedContent = `${platformTag}\n${content}`;
         const result = await sendChatMessage(conversationId, taggedContent);
         for (const chunk of splitMessage(result.content)) await msg.reply(chunk);

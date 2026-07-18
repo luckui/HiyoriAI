@@ -1,6 +1,5 @@
-﻿import type { SkillPauseResult, ToolDefinition } from '../types';
+﻿import type { ToolPauseResult, ToolDefinition } from '../types';
 import { streamerSession } from '../../streaming/streamerSession';
-import { streamerController } from '../../streaming/streamerController';
 import type { EphemeralLiveCredentials, LiveEvent, StreamerSessionConfig } from '../../streaming/types';
 
 interface ManageBilibiliLiveParams {
@@ -32,7 +31,12 @@ function formatStatus() {
   return JSON.stringify(status, null, 2);
 }
 
-function requestRoomIdPause(topic?: string): SkillPauseResult {
+async function getStreamerController() {
+  const { streamerController } = await import('../../streaming/streamerController');
+  return streamerController;
+}
+
+function requestRoomIdPause(topic?: string): ToolPauseResult {
   return {
     __pause: true,
     trace: [
@@ -48,7 +52,7 @@ function requestRoomIdPause(topic?: string): SkillPauseResult {
   };
 }
 
-function requestCookiePause(roomId: number, topic?: string): SkillPauseResult {
+function requestCookiePause(roomId: number, topic?: string): ToolPauseResult {
   return {
     __pause: true,
     trace: [
@@ -132,13 +136,13 @@ const manageBilibiliLiveTool: ToolDefinition<ManageBilibiliLiveParams> = {
         const status = streamerSession.start(config, credentials);
         
         // 4. 启动主控循环（配置从 .env 读取，见 STREAMER_IDLE_THRESHOLD_MS 等变量）
-        streamerController.start();
+        (await getStreamerController()).start();
         
         return `B 站 streamer 会话已启动。\n${JSON.stringify(status, null, 2)}`;
       }
       case 'stop': {
         // 停止主控循环
-        streamerController.stop();
+        (await getStreamerController()).stop();
         // 停止会话
         const status = streamerSession.stop();
         return `B 站 streamer 会话已停止。\n${JSON.stringify(status, null, 2)}`;
@@ -194,33 +198,7 @@ const manageBilibiliLiveTool: ToolDefinition<ManageBilibiliLiveParams> = {
         if (Object.keys(patch).length === 0) {
           return '请至少提供一个要更新的配置项（idle_threshold_ms / auto_tts / auto_live2d）。';
         }
-        streamerController.updateConfig(patch as Parameters<typeof streamerController.updateConfig>[0]);
-        const updated: string[] = [];
-        if (params.idle_threshold_ms !== undefined) updated.push(`暗场阈値 = ${params.idle_threshold_ms / 1000}秒`);
-        if (params.auto_tts !== undefined) updated.push(`自动TTS = ${params.auto_tts ? '开' : '关'}`);
-        if (params.auto_live2d !== undefined) updated.push(`自动Live2D = ${params.auto_live2d ? '开' : '关'}`);
-        return `配置已更新：${updated.join('，')}。无需重启即生效。`;
-      }
-      case 'set_topic': {
-        const newTopic = params.topic?.trim();
-        if (!newTopic) {
-          return '请提供新的直播主题（topic 参数）。';
-        }
-        const ok = streamerSession.setTopic(newTopic);
-        if (!ok) {
-          return '设置失败：当前没有活跃的直播会话。请先使用 action="start" 启动直播会话。';
-        }
-        return `直播主题已更新为「${newTopic}」。后续弹幕回复和暗场将使用新主题。`;
-      }
-      case 'update_config': {
-        const patch: Record<string, unknown> = {};
-        if (params.idle_threshold_ms !== undefined) patch.idleThresholdMs = params.idle_threshold_ms;
-        if (params.auto_tts !== undefined) patch.autoTTS = params.auto_tts;
-        if (params.auto_live2d !== undefined) patch.autoLive2D = params.auto_live2d;
-        if (Object.keys(patch).length === 0) {
-          return '请至少提供一个要更新的配置项（idle_threshold_ms / auto_tts / auto_live2d）。';
-        }
-        streamerController.updateConfig(patch as Parameters<typeof streamerController.updateConfig>[0]);
+        (await getStreamerController()).updateConfig(patch);
         const updated: string[] = [];
         if (params.idle_threshold_ms !== undefined) updated.push(`暗场阈值 = ${params.idle_threshold_ms / 1000}秒`);
         if (params.auto_tts !== undefined) updated.push(`自动TTS = ${params.auto_tts ? '开' : '关'}`);

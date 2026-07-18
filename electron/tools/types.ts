@@ -62,9 +62,9 @@ export interface ToolImageResult {
 }
 
 /**
- * Skill 暂停结果 —— 用于 Skill 在执行途中遇到需要用户/AI 介入的决策节点。
+ * 工具暂停结果 —— 用于工具在执行途中遇到需要用户介入的决策节点。
  *
- * Skill 执行逻辑检测到关键分支（如"邮箱未登录"、"找不到确认按钮"等）时，
+ * 工具执行逻辑检测到关键分支（如"邮箱未登录"、"找不到确认按钮"等）时，
  * 返回此类型代替字符串，registry 会将其格式化为带 ⏸️ 标记的字符串回填给 AI。
  *
  * AI 收到 ⏸️ 后（配合 systemPrompt 中的规范）会：
@@ -85,8 +85,8 @@ export interface ToolImageResult {
  * }
  * ```
  */
-export interface SkillPauseResult {
-  /** 固定标识，registry 用此识别 Skill 暂停并格式化 */
+export interface ToolPauseResult {
+  /** 固定标识，registry 用此识别工具暂停并格式化 */
   readonly __pause: true;
   /** 已执行步骤的轨迹（每项一行） */
   trace: string[];
@@ -97,14 +97,13 @@ export interface SkillPauseResult {
 }
 
 /**
- * Skill 内部阶段完成后需要 AI 立即执行下一步（不涉及用户介入）。
+ * 工具内部阶段完成后建议 AI 继续执行下一步（不涉及用户介入）。
  *
- * 与 SkillPauseResult 的区别：
- *   SkillPauseResult  → 需要用户操作后才能继续（如手动登录、确认弹窗）
- *   SkillContinueResult → Skill 内部流程未完成，AI 必须立刻调用下一步工具
+ * 与 ToolPauseResult 的区别：
+ *   ToolPauseResult  → 需要用户操作后才能继续（如手动登录、确认弹窗）
+ *   ToolContinuationResult → 工具内部流程未完成，AI 可按 instruction 继续调用下一步工具
  *
  * registry 会将其格式化为 🔄 前缀字符串；
- * aiService 检测到 🔄 前缀后，注入强制继续指令而非通用「执行下一步或回复」提示。
  *
  * @example
  * ```ts
@@ -117,31 +116,31 @@ export interface SkillPauseResult {
  * };
  * ```
  */
-export interface SkillContinueResult {
-  /** 固定标识，registry 用此识别 Skill 继续并格式化 */
+export interface ToolContinuationResult {
+  /** 固定标识，registry 用此识别工具继续并格式化 */
   readonly __continue: true;
   /** 已执行步骤的轨迹 */
   trace: string[];
-  /** 告知 AI 当前状态以及必须立即执行的下一步，语气要求强制 */
+  /** 告知 AI 当前状态以及建议继续执行的下一步 */
   instruction: string;
 }
 
-/** 类型守卫：判断工具结果是否为 Skill 继续（AI 立即执行下一步） */
-export function isSkillContinueResult(r: ToolExecuteResult): r is SkillContinueResult {
-  return typeof r === 'object' && '__continue' in r && (r as SkillContinueResult).__continue === true;
+/** 类型守卫：判断工具结果是否为工具继续 */
+export function isToolContinuationResult(r: ToolExecuteResult): r is ToolContinuationResult {
+  return typeof r === 'object' && '__continue' in r && (r as ToolContinuationResult).__continue === true;
 }
 
-/** 工具执行结果：普通文本 / 含图像 / Skill 暂停 / Skill 继续 */
-export type ToolExecuteResult = string | ToolImageResult | SkillPauseResult | SkillContinueResult;
+/** 工具执行结果：普通文本 / 含图像 / 工具暂停 / 工具继续 */
+export type ToolExecuteResult = string | ToolImageResult | ToolPauseResult | ToolContinuationResult;
 
 /** 类型守卫：判断工具结果是否含图像 */
 export function isToolImageResult(r: ToolExecuteResult): r is ToolImageResult {
   return typeof r === 'object' && 'imageBase64' in r;
 }
 
-/** 类型守卫：判断工具结果是否为 Skill 暂停 */
-export function isSkillPauseResult(r: ToolExecuteResult): r is SkillPauseResult {
-  return typeof r === 'object' && '__pause' in r && (r as SkillPauseResult).__pause === true;
+/** 类型守卫：判断工具结果是否为工具暂停 */
+export function isToolPauseResult(r: ToolExecuteResult): r is ToolPauseResult {
+  return typeof r === 'object' && '__pause' in r && (r as ToolPauseResult).__pause === true;
 }
 
 /**

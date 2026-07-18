@@ -188,6 +188,14 @@ export function createCodexRuntimeProvider(
     }
   }
 
+  function normalizeReasoningEffort(value: unknown): ThreadOptions['modelReasoningEffort'] | undefined {
+    const effort = readString(value);
+    if (!effort) return undefined;
+    // OpenAI hosted tools such as web_search/image_gen reject reasoning.effort=minimal.
+    // Codex SDK may enable those tools internally, so keep the lightest safe value.
+    return (effort === 'minimal' ? 'low' : effort) as ThreadOptions['modelReasoningEffort'];
+  }
+
   function createThreadOptions(input: StartRuntimeSessionInput): ThreadOptions {
     const metadata = input.metadata ?? {};
     return {
@@ -196,7 +204,7 @@ export function createCodexRuntimeProvider(
       sandboxMode: readString(metadata.sandboxMode) as SandboxMode | undefined,
       approvalPolicy: readString(metadata.approvalPolicy) as ApprovalMode | undefined,
       model: readString(metadata.model),
-      modelReasoningEffort: readString(metadata.modelReasoningEffort) as ThreadOptions['modelReasoningEffort'],
+      modelReasoningEffort: normalizeReasoningEffort(metadata.modelReasoningEffort),
       networkAccessEnabled:
         typeof metadata.networkAccessEnabled === 'boolean' ? metadata.networkAccessEnabled : undefined,
       webSearchMode: readString(metadata.webSearchMode) as WebSearchMode | undefined,

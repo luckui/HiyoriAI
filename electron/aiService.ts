@@ -14,6 +14,7 @@ import { buildAgentPrompt } from './prompts/agent';
 import { buildDeveloperPrompt } from './prompts/developer';
 import { buildStreamerPrompt } from './prompts/streamer';
 import { browserSession } from './tools/impl/browserSession';
+import { isAsyncResultNotification, shouldApplyActionCorrection, shouldApplyTaskIntentNudge } from './aiTurnGuards';
 
 // ── 工具调用调试事件 ─────────────────────────────────────
 /** 单次工具调用的调试记录（推送给渲染层展示） */
@@ -223,21 +224,23 @@ async function _callWithToolLoopInternal(
     // ── 无工具调用 → 返回最终文本 ──
     if (choice.finish_reason !== 'tool_calls' || !choice.message.tool_calls?.length) {
       const finalText = stripThinkTags(choice.message.content?.trim() ?? '');
-      // ── 第一轮无工具调用通用兜底 ──────────────────────────────────────
-      // reasoning 模型在新对话里容易「觉得自己能直接回答」而不调工具。
-      // 只要第一轮有动作类意图但没有调工具，注入强制纠偏让模型重新决策。
+      // ── 第一轮无工具调用轻量纠偏 ──────────────────────────────────────
+      // 只处理“用户要求真实操作但模型口头回复”的场景；工具结果、异步通知等不走这里。
       if (round === 0 && !antiHallucinationNudgeUsed && withTools) {
         const latestUser = getLatestRealUserText(msgBuf);
-        if (isLikelyActionIntent(latestUser)) {
+        if (isAsyncResultNotification(latestUser)) {
+          console.log('[AI Guard] skip action correction: async result notification');
+        }
+        if (shouldApplyActionCorrection(latestUser)) {
+          console.log('[AI Guard] apply action correction: first reply had no tool call');
           antiHallucinationNudgeUsed = true;
           msgBuf.push({ role: 'assistant', content: choice.message.content ?? finalText });
           msgBuf.push({
             role: 'user',
             content:
-              '【系统纠偏】你刚才没有调用任何工具就直接回复了，但用户的请求需要实际操作。' +
-              '你拥有工具调用能力（浏览器操作/打开终端/截图/系统控制等），' +
-              '必须调用对应工具后再回复，不能只用文字描述意图。' +
-              '请重新理解用户请求，直接调用工具。',
+              '【系统提示】请重新判断上一条用户请求：如果它需要真实操作或读取当前环境，请调用合适工具获取结果后再回复；' +
+              '如果缺少必要信息，请询问用户；如果它其实是普通聊天或工具结果转述，请直接回复用户。' +
+              '不要只用文字声称已经执行了尚未执行的操作。',
           });
           continue;
         }
@@ -256,9 +259,8 @@ async function _callWithToolLoopInternal(
           msgBuf.push({
             role: 'user',
             content:
-              '【系统纠偏】你刚才在未调用任何浏览器工具的情况下，给出了“已执行/进行中”的口头回复，这是不允许的。' +
-              '必须先调用 browser_get_state / browser_open / browser_find / browser_click 等工具获取真实结果，' +
-              '再基于工具结果回答。禁止臆测当前页面状态，禁止只回复“正在打开/正在点击”。',
+              '【系统提示】用户请求涉及浏览器真实状态。请先用可用的浏览器工具获取事实，再回答用户；' +
+              '如果无法继续或缺少信息，请向用户说明需要什么。不要口头声称页面已经打开、点击或搜索完成。',
           });
           continue;
         }
@@ -274,9 +276,8 @@ async function _callWithToolLoopInternal(
           msgBuf.push({
             role: 'user',
             content:
-              '【系统纠偏】你具备 DOM 解析工具，不能以“无法解析 HTML”作为回复。' +
-              '请调用 browser_get_elements_html（必要时结合 browser_find / browser_get_links）获取真实 outerHTML，' +
-              '并把元素原文返回给用户。',
+              '【系统提示】用户请求涉及 DOM/HTML 原文。请优先使用可用的页面读取或元素工具获取真实内容；' +
+              '如果当前工具确实不足，请说明限制并询问用户是否接受替代方案。',
           });
           continue;
         }
@@ -322,9 +323,9 @@ async function _callWithToolLoopInternal(
         msgBuf.push({ role: 'tool', tool_call_id: tc.id, content: result });
       }
     }
-    // 每轮工具结果回填后注入提示
-    // 若本轮有任意工具返回 🔄（Skill 继续），注入强制继续指令，否则注入通用提醒
-    const hasSkillContinue = execResults.some(({ result }) => {
+    // 每轮工具结果回填后注入统一提示。
+    // 这里不强制继续；工具结果要求询问/回复时，模型应停止工具循环并面向用户回答。
+    const hasToolContinuation = execResults.some(({ result }) => {
       const text = isToolImageResult(result) ? result.text : String(result);
       return text.startsWith('🔄');
     });
@@ -336,25 +337,28 @@ async function _callWithToolLoopInternal(
       return text.startsWith('❌');
     });
 
-    if (hasSkillContinue) {
+    if (hasToolContinuation) {
       msgBuf.push({
         role: 'user',
         content:
-          '【系统强制】上面的工具返回了 🔄，表示 Skill 流程尚未完成，你必须立刻调用【必须立即执行】中指定的工具继续执行。' +
-          '禁止输出任何文字回复，禁止和用户聊天，直接调用工具。',
+          '【工具结果处理】上面的工具给出了“建议下一步”。请先判断是否信息充足、是否仍符合用户目标：' +
+          '若需要用户选择或确认，就询问用户并结束本轮；若已经可以回答，就回复用户；只有确实应继续执行时，才调用下一步工具。',
       });
     } else if (hasCommandFailure) {
       msgBuf.push({
         role: 'user',
         content:
-          '【系统纠偏】run_command 执行失败（见上方 ❌ 输出）。' +
-          '必须立即调用 read_manual 查阅正确命令写法，然后用修正后的命令重试。' +
-          '若说明书中没有相关内容，再考虑其他方案。',
+          '【工具结果处理】run_command 执行失败。请基于错误信息判断下一步：' +
+          '能修正且仍符合用户目标时再重试；需要更多信息时询问用户；无法继续时如实说明失败原因。' +
+          '不要编造命令已成功。',
       });
     } else {
       msgBuf.push({
         role: 'user',
-        content: '【系统】根据以上工具结果，直接执行下一步操作或给出最终回复。禁止输出推理过程。',
+        content:
+          '【工具结果处理】根据以上工具结果选择下一步：' +
+          '工具结果要求“回复用户”时，回复用户并结束本轮；要求“询问用户”时，提出问题并等待；' +
+          '只有工具结果或用户目标明确需要继续操作时，才继续调用工具。不要重复已完成的同一工具调用。',
       });
     }
     // 继续循环，带上工具结果再请求
@@ -430,10 +434,16 @@ export async function sendChatMessage(
 
   // 任务意图预提示：agent/developer 模式下，用户消息含请求性字眼时轻量注入
   // chat 模式以自然对话为主，不强制工具调用
-  if (currentAgentMode !== 'chat' && toolRegistry.isEmpty === false && isLikelyTaskRequest(userContent)) {
+  const taskIntentNudge = shouldApplyTaskIntentNudge(userContent);
+  if (isAsyncResultNotification(userContent)) {
+    console.log('[AI Guard] skip task intent nudge: async result notification');
+  } else if (currentAgentMode !== 'chat' && toolRegistry.isEmpty === false && taskIntentNudge) {
+    console.log('[AI Guard] apply task intent nudge');
     messages.push({
       role: 'user',
-      content: '【系统提示】检测到用户可能在请求执行一项任务。请先判断：这是需要调用工具才能完成的操作，还是普通聊天？如果需要工具，直接调用，不要只用文字描述你打算做什么。',
+      content:
+        '【系统提示】请判断用户这句话的类型：普通聊天可直接回复；需要真实操作、读取环境或调用外部能力时再使用工具；' +
+        '缺少必要信息时先询问用户。不要口头声称已经完成未执行的操作。',
     });
   }
 

@@ -3,14 +3,14 @@
  *
  * 设计理念（借鉴 Superpowers / Hermes-Agent）：
  *   1. 身份切换：从"桌面宠物助手"变为"严谨的软件工程师"
- *   2. 强制 Skill 检查：manual 从"被动查阅"升级为"强制执行"
+ *   2. 工作流检查：manual 从"被动查阅"升级为开发流程入口
  *   3. 方法论驱动：TDD、Plan、Debug 不是建议，是铁律
  *   4. 开发者可见性：每步操作都报告，用 todo 追踪进度
  *
  * 不影响 chat / agent / agent-debug 模式，纯扩展。
  */
 
-import { SKILL_PAUSE_RULE, DISCORD_RULE } from './base-rules';
+import { TOOL_INTERACTION_RULE, DISCORD_RULE } from './base-rules';
 
 // ── 开发者人设 ─────────────────────────────────────────────
 
@@ -129,26 +129,37 @@ const DEVELOPER_TOOL_MAPPING = `
 const CODING_AGENT_GUIDANCE = `
 【编程代理 / Codex】
 当用户明确要求 Codex、Claude Code 或“编程代理”处理开发任务时，优先调用 coding_agent，而不是自己乱用 TTS、终端或裸 runtime 工具。
-• 如果用户想继续某个项目的 Codex 旧会话，或任务明显依赖旧上下文：先用 coding_agent(action="sessions", cwd=项目目录) 查找可恢复会话。
-• 新任务：coding_agent(action="start", task=用户的真实任务, agent="codex", cwd=已知项目目录)
-• 续接旧会话：coding_agent(action="start", task=用户的新指令, agent="codex", cwd=项目目录, resume_session_id=查到的 id)
-• 可按任务需要设置 model、reasoning_effort（minimal/low/medium/high/xhigh）、approval_policy、sandbox_mode。
-• 继续/状态/停止：coding_agent(action="continue" | "status" | "stop")
+• 用户询问“有哪些 Codex 项目 / 某项目有哪些任务 / 帮我找到 live2d 项目”时，先用 codex_projects 查询或解析。
+• 用户只给项目名、别名或“上次那个项目”但没有完整目录时，先用 codex_projects(resolve_project 或 list_projects/list_tasks) 找到项目目录；不确定时问用户选择。
+• 常规开发请求：coding_agent(action="send", task=用户的真实任务, agent="codex", cwd=已知项目目录)
+• 如果用户指定继续某个 Codex 任务/对话，先用 codex_projects(list_tasks) 帮用户选出任务，再把选中的 thread id 作为 resume_session_id 传给 coding_agent。
+• send 是异步提交：调用成功表示任务已交给编程代理；本轮回复用户“已提交，完成后我会收到结果并转述”，然后结束。
+• 如果工具返回多个可恢复会话选项，说明系统无法安全判断历史上下文；请把选项转述给用户，并等待用户选择。
+  • 可按任务需要设置 model、reasoning_effort（low/medium/high/xhigh）、approval_policy、sandbox_mode；轻量任务使用 low。
+• 用户主动询问“做到哪了 / Codex 有结果了吗 / 停止 Codex”时，使用 coding_agent(action="status" | "stop")。
 • 不要向用户暴露 runtime_start、provider_id、session_id；这些只属于调试层。
 • Codex 的命令、文件变更、重连等执行细节属于 terminal block，不要转发到聊天。
-• 你只接收 Codex 的最终回复；收到系统唤醒里的最终结果后，用 Hiyori 自己的话向用户转述重点、结论和下一步，不要把 Codex 原文直接塞进聊天。
+• 你只接收 Codex 的最终回复；收到异步结果通知后，用 Hiyori 自己的话向用户转述重点、结论和下一步，不要把 Codex 原文直接塞进聊天。
+`.trim();
+
+const TOOL_RESULT_GUIDANCE = `
+【工具结果规范】
+工具返回内容如果包含“下一步”，优先按它处理：
+• 下一步：回复用户 —— 基于“建议回复”或“结果”直接回复用户，然后结束本轮。
+• 下一步：询问用户 —— 把选项或问题说清楚，然后等待用户选择；不要自行选择，也不要继续调用工具。
+• 下一步：继续执行 —— 只有工具结果明确要求继续、且信息充足时，才继续调用合适工具。
+没有“下一步”字段时，按普通工具结果判断：能回答就回答，缺信息就问用户，确需真实操作才继续调用工具。
 `.trim();
 
 // ── 组合为完整提示词 ───────────────────────────────────────
 
 const CODING_AGENT_SAFETY = `
 Coding-agent session rules:
-- start creates or resumes the managed coding-agent session for a project cwd. One Hiyori conversation may manage multiple project sessions.
-- When a project cwd is known, start follows resume-first behavior: one matching Codex session is resumed, multiple matches require asking the user, and no matches creates a new session.
-- If the same project cwd is already bound, do not call start again. Use continue/status/result/stop with that cwd to target the project session.
-- A system wakeup containing a coding-agent final result is not a user request to start Codex again.
-- When a wakeup says the coding-agent final response is included, do not call coding_agent status/result/continue/start to verify it. Reply to the user directly from the included final response.
-- If Codex fails, times out, or reports quota/network errors, do not retry start/continue automatically. Tell the user the coding agent failed and wait for an explicit user decision.
+- send creates, resumes, or appends to the managed coding-agent session for a project cwd. One Hiyori conversation may manage multiple project sessions.
+- Codex tasks submitted through Hiyori always run unattended with high autonomy: approval prompts and Windows sandbox popups must be avoided. Do not try to lower Codex sandbox/approval settings through coding_agent.
+- When a project cwd is known, send follows resume-first behavior: one matching Codex session is resumed, multiple matches require asking the user, and no matches creates a new session.
+- An async result notification means a delegated task has completed and the notification body contains the result. Read it and reply to the user.
+- If Codex fails, times out, or reports quota/network errors, tell the user the coding agent failed and wait for an explicit user decision.
 `.trim();
 
 export function buildDeveloperPrompt(): string {
@@ -163,11 +174,13 @@ export function buildDeveloperPrompt(): string {
     '',
     DEVELOPER_TOOL_MAPPING,
     '',
+    TOOL_RESULT_GUIDANCE,
+    '',
     CODING_AGENT_GUIDANCE,
     '',
     CODING_AGENT_SAFETY,
     '',
-    SKILL_PAUSE_RULE,
+    TOOL_INTERACTION_RULE,
     '',
     DISCORD_RULE,
   ].join('\n');

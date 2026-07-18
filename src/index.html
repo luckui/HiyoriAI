@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Hiyori - 看板喵</title>
     <!-- Live2D Cubism Core 必须在任何 ES 模块前加载 -->
-    <script src="./Core/live2dcubismcore.js"></script>
+    <script src="/Core/live2dcubismcore.js"></script>
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
@@ -194,10 +194,7 @@
                   <input id="s-tokens" type="number" class="s-input" min="128" step="128" />
                 </label>
               </div>
-              <label class="s-label">系统提示词
-                <textarea id="s-sysprompt" class="s-textarea" rows="4" placeholder="你是一个…"></textarea>
-              </label>
-            </section>
+              </section>
 
             <div class="s-save-row">
               <button id="settings-save-btn" class="s-save-btn">保存设置</button>
@@ -448,6 +445,16 @@
           </div><!-- /#s-tab-skills -->
 
         </div><!-- /#settings-scroller -->
+        <div id="settings-unsaved-dialog" class="settings-dialog-backdrop no-drag" aria-hidden="true">
+          <div class="settings-dialog-box" role="dialog" aria-modal="true" aria-labelledby="settings-unsaved-title">
+            <h3 id="settings-unsaved-title">有未保存的设置</h3>
+            <p>离开设置前，要保存刚才的修改吗？</p>
+            <div class="settings-dialog-actions">
+              <button id="settings-unsaved-discard" class="s-small-btn">不保存</button>
+              <button id="settings-unsaved-save" class="s-save-btn">保存并离开</button>
+            </div>
+          </div>
+        </div>
       </div><!-- /#settings-panel -->
 
     </div><!-- /#app -->

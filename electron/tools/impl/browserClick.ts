@@ -21,7 +21,7 @@
  *   匹配字段：innerText / aria-label / title / id / className（无文字时回退 class）
  */
 
-import type { ToolDefinition, ToolExecuteResult, SkillPauseResult, SkillContinueResult } from '../types';
+import type { ToolDefinition, ToolExecuteResult, ToolPauseResult, ToolContinuationResult } from '../types';
 import { browserSession } from '../impl/browserSession';
 import { readPageSummary } from '../impl/browser';
 
@@ -213,7 +213,7 @@ async function executeClickByIdx(
       trace: steps,
       userMessage: `未找到编号 ${idx} 对应的元素，页面可能已发生变化。`,
       resumeHint: '请重新调用 browser_click_smart(text=...) 重新扫描。',
-    } satisfies SkillPauseResult;
+    } satisfies ToolPauseResult;
   }
 
   // 策略 1: Playwright 标准点击
@@ -263,7 +263,7 @@ async function executeClickByIdx(
     trace: steps,
     userMessage: `找到了"${label}"但所有点击策略均失败，可能被遮挡或不可交互。`,
     resumeHint: '请调用 browser_screenshot 查看页面状态，或手动操作后告知。',
-  } satisfies SkillPauseResult;
+  } satisfies ToolPauseResult;
 }
 
 // ── 主 Skill ──────────────────────────────────────────────────────
@@ -355,7 +355,7 @@ const browserClickSmartSkill: ToolDefinition<BrowserClickSmartParams> = {
         trace: steps,
         userMessage: '当前页面没有找到任何可见可点击元素，页面可能未加载完成。',
         resumeHint: '请调用 browser_screenshot 确认页面状态。',
-      } satisfies SkillPauseResult;
+      } satisfies ToolPauseResult;
     }
 
     const best = candidates[0];
@@ -400,7 +400,7 @@ const browserClickSmartSkill: ToolDefinition<BrowserClickSmartParams> = {
           `未找到与"${queries.join('/')}"匹配的元素，以下是页面全部可点击元素` +
           `（共 ${candidates.length} 个，展示前 ${displayList.length} 个）：\n${topN}\n\n` +
           `请根据元素内容判断目标，立即调用 browser_click_smart(idx="<编号>") 点击。`,
-      } satisfies SkillContinueResult;
+      } satisfies ToolContinuationResult;
     }
 
     steps.push(`匹配到 ${matched.length} 个元素 (最高分:${topScore}, 并列:${topTied.length})，等待 AI 选择 idx`);
@@ -410,7 +410,7 @@ const browserClickSmartSkill: ToolDefinition<BrowserClickSmartParams> = {
       instruction:
         `找到 ${matched.length} 个匹配"${queries.join('/')}"的元素，请从中选择最符合目标的一个：\n${topN}\n\n` +
         `立即调用 browser_click_smart(idx="<编号>") 执行点击，不要询问用户。`,
-    } satisfies SkillContinueResult;
+    } satisfies ToolContinuationResult;
   },
 };
 

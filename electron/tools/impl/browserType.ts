@@ -27,10 +27,10 @@
  *   - contenteditable="true"（富文本）→ click() + keyboard.type()
  *
  * ── 暂停场景 ─────────────────────────────────────────────────────
- *   - 页面没有可见输入框 → SkillPauseResult
+ *   - 页面没有可见输入框 → ToolPauseResult
  */
 
-import type { ToolDefinition, ToolExecuteResult, SkillPauseResult, SkillContinueResult } from '../types';
+import type { ToolDefinition, ToolExecuteResult, ToolPauseResult, ToolContinuationResult } from '../types';
 import { browserSession } from '../impl/browserSession';
 
 interface BrowserTypeSmartParams {
@@ -154,7 +154,7 @@ const browserTypeSmartSkill: ToolDefinition<BrowserTypeSmartParams> = {
           trace: steps,
           userMessage: `未找到编号 ${idx} 对应的输入框，页面可能已发生变化。`,
           resumeHint: '请重新调用 browser_type_smart(description=...) 重新扫描。',
-        } satisfies SkillPauseResult;
+        } satisfies ToolPauseResult;
       }
 
       steps.push(`目标: "${found.label}" (idx=${idx})`);
@@ -279,7 +279,7 @@ const browserTypeSmartSkill: ToolDefinition<BrowserTypeSmartParams> = {
         trace: steps,
         userMessage: '当前页面没有找到任何可见的输入框，页面可能尚未加载完成。',
         resumeHint: '请调用 browser_screenshot 确认页面状态后重试。',
-      } satisfies SkillPauseResult;
+      } satisfies ToolPauseResult;
     }
 
     const best = candidates[0];
@@ -293,7 +293,7 @@ const browserTypeSmartSkill: ToolDefinition<BrowserTypeSmartParams> = {
       return await doType(page, best.idx, best.tag, best.isRich, best.tag === 'select', bestLabel, value, clear, steps);
     }
 
-    // ── 存在歧义 → 保留 data-ts-idx 标记，返回 SkillContinueResult 要求 AI 立即选 idx ──
+    // ── 存在歧义 → 保留 data-ts-idx 标记，返回 ToolContinuationResult 建议 AI 选择 idx ──
     // 注意：不在此处 cleanupIdx，Phase 2 成功/失败后才清理
 
     const candidateTable = candidates.slice(0, 8).map(c => {
@@ -318,7 +318,7 @@ const browserTypeSmartSkill: ToolDefinition<BrowserTypeSmartParams> = {
         `发现 ${candidates.length} 个输入框，请选择最符合"${description ?? ''}"的目标：\n` +
         `${candidateTable}\n\n` +
         `立即调用 browser_type_smart(idx="<编号>", value=${JSON.stringify(value)}) 执行输入，不要询问用户。`,
-    } satisfies SkillContinueResult;
+    } satisfies ToolContinuationResult;
   },
 };
 
@@ -378,7 +378,7 @@ async function doType(
       trace: steps,
       userMessage: `找到了目标输入框"${label}"，但输入时发生错误：${(e as Error).message}。`,
       resumeHint: `可调用 browser_screenshot 查看页面状态，或提供更精确的 css 参数后重试。`,
-    } satisfies SkillPauseResult;
+    } satisfies ToolPauseResult;
   }
 }
 

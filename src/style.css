@@ -1536,7 +1536,18 @@ html, body {
 
 /* 保存按钮 */
 .s-save-row {
-  padding-top: 4px;
+  position: sticky;
+  bottom: 0;
+  z-index: 8;
+  padding: 10px 0 2px;
+  background: linear-gradient(
+    180deg,
+    rgba(252, 248, 255, 0) 0%,
+    rgba(252, 248, 255, 0.96) 30%,
+    rgba(252, 248, 255, 0.98) 100%
+  );
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .s-save-btn {
@@ -1561,6 +1572,63 @@ html, body {
 
 .s-save-btn.saved {
   background: linear-gradient(135deg, #56CCF2 0%, #2F80ED 100%);
+}
+
+.settings-dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(40, 24, 36, 0.26);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.settings-dialog-backdrop.visible {
+  display: flex;
+}
+
+.settings-dialog-box {
+  width: min(320px, 100%);
+  padding: 18px;
+  border: 1.5px solid rgba(240, 147, 251, 0.28);
+  border-radius: var(--radius-md);
+  background: rgba(255, 250, 253, 0.98);
+  box-shadow: 0 18px 42px rgba(190, 80, 130, 0.18);
+}
+
+.settings-dialog-box h3 {
+  margin: 0 0 8px;
+  color: var(--pink-deep);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.settings-dialog-box p {
+  margin: 0;
+  color: #666;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.settings-dialog-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.settings-dialog-actions .s-save-btn {
+  padding: 9px;
+  font-size: 13px;
+}
+
+.settings-dialog-actions .s-small-btn {
+  border-radius: var(--radius-md);
+  font-size: 13px;
 }
 
 /* settings-btn 激活态 */

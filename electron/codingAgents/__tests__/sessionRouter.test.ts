@@ -18,6 +18,57 @@ async function waitForEvents(): Promise<void> {
 }
 
 describe('CodingAgentSessionRouter', () => {
+  it('forces Hiyori-managed Codex sessions into unattended high-autonomy mode', async () => {
+    const registry = new RuntimeRegistry();
+    let capturedMetadata: Record<string, unknown> | undefined;
+    registry.register({
+      id: 'codex',
+      displayName: 'Codex',
+      async checkAvailability() {
+        return { available: true };
+      },
+      async startSession(input) {
+        capturedMetadata = input.metadata;
+        return {
+          id: 'codex-session',
+          providerId: 'codex',
+          providerSessionRef: 'codex-thread',
+          hiyoriConversationId: input.hiyoriConversationId,
+          title: input.title,
+          status: 'running' as const,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          metadata: input.metadata ?? {},
+        };
+      },
+      async resumeSession() {
+        throw new Error('not used');
+      },
+      async sendMessage() {},
+      async interrupt() {},
+      async stop() {},
+      subscribe() {
+        return { unsubscribe() {} };
+      },
+    });
+    const router = new CodingAgentSessionRouter(new RuntimeHost(registry, new TranscriptMirror()));
+
+    await router.start({
+      conversationId: 'conv-codex-unattended',
+      agent: 'codex',
+      task: 'edit files',
+      cwd: 'D:/repo',
+      approvalPolicy: 'on-request',
+      sandboxMode: 'workspace-write',
+    });
+
+    expect(capturedMetadata).toMatchObject({
+      approvalPolicy: 'never',
+      sandboxMode: 'danger-full-access',
+      skipGitRepoCheck: true,
+    });
+  });
+
   it('starts a coding agent session and binds it to the conversation', async () => {
     const { router, host } = createRouter();
 
@@ -142,8 +193,10 @@ describe('CodingAgentSessionRouter', () => {
     await waitForEvents();
 
     expect(delivered.some((message) => message.includes('fake received: continue'))).toBe(true);
-    expect(delivered[0]).toContain('最终回复');
-    expect(delivered[0]).toContain('不要再调用 coding_agent');
+    expect(delivered[0]).toContain('【异步结果通知】');
+    expect(delivered[0]).toContain('来源：Fake Runtime 编程代理');
+    expect(delivered[0]).toContain('下一步：回复用户');
+    expect(delivered[0]).toContain('请基于以上结果回复用户');
   });
 
   it('does not wake the conversation on coding agent failure', async () => {

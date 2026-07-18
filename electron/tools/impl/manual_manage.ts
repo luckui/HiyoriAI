@@ -21,7 +21,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
 import type { ToolDefinition, ToolContext } from '../types';
-import { getManualGenerator } from '../../manual/manualGenerator';
 import { taskManager } from '../../taskManager';
 
 /**
@@ -89,6 +88,11 @@ function findManualFile(name: string): string | null {
 /**
  * 列出所有说明书（递归搜索子目录）
  */
+async function getManualGeneratorInstance() {
+  const { getManualGenerator } = await import('../../manual/manualGenerator');
+  return getManualGenerator();
+}
+
 function listManuals(): string[] {
   if (!fs.existsSync(MANUAL_DIR)) return [];
   const results: string[] = [];
@@ -269,7 +273,6 @@ const manualManageTool: ToolDefinition<ManualManageParams> = {
       // 拼接分类路径：category="browser" + name="搜索流程" → "browser/搜索流程"
       const fullName = category ? `${category.trim()}/${name.trim()}` : name.trim();
 
-      const generator = getManualGenerator();
       const taskPayload = {
         name: fullName,
         title: title.trim(),
@@ -280,6 +283,7 @@ const manualManageTool: ToolDefinition<ManualManageParams> = {
       // 同步模式：阻塞等待生成完成
       if (sync) {
         return (async () => {
+          const generator = await getManualGeneratorInstance();
           const result = await generator.syncExecute({ type: 'create', ...taskPayload });
           if (!result.success) {
             return `❌ 说明书"${name}"生成失败：${result.error}`;
@@ -322,7 +326,6 @@ const manualManageTool: ToolDefinition<ManualManageParams> = {
         return `❌ 说明书"${name}"不存在。使用 action="create" 创建新说明书。`;
       }
 
-      const generator = getManualGenerator();
       const taskPayload = {
         name: name.trim(),
         title: title.trim(),
@@ -333,6 +336,7 @@ const manualManageTool: ToolDefinition<ManualManageParams> = {
       // 同步模式：阻塞等待生成完成
       if (sync) {
         return (async () => {
+          const generator = await getManualGeneratorInstance();
           const result = await generator.syncExecute({ type: 'edit', ...taskPayload });
           if (!result.success) {
             return `❌ 说明书"${name}"更新失败：${result.error}`;

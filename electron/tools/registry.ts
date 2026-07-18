@@ -1,5 +1,5 @@
-import type { ToolDefinition, ToolSchema, ToolExecuteResult, ToolImageResult } from './types';
-import { isSkillPauseResult, isSkillContinueResult } from './types';
+﻿import type { ToolDefinition, ToolSchema, ToolExecuteResult, ToolImageResult } from './types';
+import { isToolPauseResult, isToolContinuationResult } from './types';
 import { resolveToolset } from '../toolsets';
 
 /**
@@ -115,7 +115,7 @@ export class ToolRegistry {
    * @param argsJson - JSON 字符串（来自 LLM 响应的 tool_call.function.arguments）
    * @param context  - 可选的执行上下文（如 conversationId）
    * @returns        - 工具执行结果：字符串或含图像的 ToolImageResult
-   *                   SkillPauseResult 已在此处格式化为带 ⏸️ 标记的字符串，
+   *                   ToolPauseResult 已在此处格式化为带 ⏸️ 标记的字符串，
    *                   调用方（aiService）无需感知暂停类型。
    */
   async execute(name: string, argsJson: string, context?: import('./types').ToolContext): Promise<string | ToolImageResult> {
@@ -127,28 +127,28 @@ export class ToolRegistry {
       const args = JSON.parse(argsJson) as Record<string, unknown>;
       const result = await tool.execute(args, context);
 
-      // ── Skill 暂停：格式化为带 ⏸️ 标记的字符串，AI 按 systemPrompt 规范处理 ──
-      if (isSkillPauseResult(result)) {
+      // ── 工具暂停：格式化为带 ⏸️ 标记的字符串，AI 按工具结果规范处理 ──
+      if (isToolPauseResult(result)) {
         const traceLines = result.trace.length
           ? result.trace.map(t => '  ' + t).join('\n')
           : '  （无执行轨迹）';
         return (
-          `⏸️ Skill 暂停等待用户操作\n` +
+          `⏸️ 工具暂停，等待用户操作\n` +
           `执行轨迹：\n${traceLines}\n\n` +
           `【当前状态】${result.userMessage}\n` +
           `【用户完成后】${result.resumeHint}`
         );
       }
 
-      // ── Skill 继续：格式化为带 🔄 标记的字符串，aiService 检测后强制注入继续指令 ──
-      if (isSkillContinueResult(result)) {
+      // ── 工具继续：格式化为带 🔄 标记的字符串，AI 按工具结果规范判断下一步 ──
+      if (isToolContinuationResult(result)) {
         const traceLines = result.trace.length
           ? result.trace.map(t => '  ' + t).join('\n')
           : '  （无执行轨迹）';
         return (
-          `🔄 Skill 阶段完成，需要立即执行下一步\n` +
+          `🔄 工具阶段完成，建议继续下一步\n` +
           `执行轨迹：\n${traceLines}\n\n` +
-          `【必须立即执行】${result.instruction}`
+          `【建议下一步】${result.instruction}`
         );
       }
 

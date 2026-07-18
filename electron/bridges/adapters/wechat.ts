@@ -14,6 +14,7 @@
 
 import type { WeChatBridgeConfig } from '../bridge.config';
 import { sendChatMessage } from '../../aiService';
+import { consumePendingBridgeMessages, noteBridgeInboundMessage } from '../asyncDelivery';
 import { app } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs/promises';
@@ -663,6 +664,16 @@ export class WeChatAdapter {
     await this.sendTyping(fromUserId, true);
 
     try {
+      noteBridgeInboundMessage({
+        conversationId,
+        platform: 'wechat',
+        userId: fromUserId,
+      });
+      const pendingMessages = consumePendingBridgeMessages('wechat', fromUserId);
+      for (const pending of pendingMessages) {
+        await this.sendText(fromUserId, `【待领取消息】\n${pending}`);
+      }
+
       const platformTag = `[来源：WeChat | 用户：${fromUserId}]`;
       const taggedContent = `${platformTag}\n${text}`;
       const result = await sendChatMessage(conversationId, taggedContent);

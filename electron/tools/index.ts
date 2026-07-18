@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 工具注册入口
  *
  * ✨ 添加新工具只需三步：
@@ -8,7 +8,7 @@
  *
  * 无需修改任何核心循环逻辑！
  *
- * 💡 带 `isSkill: true` 标记的工具支持两阶段交互机制（SkillPauseResult）
+ * 💡 部分工具支持暂停/继续交互结果（ToolPauseResult / ToolContinuationResult）
  */
 
 import { ToolRegistry } from './registry';
@@ -29,6 +29,7 @@ import requestAgentMode from './impl/requestAgentMode';  // 🆕 请求 Agent �
 import showAvailableTools from './impl/showAvailableTools';  // 🆕 显示可用工具列表
 import switchAgentMode from './impl/switchAgentMode';  // 🆕 切换 Agent 模式
 import codingAgentTool from './impl/codingAgent';
+import codexProjectsTool from './impl/codexProjects';
 
 // 🆕 打工人核心工具（文件操作）
 import readFileTool from './impl/readFile';
@@ -45,7 +46,7 @@ import gitDiffTool from './impl/gitDiff';
 import gitCommitTool from './impl/gitCommit';
 import gitLogTool from './impl/gitLog';
 
-// 🆕 高级工具（原 Skills，带 isSkill 标记和两阶段机制）
+// 🆕 高级工具（支持暂停/继续交互结果）
 import openTerminalTool from './impl/openTerminal';
 import browserOpenTool from './impl/browserOpen';
 import browserClickTool from './impl/browserClick';
@@ -79,6 +80,7 @@ const registry = new ToolRegistry()
   .register(requestAgentMode)  // 🆕 请求 Agent 模式工具（Chat→Agent 渐进式升级）
   .register(showAvailableTools) // 🆕 显示可用工具列表（AI 自我感知能力边界）
   .register(switchAgentMode)   // 🆕 切换 Agent 模式（AI 主动切换）
+  .register(codexProjectsTool)  // Discover local Codex projects and tasks
   .register(codingAgentTool)    // User-facing bridge to Codex and coding agents
   
   // 🆕 注册打工人核心工具（文件操作）
@@ -96,7 +98,7 @@ const registry = new ToolRegistry()
   .register(gitCommitTool)
   .register(gitLogTool)
   
-  // 🆕 注册高级工具（原 Skills，带两阶段交互机制）
+  // 🆕 注册高级工具（支持暂停/继续交互结果）
   .register(openTerminalTool)
   .register(browserOpenTool)
   .register(browserClickTool)

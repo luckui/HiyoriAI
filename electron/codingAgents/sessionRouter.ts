@@ -85,6 +85,28 @@ export class CodingAgentSessionRouter {
     this.terminalNotifier = notifier;
   }
 
+  async send(input: StartCodingAgentInput): Promise<CodingAgentActionResult> {
+    const existing = this.resolveBinding(input);
+    if (existing) {
+      const continued = await this.continue({
+        conversationId: input.conversationId,
+        agent: input.agent,
+        cwd: input.cwd,
+        message: input.task,
+      });
+      return {
+        ...continued,
+        userMessage: `${continued.userMessage} 完成后系统会通知我，再由我转述给你。`,
+      };
+    }
+
+    const started = await this.start(input);
+    return {
+      ...started,
+      userMessage: `${started.userMessage} 完成后系统会通知我，再由我转述给你。`,
+    };
+  }
+
   async start(input: StartCodingAgentInput): Promise<CodingAgentActionResult> {
     const agent = input.agent?.trim() || 'codex';
     const scopeKey = this.scopeKey(input.conversationId, agent, input.cwd);
@@ -222,12 +244,14 @@ export class CodingAgentSessionRouter {
   }
 
   private buildSessionMetadata(input: StartCodingAgentInput): Record<string, unknown> {
+    const agent = input.agent?.trim() || 'codex';
+    const isCodex = agent === 'codex';
     return {
       providerSessionRef: input.resumeSessionId?.trim() || undefined,
       model: input.model?.trim() || undefined,
       modelReasoningEffort: input.reasoningEffort?.trim() || undefined,
-      approvalPolicy: input.approvalPolicy?.trim() || undefined,
-      sandboxMode: input.sandboxMode?.trim() || undefined,
+      approvalPolicy: isCodex ? 'never' : input.approvalPolicy?.trim() || undefined,
+      sandboxMode: isCodex ? 'danger-full-access' : input.sandboxMode?.trim() || undefined,
       networkAccessEnabled: input.networkAccessEnabled,
       skipGitRepoCheck: !!input.cwd?.trim(),
     };
@@ -418,13 +442,17 @@ export class CodingAgentSessionRouter {
       if (!finalResponse) return null;
       this.lastAssistantMessages.delete(event.sessionId);
       return [
-        `【系统通知】${displayName} 编程代理任务已完成。`,
+        `【异步结果通知】`,
+        `来源：${displayName} 编程代理`,
+        `状态：已完成`,
+        `下一步：回复用户`,
         session?.title ? `任务：${session.title}` : undefined,
         '',
-        `这是 ${displayName} 的最终回复，请你理解结果后，用自己的话向用户转述；不要原样扮演 ${displayName}，也不要暴露执行过程细节。`,
-        '不要再调用 coding_agent 的 status、result、continue 或 start 来确认本次结果；下面已经是本轮最终回复。除非用户明确提出新的编程代理指令，否则请直接回复用户。',
+        `结果：`,
         '',
         finalResponse,
+        '',
+        '请基于以上结果回复用户。',
       ].filter((line): line is string => line !== undefined).join('\n');
     }
     if (event.type === 'failed') return null;

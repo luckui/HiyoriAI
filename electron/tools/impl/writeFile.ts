@@ -1,5 +1,5 @@
 ﻿/**
- * Skill: write_file
+ * Tool: write_file
  *
  * 用 Node.js fs 模块写入文件，比 run_command 拼 echo/cat 更安全、更可靠。
  *
@@ -13,7 +13,7 @@
  *     └→ append：追加到末尾
  *
  *   文件已存在 + mode 未提供
- *     └→ ⏸️ SkillPauseResult：AI 向用户确认 overwrite / append，
+ *     └→ ⏸️ ToolPauseResult：AI 向用户确认 overwrite / append，
  *        用户回答后 AI 带上 mode 重新调用本工具
  *
  * ── 注意 ───────────────────────────────────────────────────────
@@ -24,7 +24,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import type { ToolDefinition, ToolExecuteResult, SkillPauseResult } from '../types';
+import type { ToolDefinition, ToolExecuteResult, ToolPauseResult } from '../types';
 
 interface WriteFileParams {
   /** 目标文件路径（绝对路径或相对路径） */
@@ -36,7 +36,7 @@ interface WriteFileParams {
    *   overwrite - 覆盖全部内容（文件已存在时）
    *   append    - 追加到末尾（文件已存在时）
    * 文件不存在时此参数可省略（自动创建）。
-   * 文件已存在时若不传，Skill 会暂停并由 AI 询问用户。
+   * 文件已存在时若不传，工具会暂停并由 AI 询问用户。
    */
   mode?: 'overwrite' | 'append';
   /** 文件编码，默认 utf8 */
@@ -53,7 +53,7 @@ const writeFileSkill: ToolDefinition<WriteFileParams> = {
         '决策树：\n' +
         '  • 文件不存在 → 自动创建（含父目录），直接写入\n' +
         '  • 文件已存在 + 传了 mode → 按 mode 执行（overwrite=覆盖 / append=追加）\n' +
-        '  • 文件已存在 + 未传 mode → Skill 暂停，AI 需询问用户选择\n' +
+        '  • 文件已存在 + 未传 mode → 工具暂停，AI 需询问用户选择\n' +
         '【提示】如果用户在对话中已经表明了意图（"覆盖写入"、"追加"、"替换"等），\n' +
         '请直接传对应 mode，无需再次询问。',
       parameters: {
@@ -131,7 +131,7 @@ const writeFileSkill: ToolDefinition<WriteFileParams> = {
         resumeHint:
           `用户确认后，请重新调用 write_file，传入相同的 path 和 content，` +
           `并根据用户选择设置 mode="overwrite" 或 mode="append"。`,
-      } satisfies SkillPauseResult;
+      } satisfies ToolPauseResult;
     }
 
     // ── 准备写入 ──────────────────────────────────────────────────
@@ -154,7 +154,7 @@ const writeFileSkill: ToolDefinition<WriteFileParams> = {
           resumeHint:
             `用户提供正确路径后，请重新调用 write_file，` +
             `使用修正后的 path，content 和 mode 保持不变。`,
-        } satisfies SkillPauseResult;
+        } satisfies ToolPauseResult;
       }
     }
 
@@ -203,7 +203,7 @@ const writeFileSkill: ToolDefinition<WriteFileParams> = {
         resumeHint:
           `用户确认或提供新路径后，请重新调用 write_file，` +
           `使用修正后的 path，content 和 mode 保持不变。`,
-      } satisfies SkillPauseResult;
+      } satisfies ToolPauseResult;
     }
   },
 };

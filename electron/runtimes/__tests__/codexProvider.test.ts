@@ -115,6 +115,25 @@ describe('createCodexRuntimeProvider', () => {
     expect(seen.map((event) => event.type)).toContain('completed');
   });
 
+  it('normalizes unsupported minimal reasoning effort before calling the Codex SDK', async () => {
+    const fake = createFakeCodexClient([]);
+    const provider = createCodexRuntimeProvider({ createClient: () => fake.client });
+
+    await provider.startSession({
+      providerId: 'codex',
+      hiyoriConversationId: 'conv-minimal',
+      title: 'Minimal effort',
+      initialMessage: 'say hi',
+      metadata: {
+        modelReasoningEffort: 'minimal',
+      },
+    });
+
+    expect(fake.started[0]).toMatchObject({
+      modelReasoningEffort: 'low',
+    });
+  });
+
   it('resumes existing Codex threads', async () => {
     const fake = createFakeCodexClient([]);
     const provider = createCodexRuntimeProvider({ createClient: () => fake.client });
