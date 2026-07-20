@@ -12,7 +12,7 @@
  * Token 预算：~500 字（对比 chat ~200 字、developer ~2000 字）
  */
 
-import { TOOL_INTERACTION_RULE, DISCORD_RULE } from './base-rules';
+import { TOOL_INTERACTION_RULE } from './base-rules';
 
 // ── Agent 人设 ─────────────────────────────────────────────
 
@@ -107,7 +107,5 @@ export function buildAgentPrompt(): string {
     CODING_AGENT_SAFETY,
     '',
     TOOL_INTERACTION_RULE,
-    '',
-    DISCORD_RULE,
   ].join('\n');
 }

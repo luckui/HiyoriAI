@@ -40,12 +40,12 @@ declare global {
       loadConversation(id: string): Promise<ChatMessage[]>;
       deleteConversation(id: string): Promise<void>;
       renameConversation(id: string, title: string): Promise<void>;
-      send(conversationId: string, content: string): Promise<{ content: string; created_at: number }>;
+      send(conversationId: string, content: string, replyTarget?: unknown): Promise<{ content: string; created_at: number }>;
       stopAI?(): Promise<void>;
       /** 监听主进程注入的 AI 主动消息（来自后台任务完成通知） */
       onAgentMessage?(cb: (payload: { conversationId: string; content: string }) => void): () => void;
       /** 监听 background/batch 任务完成后的主对话 AI 唤醒（触发新轮工作流） */
-      onWakeup?(cb: (payload: { conversationId: string; text: string }) => void): () => void;
+      onWakeup?(cb: (payload: { conversationId: string; text: string; replyTarget?: unknown }) => void): () => void;
     };
     appLifecycleAPI?: {
       onQuitting(cb: () => void): void;
@@ -74,7 +74,7 @@ declare global {
 let currentConversationId: string | null = null;
 let isConvPanelOpen = false;
 let isSending = false;
-const pendingWakeups: Array<{ conversationId: string; text: string }> = [];
+const pendingWakeups: Array<{ conversationId: string; text: string; replyTarget?: unknown }> = [];
 
 /** 聊天面板展开状态（模块级，供打字机气泡判断） */
 let _chatExpanded = false;
@@ -1115,7 +1115,7 @@ async function drainWakeups(): Promise<void> {
   const typing = addTypingIndicator();
 
   try {
-    const result = await window.chatAPI!.send(payload.conversationId, payload.text);
+    const result = await window.chatAPI!.send(payload.conversationId, payload.text, payload.replyTarget);
     typing?.remove();
     const { emotion, cleaned } = extractEmotionTag(result.content);
     if (emotion) triggerEmotion(emotion);
@@ -1433,7 +1433,7 @@ export async function initChat(): Promise<void> {
     }
     const typing = addTypingIndicator();
 
-    window.chatAPI!.send(payload.conversationId, payload.text)
+    window.chatAPI!.send(payload.conversationId, payload.text, payload.replyTarget)
       .then((result) => {
         typing?.remove();
         const { emotion, cleaned } = extractEmotionTag(result.content);

@@ -19,4 +19,14 @@ describe('coding agent tool registration', () => {
     expect(resolveToolset('developer')).not.toContain('speak');
     expect(resolveToolset('streamer')).not.toContain('speak');
   });
+
+  it('keeps platform text delivery out of LLM-facing platform toolsets', () => {
+    const discordTools = resolveToolset('discord');
+    const wechatTools = resolveToolset('wechat');
+
+    expect(discordTools).toEqual(['discord_send_file']);
+    expect(discordTools).not.toContain('discord_send');
+    expect(wechatTools).toEqual(['wechat_send_file']);
+    expect(wechatTools).not.toContain('wechat_send');
+  });
 });

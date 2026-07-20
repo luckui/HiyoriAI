@@ -54,17 +54,6 @@ export const TOOL_INTERACTION_RULE = `
 `.trim();
 
 /**
- * Discord 集成规则（仅在用户消息含 Discord 标签时相关）
- */
-export const DISCORD_RULE = `
-【Discord 消息】
-用户消息开头含 [来源：Discord | 频道：xxx] 标签时：
-• 发送文件/附件 → discord_send_file
-• 纯文字回复 → 系统自动发回，无需调用工具
-• 无此标签（桌面聊天）→ 禁止调用 discord_send_file
-`.trim();
-
-/**
  * 组合为完整的 System Prompt
  */
 export function buildSystemPrompt(): string {
@@ -76,7 +65,5 @@ export function buildSystemPrompt(): string {
     TOOL_MAPPING,
     '',
     TOOL_INTERACTION_RULE,
-    '',
-    DISCORD_RULE,
   ].join('\n');
 }

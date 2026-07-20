@@ -7,6 +7,11 @@ export interface BridgeRoute {
   userId?: string;
 }
 
+export type ReplyTarget =
+  | { kind: 'desktop' }
+  | { kind: 'discord'; channelId: string; userId?: string }
+  | { kind: 'wechat'; userId: string; delivery: 'pending' };
+
 export interface BridgeDeliveryAdapter {
   sendDiscord?: (channelId: string, text: string) => Promise<void>;
 }
@@ -22,6 +27,18 @@ function pendingKey(platform: BridgePlatform, id: string): string {
 
 export function noteBridgeInboundMessage(route: BridgeRoute): void {
   recentRoutes.set(route.conversationId, route);
+}
+
+export function getReplyTargetForConversation(conversationId: string): ReplyTarget | undefined {
+  const route = recentRoutes.get(conversationId);
+  if (!route) return undefined;
+  if (route.platform === 'discord' && route.channelId) {
+    return { kind: 'discord', channelId: route.channelId, userId: route.userId };
+  }
+  if (route.platform === 'wechat' && route.userId) {
+    return { kind: 'wechat', userId: route.userId, delivery: 'pending' };
+  }
+  return undefined;
 }
 
 export function consumePendingBridgeMessages(platform: BridgePlatform, id: string): string[] {
@@ -58,4 +75,29 @@ export async function routeAsyncBridgeMessage(
   }
 
   return 'none';
+}
+
+export async function deliverReplyToTarget(
+  adapter: BridgeDeliveryAdapter,
+  target: ReplyTarget | undefined,
+  text: string,
+): Promise<RouteResult> {
+  if (!target || target.kind === 'desktop') return 'none';
+
+  if (target.kind === 'discord') {
+    if (!adapter.sendDiscord) return 'none';
+    try {
+      await adapter.sendDiscord(target.channelId, text);
+      return 'sent';
+    } catch (error) {
+      console.warn('[BridgeDelivery] Discord reply delivery failed:', (error as Error).message);
+      return 'failed';
+    }
+  }
+
+  const key = pendingKey('wechat', target.userId);
+  const messages = pendingMessages.get(key) ?? [];
+  messages.push(text);
+  pendingMessages.set(key, messages);
+  return 'pending';
 }

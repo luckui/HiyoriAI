@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   consumePendingBridgeMessages,
+  deliverReplyToTarget,
+  getReplyTargetForConversation,
   noteBridgeInboundMessage,
   routeAsyncBridgeMessage,
   type BridgeDeliveryAdapter,
@@ -38,5 +40,45 @@ describe('async bridge delivery', () => {
 
     expect(routed).toBe('pending');
     expect(pending).toEqual(['Codex finished']);
+  });
+
+  it('captures a reply target from the latest bridge route', () => {
+    noteBridgeInboundMessage({
+      conversationId: 'conv-target',
+      platform: 'discord',
+      channelId: 'channel-2',
+      userId: 'bob',
+    });
+
+    expect(getReplyTargetForConversation('conv-target')).toEqual({
+      kind: 'discord',
+      channelId: 'channel-2',
+      userId: 'bob',
+    });
+  });
+
+  it('delivers final replies to the supplied Discord target', async () => {
+    const sendDiscord = vi.fn(async () => {});
+    const adapter: BridgeDeliveryAdapter = { sendDiscord };
+
+    const delivered = await deliverReplyToTarget(adapter, {
+      kind: 'discord',
+      channelId: 'channel-3',
+      userId: 'carol',
+    }, 'Final answer');
+
+    expect(delivered).toBe('sent');
+    expect(sendDiscord).toHaveBeenCalledWith('channel-3', 'Final answer');
+  });
+
+  it('queues final replies for a WeChat pending target', async () => {
+    const delivered = await deliverReplyToTarget({}, {
+      kind: 'wechat',
+      userId: 'wx-user-2',
+      delivery: 'pending',
+    }, 'Final answer');
+
+    expect(delivered).toBe('pending');
+    expect(consumePendingBridgeMessages('wechat', 'wx-user-2')).toEqual(['Final answer']);
   });
 });

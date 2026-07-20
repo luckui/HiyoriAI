@@ -14,6 +14,7 @@
 import type { ToolDefinition } from '../types';
 import { taskManager } from '../../taskManager';
 import type { TaskStatus } from '../../db';
+import { getReplyTargetForConversation } from '../../bridges/asyncDelivery';
 
 interface AsyncTaskParams {
   action: 'create' | 'batch' | 'status' | 'list' | 'cancel' | 'result';
@@ -112,6 +113,9 @@ const asyncTaskTool: ToolDefinition<AsyncTaskParams> = {
 
   execute(params, context) {
     const { action } = params;
+    const replyTarget = context?.conversationId
+      ? getReplyTargetForConversation(context.conversationId)
+      : undefined;
 
     switch (action) {
       case 'create': {
@@ -126,6 +130,7 @@ const asyncTaskTool: ToolDefinition<AsyncTaskParams> = {
           metadata: {
             toolsets: params.toolsets,
             maxRounds: params.max_rounds,
+            replyTarget,
           },
         });
 
@@ -156,6 +161,7 @@ const asyncTaskTool: ToolDefinition<AsyncTaskParams> = {
             items: params.items,
             toolsets: params.toolsets ?? ['worker'],
             maxRounds: params.max_rounds ?? 10,
+            replyTarget,
           },
         });
 

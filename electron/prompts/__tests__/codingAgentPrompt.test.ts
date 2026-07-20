@@ -18,6 +18,9 @@ describe('coding agent prompt contract', () => {
     expect(prompt).toContain('terminal block');
     expect(prompt).toContain('unattended with high autonomy');
     expect(prompt).toContain('Windows sandbox popups must be avoided');
+    expect(prompt).not.toContain('最终文字回复会由系统自动投递到来源平台');
+    expect(prompt).not.toContain('不要为了发送普通文字回复而打开 Discord/WeChat 网页');
+    expect(prompt).not.toContain('发送文件、截图或附件时才使用平台发送工具');
     expect(prompt).not.toContain('action="start"');
     expect(prompt).not.toContain('action="continue"');
     expect(prompt).not.toContain('status/result');
@@ -41,6 +44,9 @@ describe('coding agent prompt contract', () => {
     expect(prompt).toContain('runtime_start');
     expect(prompt).toContain('unattended with high autonomy');
     expect(prompt).toContain('Windows sandbox popups must be avoided');
+    expect(prompt).not.toContain('最终文字回复会由系统自动投递到来源平台');
+    expect(prompt).not.toContain('不要为了发送普通文字回复而打开 Discord/WeChat 网页');
+    expect(prompt).not.toContain('发送文件、截图或附件时才使用平台发送工具');
     expect(prompt).not.toContain('action="start"');
     expect(prompt).not.toContain('action="continue"');
     expect(prompt).not.toContain('status/result');

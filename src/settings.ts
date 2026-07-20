@@ -320,12 +320,12 @@ async function saveDiscordSettings(): Promise<void> {
     // 给 bot 2 秒启动时间再刷新状态
     setTimeout(() => {
       void refreshDiscordStatus();
-      btn.textContent = '保存并重启 Bot';
+      btn.textContent = '保存设置';
       btn.disabled = false;
     }, 2000);
   } catch (e) {
     btn.textContent = '保存失败';
-    setTimeout(() => { btn.textContent = '保存并重启 Bot'; btn.disabled = false; }, 2000);
+    setTimeout(() => { btn.textContent = '保存设置'; btn.disabled = false; }, 2000);
     console.error('[Discord save]', e);
   }
 }
@@ -379,12 +379,12 @@ async function saveWeChatSettings(): Promise<void> {
     btn.textContent = '✓ 已保存';
     setTimeout(() => {
       void refreshWeChatStatus();
-      btn.textContent = '保存并重启 Bot';
+      btn.textContent = '保存设置';
       btn.disabled = false;
     }, 2000);
   } catch (e) {
     btn.textContent = '保存失败';
-    setTimeout(() => { btn.textContent = '保存并重启 Bot'; btn.disabled = false; }, 2000);
+    setTimeout(() => { btn.textContent = '保存设置'; btn.disabled = false; }, 2000);
     console.error('[WeChat save]', e);
   }
 }
@@ -392,11 +392,13 @@ async function saveWeChatSettings(): Promise<void> {
 async function startWeChatQRLogin(): Promise<void> {
   if (!window.wechatAPI) return;
   
+  const qrSection = document.getElementById('wc-qr-section') as HTMLElement | null;
   const btn = document.getElementById('wc-qr-start-btn') as HTMLButtonElement;
   const display = document.getElementById('wc-qr-display') as HTMLElement;
   const statusText = document.getElementById('wc-qr-status') as HTMLElement;
   const img = document.getElementById('wc-qr-img') as HTMLImageElement;
   
+  if (qrSection) qrSection.style.display = 'block';
   btn.disabled = true;
   btn.textContent = '启动中…';
   display.style.display = 'block';
@@ -418,7 +420,7 @@ async function startWeChatQRLogin(): Promise<void> {
       statusText.textContent = '🎉 登录成功！正在保存凭证...';
       statusText.style.color = '#4CAF50';
       setTimeout(() => {
-        void loadWeChatUI(); // 刷新 UI 显示账号信息
+        void loadWeChatUI().then(() => clearSettingsDirty('wechat')); // QR login already persisted and started WeChat.
         display.style.display = 'none';
         btn.disabled = false;
         btn.textContent = '🔑 启动二维码登录';
@@ -1668,6 +1670,7 @@ export function initSettings(): void {
   // ── WeChat 表单事件 ──────────────────────────────────
   document.getElementById('wc-save-btn')?.addEventListener('click', () => void saveWeChatSettings());
   document.getElementById('wc-qr-start-btn')?.addEventListener('click', () => void startWeChatQRLogin());
+  document.getElementById('wc-switch-account-btn')?.addEventListener('click', () => void startWeChatQRLogin());
   // ── TTS 表单事件 ─────────────────────────────────────
   document.getElementById('tts-save-btn')?.addEventListener('click', () => void saveTTSSettings());
   document.getElementById('tts-enabled')?.addEventListener('change', () => void handleTTSEnabledToggleChanged());

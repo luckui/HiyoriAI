@@ -102,16 +102,14 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
   "discord": {
     description: "Discord 平台专属工具（当消息来自 Discord 时自动注入）",
     tools: [
-      "discord_send",            // Discord 发送消息/文件（原子工具）
-      "discord_send_file",       // Skill: Discord 智能发送文件
+      "discord_send_file",       // Discord 附件/截图发送
     ],
   },
 
   "wechat": {
     description: "WeChat 平台专属工具（当消息来自 WeChat 时自动注入）",
     tools: [
-      "wechat_send",             // 🆕 微信发送消息/文件（支持 AES-128-ECB 加密）
-      "wechat_send_file",        // 🆕 Skill: 微信智能发送文件（搜索 + 截图）
+      "wechat_send_file",        // WeChat 附件/截图发送
     ],
   },
 

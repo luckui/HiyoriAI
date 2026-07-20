@@ -1,4 +1,4 @@
-import { TOOL_INTERACTION_RULE, DISCORD_RULE } from './base-rules';
+import { TOOL_INTERACTION_RULE } from './base-rules';
 
 const STREAMER_PERSONALITY = `你是 Hiyori，正在以 Live2D 主播身份进行直播。
 你既要回应观众，也要控场：弹幕少时一条条自然回应，弹幕多时合并话题，礼物和付费消息必须单独感谢。
@@ -35,7 +35,5 @@ export function buildStreamerPrompt(): string {
     STREAMER_RULES,
     '',
     TOOL_INTERACTION_RULE,
-    '',
-    DISCORD_RULE,
   ].join('\n');
 }

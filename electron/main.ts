@@ -93,8 +93,12 @@ import { sendChatMessage, setToolEventListener, stopCurrentAI } from './aiServic
 import { triggerConversationLeave, memoryManager, globalMemoryManager, runStartupCatchUp, startIdleScheduler } from './memory/index';
 import { exportMemoryToMarkdown, importMemoryFromMarkdown } from './memory/memoryExport';
 import aiConfig from './ai.config';
-import { startBridges, stopBridges } from './bridges/index';
-import { routeAsyncBridgeMessage } from './bridges/asyncDelivery';
+import { applyBridgeRuntime, startBridges, stopBridges } from './bridges/index';
+import {
+  deliverReplyToTarget,
+  getReplyTargetForConversation,
+  type ReplyTarget,
+} from './bridges/asyncDelivery';
 import { setCodingAgentNotifier, setCodingAgentTerminalNotifier } from './codingAgents';
 import { DiscordAdapter } from './bridges/adapters/discord';
 import { WeChatAdapter, qrLogin } from './bridges/adapters/wechat';
@@ -112,7 +116,7 @@ import * as ttsServerManager from './ttsServerManager';
 import * as sttServerManager from './sttServerManager';
 import { hearingManager } from './hearingManager';
 import { taskManager } from './taskManager';
-import { taskScheduler } from './taskScheduler';
+import { setScheduleReminderNotifier, taskScheduler } from './taskScheduler';
 import { initLive2DBridge } from './live2dBridge';
 
 // ── 实运行时加载持久化的 LLM 配置 ──────────────────────────────
@@ -273,11 +277,39 @@ export async function injectAgentMessage(
  *
  * 仅对 background/batch 任务使用。cron 任务由子智能体自己用 speak 通知用户。
  */
-export function sendAgentWakeup(conversationId: string, triggerText: string): void {
+export function sendAgentWakeup(conversationId: string, triggerText: string, replyTarget?: ReplyTarget): void {
   if (mainWin && !mainWin.isDestroyed() && !mainWin.webContents.isDestroyed()) {
-    mainWin.webContents.send('chat:agent-wakeup', { conversationId, text: triggerText });
+    mainWin.webContents.send('chat:agent-wakeup', { conversationId, text: triggerText, replyTarget });
     console.log(`[Agent Wakeup] 唤醒对话 ${conversationId.slice(0, 8)}…: ${triggerText.slice(0, 80)}`);
   }
+}
+
+function parseReplyTargetFromMetadata(metadata: string | null): ReplyTarget | undefined {
+  if (!metadata) return undefined;
+  try {
+    const target = (JSON.parse(metadata) as { replyTarget?: ReplyTarget }).replyTarget;
+    if (!target || typeof target !== 'object') return undefined;
+    if (target.kind === 'desktop') return target;
+    if (target.kind === 'discord' && typeof target.channelId === 'string') return target;
+    if (target.kind === 'wechat' && typeof target.userId === 'string') {
+      return { kind: 'wechat', userId: target.userId, delivery: 'pending' };
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+async function deliverReplyTarget(replyTarget: ReplyTarget | undefined, text: string): Promise<void> {
+  await deliverReplyToTarget({
+    sendDiscord: async (channelId, content) => {
+      const channel = await DiscordAdapter.activeClient?.channels.fetch(channelId);
+      if (!channel || !('send' in channel) || typeof channel.send !== 'function') {
+        throw new Error(`Discord channel is not sendable: ${channelId}`);
+      }
+      await channel.send(content);
+    },
+  }, replyTarget, text);
 }
 
 function loadPersistedConfig(): void {
@@ -398,9 +430,11 @@ function createWindow(): void {
   );
 
   // ── AI 发送消息 ────────────────────────────────────────────
-  ipcMain.handle('chat:send', (_e, conversationId: string, content: string) =>
-    sendChatMessage(conversationId, content)
-  );
+  ipcMain.handle('chat:send', async (_e, conversationId: string, content: string, replyTarget?: ReplyTarget) => {
+    const result = await sendChatMessage(conversationId, content);
+    await deliverReplyTarget(replyTarget, result.content);
+    return result;
+  });
 
   // ── AI 停止回答 ────────────────────────────────────────────
   ipcMain.handle('chat:stop', () => {
@@ -444,10 +478,10 @@ function createWindow(): void {
     applyBridgeEnv(bridgeConfig);
     persistCurrentAppConfig();
 
-    await stopBridges();
     const convs = listConversations();
     const convId = convs.length > 0 ? convs[0].id : createConversation().id;
-    await startBridges(convId).catch(e => console.error('[Discord] 重启失败:', (e as Error).message));
+    await applyBridgeRuntime('discord', bridgeConfig, convId)
+      .catch(e => console.error('[Discord] apply failed:', (e as Error).message));
   });
 
   // ── TTS ──────────────────────────────────────────────────────
@@ -501,10 +535,10 @@ function createWindow(): void {
     applyBridgeEnv(bridgeConfig);
     persistCurrentAppConfig();
 
-    await stopBridges();
     const convs = listConversations();
     const convId = convs.length > 0 ? convs[0].id : createConversation().id;
-    await startBridges(convId).catch(e => console.error('[WeChat] 重启失败:', (e as Error).message));
+    await applyBridgeRuntime('wechat', bridgeConfig, convId)
+      .catch(e => console.error('[WeChat] apply failed:', (e as Error).message));
   });
 
   ipcMain.handle('wechat:qr-login', async (event) => {
@@ -525,10 +559,9 @@ function createWindow(): void {
           
           // 登录成功后自动启动 adapter
           try {
-            await stopBridges();
             const convs = listConversations();
             const convId = convs.length > 0 ? convs[0].id : createConversation().id;
-            await startBridges(convId);
+            await applyBridgeRuntime('wechat', bridgeConfig, convId);
             console.log('[WeChat QR] adapter 已自动启动');
           } catch (e) {
             console.error('[WeChat QR] 自动启动 adapter 失败:', (e as Error).message);
@@ -858,7 +891,9 @@ function createWindow(): void {
         wakeupText = `【系统通知】后台任务「${task.title}」已完成。${resultPreview ? `\n\n结果：\n${resultPreview}` : ''}\n\n请检查结果并继续执行后续步骤。`;
       }
 
-      sendAgentWakeup(task.conversation_id, wakeupText);
+      const replyTarget = parseReplyTargetFromMetadata(task.metadata)
+        ?? getReplyTargetForConversation(task.conversation_id);
+      sendAgentWakeup(task.conversation_id, wakeupText, replyTarget);
     }
   });
   taskManager.on('task:failed',    (task) => {
@@ -866,7 +901,9 @@ function createWindow(): void {
     console.log(`[TaskManager] ❌ 任务失败: 「${task.title}」 (${task.id.slice(0, 8)}…) — ${task.error ?? '未知错误'}`);
     if ((task.type === 'background' || task.type === 'batch') && task.conversation_id && !task.parent_task_id) {
       const wakeupText = `【系统通知】后台任务「${task.title}」执行失败。\n错误信息：${task.error ?? '未知错误'}\n\n请处理错误或告知用户。`;
-      sendAgentWakeup(task.conversation_id, wakeupText);
+      const replyTarget = parseReplyTargetFromMetadata(task.metadata)
+        ?? getReplyTargetForConversation(task.conversation_id);
+      sendAgentWakeup(task.conversation_id, wakeupText, replyTarget);
     }
   });
   taskManager.on('task:cancelled', pushTaskEvent('task:cancelled'));
@@ -877,16 +914,16 @@ app.whenReady().then(() => {
   initDatabase();
   loadPersistedConfig();
   setCodingAgentNotifier((conversationId, content) => {
-    sendAgentWakeup(conversationId, content);
-    void routeAsyncBridgeMessage({
-      sendDiscord: async (channelId, text) => {
-        const channel = await DiscordAdapter.activeClient?.channels.fetch(channelId);
-        if (!channel || !('send' in channel) || typeof channel.send !== 'function') {
-          throw new Error(`Discord channel is not sendable: ${channelId}`);
-        }
-        await channel.send(text);
-      },
-    }, conversationId, content);
+    sendAgentWakeup(conversationId, content, getReplyTargetForConversation(conversationId));
+  });
+  setScheduleReminderNotifier(({ conversationId, title, message, replyTarget }) => {
+    const text = `【提醒】${title}\n${message}`.trim();
+    const target = replyTarget ?? getReplyTargetForConversation(conversationId);
+    if (!target || target.kind === 'desktop') {
+      void injectAgentMessage(conversationId, text);
+      return;
+    }
+    void deliverReplyTarget(target, text);
   });
   setCodingAgentTerminalNotifier((event) => {
     if (!mainWin || mainWin.isDestroyed() || mainWin.webContents.isDestroyed()) return;
@@ -931,7 +968,7 @@ app.whenReady().then(() => {
   const defaultConvId = existingConvs.length > 0
     ? existingConvs[0].id
     : createConversation().id;
-  startBridges(defaultConvId).catch((e) =>
+  startBridges(defaultConvId, bridgeConfig).catch((e) =>
     console.error('[Bridges] 启动失败:', (e as Error).message)
   );
 

@@ -32,6 +32,38 @@ import {
   type ScheduleType,
 } from './db';
 import { taskManager } from './taskManager';
+import type { ReplyTarget } from './bridges/asyncDelivery';
+
+export type ScheduleKind = 'reminder' | 'agent_task';
+
+export interface ScheduleReminderNotification {
+  conversationId: string;
+  title: string;
+  message: string;
+  replyTarget?: ReplyTarget;
+}
+
+let scheduleReminderNotifier: ((notification: ScheduleReminderNotification) => void | Promise<void>) | undefined;
+
+export function setScheduleReminderNotifier(
+  notifier: ((notification: ScheduleReminderNotification) => void | Promise<void>) | undefined,
+): void {
+  scheduleReminderNotifier = notifier;
+}
+
+function parseScheduleMetadata(metadata: string | null): Record<string, unknown> {
+  if (!metadata) return {};
+  try {
+    const parsed = JSON.parse(metadata);
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function getScheduleKind(meta: Record<string, unknown>): ScheduleKind {
+  return meta.kind === 'reminder' ? 'reminder' : 'agent_task';
+}
 
 // ── 调度表达式解析 ───────────────────────────────────────
 
@@ -263,22 +295,39 @@ class TaskScheduler {
             continue;
           }
 
-          // 创建并启动后台任务
-          const meta = schedule.metadata ? JSON.parse(schedule.metadata) : undefined;
-          const toolsets: string[] = Array.isArray(meta?.toolsets) ? meta.toolsets : ['agent'];
+          const meta = parseScheduleMetadata(schedule.metadata);
+          const kind = getScheduleKind(meta);
+          const toolsets: string[] = kind === 'agent_task'
+            ? (Array.isArray(meta?.toolsets) ? meta.toolsets : ['agent'])
+            : [];
           console.log(
             `[TaskScheduler] ▶ 触发定时任务: "${schedule.task_title}" (${schedule.id})\n` +
-            `  toolsets: [${toolsets.join(', ')}]\n` +
+            `  kind: ${kind}\n` +
+            (kind === 'agent_task' ? `  toolsets: [${toolsets.join(', ')}]\n` : '') +
             `  prompt: ${schedule.prompt.length > 120 ? schedule.prompt.slice(0, 120) + '…' : schedule.prompt}`,
           );
 
-          taskManager.createAndStart({
-            title: schedule.task_title,
-            prompt: schedule.prompt,
-            conversationId: typeof meta?.conversationId === 'string' ? meta.conversationId : undefined,
-            type: 'cron',
-            metadata: meta,
-          });
+          if (kind === 'reminder') {
+            const conversationId = typeof meta.conversationId === 'string' ? meta.conversationId : undefined;
+            if (conversationId && scheduleReminderNotifier) {
+              await scheduleReminderNotifier({
+                conversationId,
+                title: schedule.task_title,
+                message: schedule.prompt,
+                replyTarget: meta.replyTarget as ReplyTarget | undefined,
+              });
+            } else {
+              console.warn(`[TaskScheduler] reminder "${schedule.task_title}" has no conversationId or notifier; skipped delivery.`);
+            }
+          } else {
+            taskManager.createAndStart({
+              title: schedule.task_title,
+              prompt: schedule.prompt,
+              conversationId: typeof meta?.conversationId === 'string' ? meta.conversationId : undefined,
+              type: 'cron',
+              metadata: meta,
+            });
+          }
 
           // 更新调度记录
           const newCount = schedule.repeat_count + 1;
@@ -382,14 +431,26 @@ class TaskScheduler {
     const s = getSchedule(scheduleId);
     if (!s) return false;
 
-    const triggerMeta = s.metadata ? JSON.parse(s.metadata) : undefined;
-    taskManager.createAndStart({
-      title: s.task_title,
-      prompt: s.prompt,
-      conversationId: typeof triggerMeta?.conversationId === 'string' ? triggerMeta.conversationId : undefined,
-      type: 'cron',
-      metadata: triggerMeta,
-    });
+    const triggerMeta = parseScheduleMetadata(s.metadata);
+    if (getScheduleKind(triggerMeta) === 'reminder') {
+      const conversationId = typeof triggerMeta.conversationId === 'string' ? triggerMeta.conversationId : undefined;
+      if (conversationId && scheduleReminderNotifier) {
+        void scheduleReminderNotifier({
+          conversationId,
+          title: s.task_title,
+          message: s.prompt,
+          replyTarget: triggerMeta.replyTarget as ReplyTarget | undefined,
+        });
+      }
+    } else {
+      taskManager.createAndStart({
+        title: s.task_title,
+        prompt: s.prompt,
+        conversationId: typeof triggerMeta?.conversationId === 'string' ? triggerMeta.conversationId : undefined,
+        type: 'cron',
+        metadata: triggerMeta,
+      });
+    }
 
     updateSchedule(scheduleId, { last_run_at: Date.now() });
     return true;

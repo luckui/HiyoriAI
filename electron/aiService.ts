@@ -152,9 +152,10 @@ function isLikelyCannotParseExcuse(replyText: string): boolean {
  *   - Discord：`[来源：Discord | 频道：xxx | 用户：xxx]`
  *   - WeChat：`[来源：WeChat | 用户：xxx]`
  *
- * 当检测到平台标签时，会自动注入对应平台的专属工具：
- *   - Discord → `discord_send`, `discord_send_file`
- *   - WeChat → `wechat_send` (未来扩展)
+ * 当检测到平台标签时，会自动注入对应平台的附件工具。
+ * 普通文字回复由通知路由自动投递，不作为 LLM 工具暴露。
+ *   - Discord → `discord_send_file`
+ *   - WeChat → `wechat_send_file`
  *
  * @returns 平台名（'discord' | 'wechat'）或 null
  */
@@ -454,8 +455,8 @@ export async function sendChatMessage(
     // Toolset 系统（借鉴 hermes-agent）：使用全局 Agent 模式（chat/agent/agent-debug）
     const enabledToolsets = getCurrentToolsets();  // ['chat'] 或 ['agent']
 
-    // 🆕 平台检测：根据消息来源动态注入平台专属工具
-    // 例：[来源：Discord | ...] → 自动添加 discord_send, discord_send_file
+    // 🆕 平台检测：根据消息来源动态注入平台附件工具
+    // 例：[来源：Discord | ...] → 自动添加 discord_send_file
     const platform = detectPlatform(userContent);
     if (platform) {
       enabledToolsets.push(platform);  // ['chat', 'discord']

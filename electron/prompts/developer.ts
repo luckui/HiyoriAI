@@ -10,7 +10,7 @@
  * 不影响 chat / agent / agent-debug 模式，纯扩展。
  */
 
-import { TOOL_INTERACTION_RULE, DISCORD_RULE } from './base-rules';
+import { TOOL_INTERACTION_RULE } from './base-rules';
 
 // ── 开发者人设 ─────────────────────────────────────────────
 
@@ -181,7 +181,5 @@ export function buildDeveloperPrompt(): string {
     CODING_AGENT_SAFETY,
     '',
     TOOL_INTERACTION_RULE,
-    '',
-    DISCORD_RULE,
   ].join('\n');
 }

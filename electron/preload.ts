@@ -24,8 +24,8 @@ contextBridge.exposeInMainWorld('chatAPI', {
     ipcRenderer.invoke('chat:delete-conversation', id),
   renameConversation: (id: string, title: string) =>
     ipcRenderer.invoke('chat:rename-conversation', id, title),
-  send: (conversationId: string, content: string) =>
-    ipcRenderer.invoke('chat:send', conversationId, content),
+  send: (conversationId: string, content: string, replyTarget?: unknown) =>
+    ipcRenderer.invoke('chat:send', conversationId, content, replyTarget),
   stopAI: () =>
     ipcRenderer.invoke('chat:stop'),
   /** 监听主进程注入的 AI 主动消息（来自后台任务完成通知或工具调用） */
@@ -35,8 +35,8 @@ contextBridge.exposeInMainWorld('chatAPI', {
     return () => { ipcRenderer.removeListener('chat:agent-message', handler); };
   },
   /** 监听 background/batch 任务完成后触发的 AI 唤醒请求（触发新一轮主对话 AI） */
-  onWakeup: (cb: (payload: { conversationId: string; text: string }) => void) => {
-    const handler = (_e: unknown, payload: { conversationId: string; text: string }) => cb(payload);
+  onWakeup: (cb: (payload: { conversationId: string; text: string; replyTarget?: unknown }) => void) => {
+    const handler = (_e: unknown, payload: { conversationId: string; text: string; replyTarget?: unknown }) => cb(payload);
     ipcRenderer.on('chat:agent-wakeup', handler);
     return () => { ipcRenderer.removeListener('chat:agent-wakeup', handler); };
   },
