@@ -162,6 +162,10 @@ def pcm_chunks_to_wav(chunks: list[bytes]) -> bytes:
     return buf.getvalue()
 
 
+def chunk_duration_ms(chunk: bytes) -> int:
+    return int(len(chunk) / (SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE) * 1000)
+
+
 # ── App ──────────────────────────────────────────────────────────────
 
 @asynccontextmanager
@@ -268,13 +272,24 @@ async def tts_generate(request: Request, req: TTSRequest):
                     log.info("TTS 客户端断开，中止推理（已生成 %d 块）", len(chunks))
                     return Response(status_code=204, content=b"")
                 chunks.append(chunk)
+                log.info(
+                    "TTS chunk #%d: bytes=%d duration_ms=%d",
+                    len(chunks),
+                    len(chunk),
+                    chunk_duration_ms(chunk),
+                )
 
         except Exception as e:
             log.error("TTS synthesis failed: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail=str(e))
 
     wav_bytes = pcm_chunks_to_wav(chunks)
-    log.info("TTS 完成: %d bytes", len(wav_bytes))
+    log.info(
+        "TTS 完成: chunks=%d pcm_duration_ms=%d wav_bytes=%d",
+        len(chunks),
+        sum(chunk_duration_ms(chunk) for chunk in chunks),
+        len(wav_bytes),
+    )
     return Response(
         content=wav_bytes,
         media_type="audio/wav",

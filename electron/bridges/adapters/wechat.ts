@@ -15,6 +15,8 @@
 import type { WeChatBridgeConfig } from '../bridge.config';
 import { sendChatMessage } from '../../aiService';
 import { consumePendingBridgeMessages, noteBridgeInboundMessage } from '../asyncDelivery';
+import { deliverWeChatVoiceReply, getReadyBridgeVoiceProvider, type WeChatVoiceFileMeta } from '../voiceReplies';
+import { formatWeChatCommandHelp, parseWeChatCommand } from '../wechatCommands';
 import { app } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs/promises';
@@ -106,6 +108,17 @@ interface AccountCredentials {
   baseUrl: string;
   userId?: string;
   savedAt: string;
+}
+
+export interface WeChatVoiceReplyControl {
+  getVoiceRepliesEnabled(): boolean;
+  setVoiceRepliesEnabled(enabled: boolean): Promise<{ enabled: boolean; detail?: string }>;
+}
+
+let voiceReplyControl: WeChatVoiceReplyControl | null = null;
+
+export function setWeChatVoiceReplyControl(control: WeChatVoiceReplyControl | null): void {
+  voiceReplyControl = control;
 }
 
 // ── Helper Functions ─────────────────────────────────────────────────
@@ -269,7 +282,7 @@ function getMediaItemType(mimeType: string, filePath: string): { mediaType: numb
   if (mimeType.startsWith('video/')) {
     return { mediaType: MEDIA_VIDEO, itemType: ITEM_VIDEO };
   }
-  if (mimeType.startsWith('audio/') || filePath.endsWith('.silk')) {
+  if (filePath.endsWith('.silk')) {
     return { mediaType: MEDIA_VOICE, itemType: ITEM_VOICE };
   }
   // 默认：文件
@@ -654,6 +667,10 @@ export class WeChatAdapter {
 
     console.log(`[WeChat] 收到消息 from=${fromUserId.slice(0, 8)}***: ${text.slice(0, 50)}`);
 
+    if (await this.handleCommand(fromUserId, text)) {
+      return;
+    }
+
     const conversationId = this.cfg.conversationId;
     if (!conversationId) {
       console.warn('[WeChat] 未绑定 conversationId，忽略消息');
@@ -679,13 +696,24 @@ export class WeChatAdapter {
       const result = await sendChatMessage(conversationId, taggedContent);
 
       // 分片发送回复
-      const chunks = splitMessage(result.content);
-      for (const chunk of chunks) {
-        await this.sendText(fromUserId, chunk);
-        if (chunks.length > 1 && this.cfg.sendChunkDelay > 0) {
-          await new Promise(resolve => setTimeout(resolve, this.cfg.sendChunkDelay * 1000));
+      let voiceProvider: Awaited<ReturnType<typeof getReadyBridgeVoiceProvider>> = null;
+      if (this.cfg.voiceRepliesEnabled) {
+        try {
+          voiceProvider = await getReadyBridgeVoiceProvider();
+        } catch (error) {
+          console.warn('[WeChat] voice reply runtime unavailable:', (error as Error).message);
         }
       }
+
+      await deliverWeChatVoiceReply({
+        userId: fromUserId,
+        text: result.content,
+        voiceEnabled: this.cfg.voiceRepliesEnabled,
+        voiceDeliveryMode: this.cfg.voiceReplyDelivery,
+        provider: voiceProvider,
+        sendAudioFile: (userId, filePath, meta) => this.sendFile(userId, filePath, meta),
+        sendText: (userId, text) => this.sendTextChunks(userId, text),
+      });
     } catch (err) {
       const errMsg = String(err);
       console.error('[WeChat] 消息处理失败:', errMsg);
@@ -693,6 +721,37 @@ export class WeChatAdapter {
     } finally {
       await this.sendTyping(fromUserId, false);
     }
+  }
+
+  private async handleCommand(userId: string, text: string): Promise<boolean> {
+    const command = parseWeChatCommand(text);
+    if (!command) return false;
+
+    if (command === 'help') {
+      await this.sendText(userId, formatWeChatCommandHelp(this.cfg.voiceRepliesEnabled));
+      return true;
+    }
+
+    if (!voiceReplyControl) {
+      await this.sendText(userId, 'Voice reply control is unavailable.');
+      return true;
+    }
+
+    if (command === 'stopvoice') {
+      const result = await voiceReplyControl.setVoiceRepliesEnabled(false);
+      this.cfg.voiceRepliesEnabled = result.enabled;
+      await this.sendText(userId, result.enabled
+        ? 'Voice file replies are still on.'
+        : 'Voice file replies are now off.');
+      return true;
+    }
+
+    const result = await voiceReplyControl.setVoiceRepliesEnabled(true);
+    this.cfg.voiceRepliesEnabled = result.enabled;
+    await this.sendText(userId, result.enabled
+      ? 'Voice file replies are now on.'
+      : `Voice file replies could not be enabled.${result.detail ? ` ${result.detail}` : ''}`);
+    return true;
   }
 
   /**
@@ -719,6 +778,16 @@ export class WeChatAdapter {
     };
 
     await ilinkPost(this.baseUrl, EP_SEND_MESSAGE, payload, this.token);
+  }
+
+  private async sendTextChunks(userId: string, text: string): Promise<void> {
+    const chunks = splitMessage(text);
+    for (const chunk of chunks) {
+      await this.sendText(userId, chunk);
+      if (chunks.length > 1 && this.cfg.sendChunkDelay > 0) {
+        await new Promise(resolve => setTimeout(resolve, this.cfg.sendChunkDelay * 1000));
+      }
+    }
   }
 
   private async sendTyping(userId: string, isTyping: boolean): Promise<void> {
@@ -753,7 +822,7 @@ export class WeChatAdapter {
    * @param userId - 微信用户 ID
    * @param filePath - 本地文件绝对路径
    */
-  async sendFile(userId: string, filePath: string): Promise<void> {
+  async sendFile(userId: string, filePath: string, options: WeChatVoiceFileMeta = {}): Promise<void> {
     console.log(`[WeChat] 开始发送文件: ${filePath} 到用户 ${userId}`);
     
     // 读取文件
@@ -835,6 +904,13 @@ export class WeChatAdapter {
         },
       }];
     } else if (itemType === ITEM_VOICE) {
+      const voiceMeta = {
+        playtime: Math.max(1, Math.round(options.playtimeMs ?? 0)),
+        encode_type: 6,
+        bits_per_sample: options.bitsPerSample ?? 16,
+        sample_rate: options.sampleRate ?? 24000,
+      };
+      console.log('[WeChat] voice item meta:', voiceMeta);
       itemList = [{
         type: ITEM_VOICE,
         voice_item: {
@@ -843,7 +919,7 @@ export class WeChatAdapter {
             aes_key: aesKeyBase64,
             encrypt_type: 1,
           },
-          playtime: 0,
+          ...voiceMeta,
         },
       }];
     } else {

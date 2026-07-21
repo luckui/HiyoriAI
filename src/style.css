@@ -108,6 +108,10 @@ html, body {
   position: relative;
 }
 
+body.avatar-studio-open #app {
+  width: var(--avatar-shell-width, 360px);
+}
+
 /* ========================================================
    Live2D 画布区域
 ======================================================== */
@@ -150,6 +154,436 @@ html, body {
 
 #canvas-container:hover #canvas-controls {
   opacity: 1;
+}
+
+/* ========================================================
+   Live2D 角色管理面板（Avatar Studio UI 原型）
+======================================================== */
+#avatar-studio-slot {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: var(--avatar-shell-width, 360px);
+  z-index: 180;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+#avatar-studio-slot.visible {
+  pointer-events: auto;
+}
+
+#avatar-studio-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 360px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1.5px solid rgba(240, 147, 251, 0.24);
+  border-radius: 14px 0 0 14px;
+  background: rgba(255, 250, 253, 0.96);
+  box-shadow: 0 18px 48px rgba(190, 80, 130, 0.18);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  transform: translateX(-100%);
+  opacity: 0;
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease;
+}
+
+#avatar-studio-slot.visible #avatar-studio-panel {
+  transform: translateX(0);
+  opacity: 1;
+}
+
+#avatar-studio-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 13px 14px;
+  background: var(--gradient-header);
+  color: white;
+  flex-shrink: 0;
+}
+
+#avatar-studio-hdr h2 {
+  margin: 1px 0 0;
+  font-size: 16px;
+  font-weight: 720;
+  letter-spacing: 0;
+}
+
+.avatar-studio-kicker {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.9px;
+  opacity: 0.78;
+}
+
+.avatar-studio-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.avatar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1.5px solid rgba(240, 147, 251, 0.16);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.avatar-import-section {
+  gap: 12px;
+}
+
+.avatar-section h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 760;
+  color: #57425e;
+}
+
+.avatar-section p {
+  margin: 5px 0 0;
+  color: #8c7d92;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.avatar-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.avatar-muted {
+  color: #ad9ab5;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.avatar-badge {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(240, 147, 251, 0.14);
+  color: var(--purple-soft);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.avatar-capability-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.avatar-capability-grid div {
+  min-width: 0;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(252, 248, 255, 0.9);
+}
+
+.avatar-capability-grid span,
+.avatar-capability-grid strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.avatar-capability-grid span {
+  color: #b09ab8;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.avatar-capability-grid strong {
+  margin-top: 2px;
+  color: #594562;
+  font-size: 12px;
+}
+
+.avatar-slot-list,
+.avatar-resource-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.avatar-model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.avatar-model-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px;
+  border: 1.5px solid rgba(240, 147, 251, 0.12);
+  border-radius: var(--radius-sm);
+  background: rgba(252, 248, 255, 0.82);
+}
+
+.avatar-model-card.active {
+  border-color: rgba(240, 147, 251, 0.34);
+  background: rgba(255, 245, 253, 0.92);
+}
+
+.avatar-model-main {
+  min-width: 0;
+}
+
+.avatar-model-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.avatar-model-title-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #57425e;
+  font-size: 12px;
+  font-weight: 760;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.avatar-model-main > span {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  color: #ad9ab5;
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.avatar-model-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.avatar-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 9px;
+  border-radius: var(--radius-sm);
+  background: rgba(252, 248, 255, 0.82);
+}
+
+.avatar-slot-main {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.avatar-slot-title {
+  color: #57425e;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.avatar-slot-desc {
+  color: #aa9ab0;
+  font-size: 10.5px;
+  text-align: right;
+}
+
+.avatar-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.avatar-chip,
+.avatar-chip-add,
+.avatar-small-btn,
+.avatar-secondary-btn,
+.avatar-primary-btn {
+  font-family: var(--font);
+  -webkit-app-region: no-drag;
+  cursor: pointer;
+}
+
+.avatar-chip {
+  max-width: 100%;
+  padding: 5px 9px;
+  border: 1.5px solid rgba(200, 100, 150, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  color: #6d5c73;
+  font-size: 11px;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.avatar-chip.selected {
+  border-color: rgba(240, 147, 251, 0.5);
+  background: rgba(240, 147, 251, 0.14);
+  color: var(--pink-deep);
+}
+
+.avatar-chip.ghost {
+  color: #b8a8be;
+  border-style: dashed;
+}
+
+.avatar-chip-add {
+  width: 26px;
+  height: 26px;
+  border: 1.5px dashed rgba(200, 100, 150, 0.28);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--purple-soft);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.avatar-resource-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px;
+  border-radius: var(--radius-sm);
+  background: rgba(252, 248, 255, 0.82);
+}
+
+.avatar-resource-item div {
+  min-width: 0;
+}
+
+.avatar-resource-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.avatar-resource-item strong,
+.avatar-resource-item span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.avatar-resource-item strong {
+  color: #57425e;
+  font-size: 11.5px;
+}
+
+.avatar-resource-item span {
+  margin-top: 2px;
+  color: #ad9ab5;
+  font-size: 10.5px;
+}
+
+.avatar-small-btn,
+.avatar-secondary-btn {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  border: 1.5px solid rgba(240, 147, 251, 0.38);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--purple-soft);
+  font-size: 11.5px;
+  font-weight: 650;
+}
+
+.avatar-small-btn.danger {
+  border-color: rgba(255, 107, 129, 0.32);
+  color: #e55a78;
+}
+
+.avatar-slot-select {
+  max-width: 92px;
+  padding: 5px 8px;
+  border: 1.5px solid rgba(240, 147, 251, 0.28);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.74);
+  color: #6d5c73;
+  font-size: 11px;
+  font-weight: 650;
+  outline: none;
+}
+
+.avatar-motion-chip {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+}
+
+.avatar-motion-chip .avatar-chip {
+  border-radius: 999px 0 0 999px;
+}
+
+.avatar-chip-remove {
+  width: 24px;
+  min-width: 24px;
+  height: 26px;
+  border: 1.5px solid rgba(200, 100, 150, 0.18);
+  border-left: 0;
+  border-radius: 0 999px 999px 0;
+  background: rgba(255, 255, 255, 0.72);
+  color: #b98fae;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.avatar-empty-state {
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(252, 248, 255, 0.82);
+  color: #9986a0;
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.avatar-studio-footer {
+  display: grid;
+  grid-template-columns: 0.82fr 1.18fr;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 12px 14px 14px;
+  background: linear-gradient(180deg, rgba(255,250,253,0.72) 0%, rgba(255,250,253,0.98) 38%);
+  border-top: 1px solid rgba(240, 147, 251, 0.16);
+}
+
+.avatar-primary-btn {
+  padding: 9px 12px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--gradient-header);
+  color: white;
+  font-size: 12.5px;
+  font-weight: 700;
 }
 
 /* ===== 打字机气泡 ===== */
@@ -1916,6 +2350,13 @@ html, body {
   width: 18px;
   height: 18px;
   display: block;
+}
+
+.s-bridge-img {
+  width: 18px;
+  height: 18px;
+  display: block;
+  object-fit: contain;
 }
 
 .s-bridge-name {

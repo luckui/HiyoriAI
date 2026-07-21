@@ -1,4 +1,4 @@
-export type BridgePlatform = 'discord' | 'wechat';
+export type BridgePlatform = 'discord' | 'wechat' | 'feishu';
 
 export interface BridgeRoute {
   conversationId: string;
@@ -10,10 +10,12 @@ export interface BridgeRoute {
 export type ReplyTarget =
   | { kind: 'desktop' }
   | { kind: 'discord'; channelId: string; userId?: string }
+  | { kind: 'feishu'; chatId: string; userId?: string }
   | { kind: 'wechat'; userId: string; delivery: 'pending' };
 
 export interface BridgeDeliveryAdapter {
   sendDiscord?: (channelId: string, text: string) => Promise<void>;
+  sendFeishu?: (chatId: string, text: string) => Promise<void>;
 }
 
 type RouteResult = 'sent' | 'pending' | 'none' | 'failed';
@@ -37,6 +39,9 @@ export function getReplyTargetForConversation(conversationId: string): ReplyTarg
   }
   if (route.platform === 'wechat' && route.userId) {
     return { kind: 'wechat', userId: route.userId, delivery: 'pending' };
+  }
+  if (route.platform === 'feishu' && route.channelId) {
+    return { kind: 'feishu', chatId: route.channelId, userId: route.userId };
   }
   return undefined;
 }
@@ -74,6 +79,16 @@ export async function routeAsyncBridgeMessage(
     return 'pending';
   }
 
+  if (route.platform === 'feishu' && route.channelId && adapter.sendFeishu) {
+    try {
+      await adapter.sendFeishu(route.channelId, text);
+      return 'sent';
+    } catch (error) {
+      console.warn('[BridgeDelivery] Feishu async delivery failed:', (error as Error).message);
+      return 'failed';
+    }
+  }
+
   return 'none';
 }
 
@@ -91,6 +106,17 @@ export async function deliverReplyToTarget(
       return 'sent';
     } catch (error) {
       console.warn('[BridgeDelivery] Discord reply delivery failed:', (error as Error).message);
+      return 'failed';
+    }
+  }
+
+  if (target.kind === 'feishu') {
+    if (!adapter.sendFeishu) return 'none';
+    try {
+      await adapter.sendFeishu(target.chatId, text);
+      return 'sent';
+    } catch (error) {
+      console.warn('[BridgeDelivery] Feishu reply delivery failed:', (error as Error).message);
       return 'failed';
     }
   }

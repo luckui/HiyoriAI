@@ -12,6 +12,12 @@ import { LAppModel } from './lappmodel';
 import { LAppPal } from './lapppal';
 import { LAppSubdelegate } from './lappsubdelegate';
 
+export type AvatarMotionSlot = 'idle' | 'touch' | 'thinking' | 'speaking';
+export interface AvatarRuntimeMapping {
+  motions: Record<AvatarMotionSlot, string[]>;
+  expressions?: Record<string, string>;
+}
+
 export class LAppLive2DManager {
   private releaseAllModel(): void {
     this._models.clear();
@@ -30,6 +36,7 @@ export class LAppLive2DManager {
     }
     const model: LAppModel = this._models.at(0);
     if (!model) return;
+    if (this.playMappedMotionSlot('touch')) return;
     const cfg = LAppDefine.Models[this._sceneIndex];
 
     if (cfg.hitHead && model.hitTest(cfg.hitHead, x, y)) {
@@ -145,11 +152,34 @@ export class LAppLive2DManager {
     this.changeScene(this._sceneIndex);
   }
 
+  public loadAvatarModel(modelPath: string, jsonName: string, mapping?: AvatarRuntimeMapping): void {
+    this._slotMapping = mapping ?? null;
+    this.releaseAllModel();
+    const instance = new LAppModel();
+    instance.setSubdelegate(this._subdelegate);
+    const idleGroup = firstGroupFromMotionIds(mapping?.motions.idle) || LAppDefine.MotionGroupIdle;
+    instance.setIdleGroup(idleGroup);
+    instance.loadAssets(modelPath, jsonName);
+    this._models.pushBack(instance);
+  }
+
+  public previewMotion(motionId: string): boolean {
+    return this.playMotionId(motionId, LAppDefine.PriorityNormal);
+  }
+
+  public previewExpression(expressionId: string): boolean {
+    const model = this.getFirstModel();
+    if (!model || !expressionId) return false;
+    model.setExpression(expressionId);
+    return true;
+  }
+
   private changeScene(index: number): void {
     this._sceneIndex = index;
     const cfg = LAppDefine.Models[index];
     const modelPath: string = LAppDefine.ResourcesPath + cfg.dir + '/';
 
+    this._slotMapping = null;
     this.releaseAllModel();
     const instance = new LAppModel();
     instance.setSubdelegate(this._subdelegate);
@@ -176,7 +206,37 @@ export class LAppLive2DManager {
   _viewMatrix: CubismMatrix44;
   _models: csmVector<LAppModel>;
   private _sceneIndex: number;
+  private _slotMapping: AvatarRuntimeMapping | null = null;
 
   beganMotion = (_self: ACubismMotion): void => {};
   finishedMotion = (_self: ACubismMotion): void => {};
+
+  private playMappedMotionSlot(slot: AvatarMotionSlot): boolean {
+    const ids = this._slotMapping?.motions[slot] ?? [];
+    if (ids.length === 0) return false;
+    const id = ids[Math.floor(Math.random() * ids.length)];
+    return this.playMotionId(id, LAppDefine.PriorityNormal);
+  }
+
+  private playMotionId(motionId: string, priority: number): boolean {
+    const model = this.getFirstModel();
+    const parsed = parseMotionId(motionId);
+    if (!model || !parsed) return false;
+    model.startMotion(parsed.group, parsed.index, priority, this.finishedMotion, this.beganMotion);
+    return true;
+  }
+}
+
+function parseMotionId(motionId: string): { group: string; index: number } | null {
+  const idx = motionId.lastIndexOf(':');
+  if (idx <= 0) return null;
+  const group = motionId.slice(0, idx);
+  const index = Number.parseInt(motionId.slice(idx + 1), 10);
+  if (!group || !Number.isFinite(index) || index < 0) return null;
+  return { group, index };
+}
+
+function firstGroupFromMotionIds(ids: string[] | undefined): string {
+  const parsed = ids?.map(parseMotionId).find(Boolean);
+  return parsed?.group ?? '';
 }

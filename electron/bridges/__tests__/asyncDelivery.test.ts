@@ -42,6 +42,23 @@ describe('async bridge delivery', () => {
     expect(pending).toEqual(['Codex finished']);
   });
 
+  it('sends async results directly to Feishu when the last source supports push', async () => {
+    const sendFeishu = vi.fn(async () => {});
+    const adapter: BridgeDeliveryAdapter = { sendFeishu };
+
+    noteBridgeInboundMessage({
+      conversationId: 'conv-feishu',
+      platform: 'feishu',
+      channelId: 'chat-1',
+      userId: 'open-id-1',
+    });
+
+    const routed = await routeAsyncBridgeMessage(adapter, 'conv-feishu', 'Codex finished');
+
+    expect(routed).toBe('sent');
+    expect(sendFeishu).toHaveBeenCalledWith('chat-1', 'Codex finished');
+  });
+
   it('captures a reply target from the latest bridge route', () => {
     noteBridgeInboundMessage({
       conversationId: 'conv-target',
@@ -57,6 +74,21 @@ describe('async bridge delivery', () => {
     });
   });
 
+  it('captures a Feishu reply target from the latest bridge route', () => {
+    noteBridgeInboundMessage({
+      conversationId: 'conv-feishu-target',
+      platform: 'feishu',
+      channelId: 'chat-2',
+      userId: 'open-id-2',
+    });
+
+    expect(getReplyTargetForConversation('conv-feishu-target')).toEqual({
+      kind: 'feishu',
+      chatId: 'chat-2',
+      userId: 'open-id-2',
+    });
+  });
+
   it('delivers final replies to the supplied Discord target', async () => {
     const sendDiscord = vi.fn(async () => {});
     const adapter: BridgeDeliveryAdapter = { sendDiscord };
@@ -69,6 +101,20 @@ describe('async bridge delivery', () => {
 
     expect(delivered).toBe('sent');
     expect(sendDiscord).toHaveBeenCalledWith('channel-3', 'Final answer');
+  });
+
+  it('delivers final replies to the supplied Feishu target', async () => {
+    const sendFeishu = vi.fn(async () => {});
+    const adapter: BridgeDeliveryAdapter = { sendFeishu };
+
+    const delivered = await deliverReplyToTarget(adapter, {
+      kind: 'feishu',
+      chatId: 'chat-3',
+      userId: 'open-id-3',
+    }, 'Final answer');
+
+    expect(delivered).toBe('sent');
+    expect(sendFeishu).toHaveBeenCalledWith('chat-3', 'Final answer');
   });
 
   it('queues final replies for a WeChat pending target', async () => {

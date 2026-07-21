@@ -1,6 +1,7 @@
 import type { AIConfig } from '../ai.config';
 import type { TTSConfig } from '../tts.config';
 import type { SkillsConfig } from '../skillsConfig';
+import type { AvatarConfig } from '../avatar/avatarConfig';
 
 export interface DiscordConfig {
   enabled: boolean;
@@ -15,11 +16,22 @@ export interface WeChatConfig {
   accountId: string;
   baseUrl: string;
   sendChunkDelay: number;
+  voiceRepliesEnabled: boolean;
+  voiceReplyDelivery: 'audio_file' | 'native_voice';
+}
+
+export interface FeishuConfig {
+  enabled: boolean;
+  appId: string;
+  appSecret: string;
+  allowedChatIds: string;
+  voiceRepliesEnabled: boolean;
 }
 
 export interface BridgeAppConfig {
   discord: DiscordConfig;
   wechat: WeChatConfig;
+  feishu: FeishuConfig;
 }
 
 export interface AppConfig {
@@ -28,6 +40,7 @@ export interface AppConfig {
   tts: TTSConfig;
   skills: SkillsConfig;
   bridges: BridgeAppConfig;
+  avatar: AvatarConfig;
 }
 
 export interface AppConfigDefaults {
@@ -35,7 +48,16 @@ export interface AppConfigDefaults {
   tts: TTSConfig;
   skills: SkillsConfig;
   bridges: BridgeAppConfig;
+  avatar: AvatarConfig;
 }
+
+const DEFAULT_FEISHU_CONFIG: FeishuConfig = {
+  enabled: false,
+  appId: '',
+  appSecret: '',
+  allowedChatIds: '',
+  voiceRepliesEnabled: false,
+};
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -57,6 +79,10 @@ function normalizeBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
 
+function normalizeWeChatVoiceReplyDelivery(value: unknown, fallback: 'audio_file' | 'native_voice'): 'audio_file' | 'native_voice' {
+  return value === 'native_voice' || value === 'audio_file' ? value : fallback;
+}
+
 export function createDefaultAppConfig(defaults: AppConfigDefaults): AppConfig {
   return {
     version: 1,
@@ -64,19 +90,26 @@ export function createDefaultAppConfig(defaults: AppConfigDefaults): AppConfig {
     tts: clone(defaults.tts),
     skills: clone(defaults.skills),
     bridges: clone(defaults.bridges),
+    avatar: clone(defaults.avatar),
   };
 }
 
 export function normalizeAppConfig(raw: unknown, defaults: AppConfigDefaults): AppConfig {
   const base = createDefaultAppConfig(defaults);
+  base.bridges.feishu = {
+    ...DEFAULT_FEISHU_CONFIG,
+    ...(base.bridges.feishu ?? {}),
+  };
   const input = isObject(raw) ? raw : {};
 
   const llmInput = isObject(input.llm) ? input.llm : {};
   const ttsInput = isObject(input.tts) ? input.tts : {};
   const skillsInput = isObject(input.skills) ? input.skills : {};
   const bridgesInput = isObject(input.bridges) ? input.bridges : {};
+  const avatarInput = isObject(input.avatar) ? input.avatar : {};
   const discordInput = isObject(bridgesInput.discord) ? bridgesInput.discord : {};
   const wechatInput = isObject(bridgesInput.wechat) ? bridgesInput.wechat : {};
+  const feishuInput = isObject(bridgesInput.feishu) ? bridgesInput.feishu : {};
 
   const llmProviders = sanitizeLlmProviders(isObject(llmInput.providers)
     ? llmInput.providers as AIConfig['providers']
@@ -135,7 +168,24 @@ export function normalizeAppConfig(raw: unknown, defaults: AppConfigDefaults): A
         accountId: normalizeString(wechatInput.accountId, base.bridges.wechat.accountId),
         baseUrl: normalizeString(wechatInput.baseUrl, base.bridges.wechat.baseUrl),
         sendChunkDelay: normalizeNumber(wechatInput.sendChunkDelay, base.bridges.wechat.sendChunkDelay),
+        voiceRepliesEnabled: normalizeBoolean(wechatInput.voiceRepliesEnabled, base.bridges.wechat.voiceRepliesEnabled),
+        voiceReplyDelivery: normalizeWeChatVoiceReplyDelivery(wechatInput.voiceReplyDelivery, base.bridges.wechat.voiceReplyDelivery),
       },
+      feishu: {
+        enabled: normalizeBoolean(feishuInput.enabled, base.bridges.feishu.enabled),
+        appId: normalizeString(feishuInput.appId, base.bridges.feishu.appId),
+        appSecret: normalizeString(feishuInput.appSecret, base.bridges.feishu.appSecret),
+        allowedChatIds: normalizeString(feishuInput.allowedChatIds, base.bridges.feishu.allowedChatIds),
+        voiceRepliesEnabled: normalizeBoolean(feishuInput.voiceRepliesEnabled, base.bridges.feishu.voiceRepliesEnabled),
+      },
+    },
+    avatar: {
+      ...base.avatar,
+      ...avatarInput,
+      activeModelId: normalizeString(avatarInput.activeModelId, base.avatar.activeModelId),
+      models: Array.isArray(avatarInput.models)
+        ? avatarInput.models as AvatarConfig['models']
+        : base.avatar.models,
     },
   };
 }

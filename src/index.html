@@ -20,6 +20,9 @@
         </div>
         <!-- 右上角控制按鈕（不可拖动） -->
         <div id="canvas-controls" class="no-drag">
+          <button id="avatar-studio-btn" class="ctrl-btn" title="Live2D 管理">
+            <span>⚙</span>
+          </button>
           <button id="view-mode-btn" class="ctrl-btn" title="半身/全身切换">
             <span id="view-mode-icon">全</span>
           </button>
@@ -28,6 +31,137 @@
       </div>
 
       <!-- ===== 聊天面板 ===== -->
+      <!-- ===== Live2D 角色管理面板：先做 UI 原型，真实导入/映射逻辑后续接入 ===== -->
+      <div id="avatar-studio-slot" aria-hidden="true">
+        <aside id="avatar-studio-panel">
+          <div id="avatar-studio-hdr">
+            <div>
+              <div class="avatar-studio-kicker">Live2D</div>
+              <h2>角色管理</h2>
+            </div>
+            <button id="avatar-studio-close" class="ctrl-btn close-ctrl" title="关闭">×</button>
+          </div>
+
+          <div class="avatar-studio-body">
+            <section class="avatar-section avatar-import-section">
+              <div>
+                <h3>模型资源</h3>
+                <p>上传完整模型文件夹，系统会读取 model3.json 并整理动作与表情资源。</p>
+              </div>
+              <button id="avatar-import-btn" class="avatar-primary-btn" type="button">导入模型文件夹</button>
+            </section>
+
+          <section class="avatar-section" id="avatar-current-section">
+            <div class="avatar-section-head">
+              <h3>当前模型</h3>
+              <span class="avatar-badge">Hiyori_pro</span>
+            </div>
+            <div class="avatar-capability-grid">
+              <div><span>动作</span><strong>7 组</strong></div>
+              <div><span>表情</span><strong>未发现</strong></div>
+              <div><span>点击区域</span><strong>Body</strong></div>
+            </div>
+          </section>
+
+          <section class="avatar-section" id="avatar-model-library-section">
+            <div class="avatar-section-head">
+              <h3>模型库</h3>
+              <span class="avatar-muted">切换或删除已导入模型</span>
+            </div>
+            <div class="avatar-empty-state">正在读取模型列表...</div>
+          </section>
+
+          <section class="avatar-section" id="avatar-motion-section">
+            <div class="avatar-section-head">
+              <h3>动作映射</h3>
+              <span class="avatar-muted">按场景播放</span>
+            </div>
+            <div class="avatar-slot-list">
+              <div class="avatar-slot">
+                <div class="avatar-slot-main">
+                  <span class="avatar-slot-title">待机</span>
+                  <span class="avatar-slot-desc">空闲时循环播放</span>
+                </div>
+                <div class="avatar-chip-row">
+                  <button class="avatar-chip selected" type="button">Idle / hiyori_m01</button>
+                  <button class="avatar-chip" type="button">Idle / hiyori_m02</button>
+                  <button class="avatar-chip-add" type="button">+</button>
+                </div>
+              </div>
+              <div class="avatar-slot">
+                <div class="avatar-slot-main">
+                  <span class="avatar-slot-title">点击</span>
+                  <span class="avatar-slot-desc">用户触摸角色时播放</span>
+                </div>
+                <div class="avatar-chip-row">
+                  <button class="avatar-chip" type="button">Tap@Body / hiyori_m09</button>
+                  <button class="avatar-chip-add" type="button">+</button>
+                </div>
+              </div>
+              <div class="avatar-slot">
+                <div class="avatar-slot-main">
+                  <span class="avatar-slot-title">思考中</span>
+                  <span class="avatar-slot-desc">等待回复或工具结果时播放</span>
+                </div>
+                <div class="avatar-chip-row">
+                  <button class="avatar-chip ghost" type="button">未配置</button>
+                  <button class="avatar-chip-add" type="button">+</button>
+                </div>
+              </div>
+              <div class="avatar-slot">
+                <div class="avatar-slot-main">
+                  <span class="avatar-slot-title">说话中</span>
+                  <span class="avatar-slot-desc">回答和 TTS 播放时使用</span>
+                </div>
+                <div class="avatar-chip-row">
+                  <button class="avatar-chip ghost" type="button">未配置</button>
+                  <button class="avatar-chip-add" type="button">+</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="avatar-section" id="avatar-unassigned-motion-section">
+            <div class="avatar-section-head">
+              <h3>未分配动作</h3>
+              <span class="avatar-muted">预览后加入槽位</span>
+            </div>
+            <div class="avatar-resource-list">
+              <div class="avatar-resource-item">
+                <div>
+                  <strong>Flick / hiyori_m03</strong>
+                  <span>motion/hiyori_m03.motion3.json</span>
+                </div>
+                <button class="avatar-small-btn" type="button">预览</button>
+              </div>
+              <div class="avatar-resource-item">
+                <div>
+                  <strong>FlickDown / hiyori_m04</strong>
+                  <span>motion/hiyori_m04.motion3.json</span>
+                </div>
+                <button class="avatar-small-btn" type="button">预览</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="avatar-section" id="avatar-expression-section">
+            <div class="avatar-section-head">
+              <h3>表情映射</h3>
+              <span class="avatar-muted">可为空</span>
+            </div>
+            <div class="avatar-empty-state">
+              当前模型没有 expression 文件。可以继续使用模型切换、动作映射和口型同步。
+            </div>
+          </section>
+        </div>
+
+          <div class="avatar-studio-footer">
+            <button id="avatar-reset-btn" class="avatar-secondary-btn" type="button">重置映射</button>
+            <button id="avatar-save-btn" class="avatar-primary-btn" type="button">保存设置</button>
+          </div>
+        </aside>
+      </div>
+
       <div id="chat-panel">
 
         <!-- 聊天头部（可拖动） -->
@@ -307,6 +441,13 @@
                   <span class="s-bridge-name">Discord</span>
                   <span id="dc-list-dot" class="s-bridge-dot s-status-off"></span>
                 </li>
+                <li class="s-bridge-item" data-bridge="feishu">
+                  <span class="s-bridge-icon">
+                    <img src="assets/feishu.svg" alt="" class="s-bridge-img" />
+                  </span>
+                  <span class="s-bridge-name">Lark / Feishu</span>
+                  <span id="fs-list-dot" class="s-bridge-dot s-status-off"></span>
+                </li>
                 <li class="s-bridge-item" data-bridge="wechat">
                   <span class="s-bridge-icon">
                     <svg viewBox="0 0 1024 1024" width="16" height="16">
@@ -371,6 +512,75 @@
                 </div><!-- /#s-bridge-discord -->
 
                 <!-- ── WeChat 配置面板 ── -->
+                <div id="s-bridge-feishu" class="s-bridge-pane s-bridge-pane-hidden">
+                  <section class="s-section">
+                    <h3 class="s-title">Bot 连接</h3>
+                    <label class="s-label s-label-row">
+                      <span class="s-label-text">启用 Lark / Feishu Bot</span>
+                      <label class="s-toggle">
+                        <input type="checkbox" id="fs-enabled" />
+                        <span class="s-toggle-slider"></span>
+                      </label>
+                    </label>
+                    <label class="s-label">App ID
+                      <input id="fs-app-id" type="text" class="s-input" placeholder="cli_xxx" />
+                      <span class="s-hint">飞书开放平台企业自建应用的 App ID。</span>
+                    </label>
+                    <label class="s-label">App Secret
+                      <div class="s-input-row">
+                        <input id="fs-app-secret" type="password" class="s-input" placeholder="App Secret" />
+                        <button class="s-eye-btn" id="fs-eye-btn">👁</button>
+                      </div>
+                      <span class="s-hint">启用机器人能力，并在事件订阅中使用长连接接收 im.message.receive_v1。</span>
+                    </label>
+                  </section>
+
+                  <section class="s-section">
+                    <h3 class="s-title">访问范围</h3>
+                    <label class="s-label">允许的 Chat ID
+                      <input id="fs-chat-ids" type="text" class="s-input" placeholder="留空表示允许所有单聊" />
+                      <span class="s-hint">多个 Chat ID 用英文逗号分隔。第一版只处理单聊消息。</span>
+                    </label>
+                  </section>
+
+                  <section class="s-section">
+                    <h3 class="s-title">语音回复</h3>
+                    <label class="s-label s-label-row">
+                      <span class="s-label-text">发送飞书语音气泡</span>
+                      <label class="s-toggle">
+                        <input type="checkbox" id="fs-voice-replies-enabled" />
+                        <span class="s-toggle-slider"></span>
+                      </label>
+                    </label>
+                    <span class="s-hint">开启后复用当前 TTS 服务，按句发送语音气泡，最后发送完整文字。</span>
+                  </section>
+
+                  <section class="s-section">
+                    <h3 class="s-title">快捷创建</h3>
+                    <button id="fs-register-btn" class="s-small-btn" type="button">二维码创建应用</button>
+                    <span class="s-hint">如果扫码流程不可用，请继续使用上方手动 App ID / App Secret。</span>
+                    <div id="fs-register-display" style="display:none;text-align:center;margin-top:10px">
+                      <div id="fs-register-status" class="s-hint" style="margin-bottom:8px">等待二维码...</div>
+                      <img id="fs-register-img" style="max-width:200px;border:1px solid #ddd;border-radius:8px" />
+                      <div style="margin-top:6px">
+                        <a id="fs-register-link" href="#" target="_blank" style="display:none">打开授权链接</a>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="s-section">
+                    <h3 class="s-title">Bot 状态</h3>
+                    <div class="s-status-row">
+                      <span id="fs-status-dot" class="s-status-dot s-status-off"></span>
+                      <span id="fs-status-text">未启动</span>
+                    </div>
+                  </section>
+
+                  <div class="s-save-row">
+                    <button id="fs-save-btn" class="s-save-btn">保存设置</button>
+                  </div>
+                </div><!-- /#s-bridge-feishu -->
+
                 <div id="s-bridge-wechat" class="s-bridge-pane s-bridge-pane-hidden">
 
                   <section class="s-section">
@@ -412,6 +622,16 @@
                   <section class="s-section">
                     <h3 class="s-title">高级设置</h3>
                     <label class="s-label">消息分片延迟（秒）
+                    </label>
+                    <label class="s-label s-label-row">
+                        <span class="s-label-text">微信语音回复</span>
+                        <label class="s-toggle">
+                          <input type="checkbox" id="wc-voice-replies-enabled" />
+                          <span class="s-toggle-slider"></span>
+                        </label>
+                    </label>
+                    <span class="s-hint">开启后，微信回复会先按句发送语音消息，再发送完整文字。</span>
+                    <label class="s-label">
                       <input id="wc-chunk-delay" type="number" class="s-input" min="0" max="5" step="0.1" value="0.35" />
                       <span class="s-hint">发送多条消息时的间隔时间，避免触发速率限制</span>
                     </label>

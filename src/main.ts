@@ -1,6 +1,7 @@
 import { LAppDelegate } from './lappdelegate';
 import * as LAppDefine from './lappdefine';
 import { initChat } from './chat';
+import { refreshAvatarStudio } from './avatarStudio';
 import { initSettings } from './settings';
 import { initBeatDetector } from './beatDetector';
 import { registerTTSPlayListener } from './ttsPlayer';
@@ -39,6 +40,7 @@ window.addEventListener(
       return;
     }
     LAppDelegate.getInstance().run();
+    void refreshAvatarStudio();
   },
   { passive: true }
 );

@@ -6,6 +6,7 @@ import { playTTS } from './ttsPlayer';
 import { startCapture, stopCapture, onTranscription } from './hearing';
 import { initLive2DController, extractEmotionTag, triggerEmotion, notifyInteraction } from './live2dController';
 import { LAppDelegate } from './lappdelegate';
+import { initAvatarStudio, refreshAvatarStudio } from './avatarStudio';
 
 console.log('[Chat] module loaded ✅ (带TTS版本)');
 
@@ -73,6 +74,9 @@ declare global {
 
 let currentConversationId: string | null = null;
 let isConvPanelOpen = false;
+let isAvatarStudioOpen = false;
+let avatarStudioSavedWidth = 0;
+let avatarStudioSavedHeight = 0;
 let isSending = false;
 const pendingWakeups: Array<{ conversationId: string; text: string; replyTarget?: unknown }> = [];
 
@@ -946,6 +950,70 @@ function toggleConvPanel(): void {
   isConvPanelOpen ? closeConvPanel() : openConvPanel();
 }
 
+function openAvatarStudio(): void {
+  if (isAvatarStudioOpen) return;
+  isAvatarStudioOpen = true;
+  avatarStudioSavedWidth = window.innerWidth;
+  avatarStudioSavedHeight = window.innerHeight;
+  document.documentElement.style.setProperty('--avatar-shell-width', `${avatarStudioSavedWidth}px`);
+  document.body.classList.add('avatar-studio-open');
+  window.electronAPI?.resizeWindow(avatarStudioSavedWidth + 370, avatarStudioSavedHeight);
+  const slot = document.getElementById('avatar-studio-slot');
+  slot?.classList.add('visible');
+  slot?.setAttribute('aria-hidden', 'false');
+  document.getElementById('avatar-studio-btn')?.classList.add('active');
+  document.getElementById('canvas-container')?.classList.add('drag-region-suspended');
+  void refreshAvatarStudio();
+}
+
+function closeAvatarStudio(): void {
+  if (!isAvatarStudioOpen) return;
+  isAvatarStudioOpen = false;
+  const slot = document.getElementById('avatar-studio-slot');
+  const panel = document.getElementById('avatar-studio-panel');
+  slot?.classList.remove('visible');
+  slot?.setAttribute('aria-hidden', 'true');
+  document.getElementById('avatar-studio-btn')?.classList.remove('active');
+  document.getElementById('canvas-container')?.classList.remove('drag-region-suspended');
+
+  const finishClose = (): void => {
+    const savedWidth = avatarStudioSavedWidth;
+    const savedHeight = avatarStudioSavedHeight;
+    avatarStudioSavedWidth = 0;
+    avatarStudioSavedHeight = 0;
+
+    if (savedWidth > 0 && savedHeight > 0) {
+      window.electronAPI?.resizeWindow(savedWidth, savedHeight);
+    }
+
+    setTimeout(() => {
+      document.body.classList.remove('avatar-studio-open');
+      document.documentElement.style.removeProperty('--avatar-shell-width');
+    }, 80);
+  };
+
+  if (panel) {
+    const onTransitionEnd = (ev: TransitionEvent): void => {
+      if (ev.propertyName !== 'transform') return;
+      panel.removeEventListener('transitionend', onTransitionEnd);
+      finishClose();
+    };
+    panel.addEventListener('transitionend', onTransitionEnd);
+    setTimeout(() => {
+      if (avatarStudioSavedWidth > 0 || avatarStudioSavedHeight > 0) {
+        panel.removeEventListener('transitionend', onTransitionEnd);
+        finishClose();
+      }
+    }, 360);
+  } else {
+    finishClose();
+  }
+}
+
+function toggleAvatarStudio(): void {
+  isAvatarStudioOpen ? closeAvatarStudio() : openAvatarStudio();
+}
+
 // =====================================================
 // 折叠/展开
 // =====================================================
@@ -963,6 +1031,7 @@ function setCanvasHeight(): void {
 /** 瞬时更新窗口大小（供缩放抓手使用） */
 function updateChatLayout(isExpanded: boolean): void {
   setCanvasHeight();
+  if (isAvatarStudioOpen) return;
   const headerH   = document.getElementById('chat-header')?.offsetHeight ?? 50;
   const inputH    = document.getElementById('input-area')?.offsetHeight ?? 54;
   const chatBodyH = isExpanded ? CHAT_BODY_H : 0;
@@ -1021,18 +1090,21 @@ function setupWindowDrag(): void {
   let startX = 0;
   let startY = 0;
 
-  const canvasContainer = document.getElementById('canvas-container');
+  const bindDragSurface = (el: HTMLElement | null): void => {
+    el?.addEventListener('mousedown', (e: MouseEvent) => {
+      if ((e.target as HTMLElement).closest('.no-drag, button, input, select, textarea')) return;
+      if (e.button !== 0) return;
+      // 不调 preventDefault，否则会干扰 Live2D 的 pointer 事件链
+      isDragging = false; // 先不设为 true，等实际移动后才设
+      lastX = e.screenX;
+      lastY = e.screenY;
+      startX = e.screenX;
+      startY = e.screenY;
+    });
+  };
 
-  canvasContainer?.addEventListener('mousedown', (e: MouseEvent) => {
-    if ((e.target as HTMLElement).closest('.no-drag')) return;
-    if (e.button !== 0) return;
-    // 不调 preventDefault，否则会干扰 Live2D 的 pointer 事件链
-    isDragging = false; // 先不设为 true，等实际移动后才设
-    lastX = e.screenX;
-    lastY = e.screenY;
-    startX = e.screenX;
-    startY = e.screenY;
-  });
+  bindDragSurface(document.getElementById('canvas-container'));
+  bindDragSurface(document.getElementById('avatar-studio-hdr'));
 
   document.addEventListener('mousemove', (e: MouseEvent) => {
     if (lastX === 0 && lastY === 0) return;
@@ -1146,6 +1218,7 @@ async function drainWakeups(): Promise<void> {
 export async function initChat(): Promise<void> {
   setupWindowDrag();
   setupResizeGrip();
+  initAvatarStudio();
 
   // 等 DOM layout 完成后再修正窗口尺寸，确保 offsetHeight 可读
   requestAnimationFrame(() => {
@@ -1187,6 +1260,16 @@ export async function initChat(): Promise<void> {
   document.getElementById('sessions-btn')?.addEventListener('click', (e) => {
     e.stopPropagation();
     toggleConvPanel();
+  });
+
+  document.getElementById('avatar-studio-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleAvatarStudio();
+  });
+
+  document.getElementById('avatar-studio-close')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeAvatarStudio();
   });
 
   // Agent 模式切换器

@@ -53,6 +53,15 @@ contextBridge.exposeInMainWorld('discordAPI', {
   getStatus: () => ipcRenderer.invoke('discord:status'),
 });
 
+contextBridge.exposeInMainWorld('feishuAPI', {
+  get: () => ipcRenderer.invoke('feishu:get'),
+  save: (cfg: unknown) => ipcRenderer.invoke('feishu:save', cfg),
+  getStatus: () => ipcRenderer.invoke('feishu:status'),
+  registerApp: () => ipcRenderer.invoke('feishu:register-app'),
+  onRegisterAppUpdate: (cb: (state: unknown) => void) =>
+    ipcRenderer.on('feishu:register-app-update', (_e, state) => cb(state)),
+});
+
 contextBridge.exposeInMainWorld('ttsAPI', {
   isEnabled: () => ipcRenderer.invoke('tts:isEnabled'),
   speak: (text: string) => ipcRenderer.invoke('tts:speak', text),
@@ -253,4 +262,17 @@ contextBridge.exposeInMainWorld('skillsAPI', {
    * 返回：{ success: boolean; message: string }
    */
   removeCollection: (collId: string) => ipcRenderer.invoke('skills:remove-collection', collId),
+});
+
+contextBridge.exposeInMainWorld('avatarAPI', {
+  get: () => ipcRenderer.invoke('avatar:get'),
+  importFolder: () => ipcRenderer.invoke('avatar:import-folder'),
+  save: (cfg: unknown) => ipcRenderer.invoke('avatar:save', cfg),
+  select: (modelId: string) => ipcRenderer.invoke('avatar:select', modelId),
+  delete: (modelId: string) => ipcRenderer.invoke('avatar:delete', modelId),
+  onConfigChanged: (cb: (cfg: unknown) => void) => {
+    const handler = (_e: unknown, cfg: unknown) => cb(cfg);
+    ipcRenderer.on('avatar:config-changed', handler);
+    return () => { ipcRenderer.removeListener('avatar:config-changed', handler); };
+  },
 });

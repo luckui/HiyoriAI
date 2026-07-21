@@ -1,8 +1,9 @@
 /// <reference types="node" />
 // 必须在所有 import 之前加载，这样 ai.config.ts 里的 process.env 才能取到局部 .env 的实际内容
 import * as dotenv from 'dotenv';
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, screen, session } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, net, protocol, screen, session } from 'electron';
 import { join } from 'path';
+import { pathToFileURL } from 'url';
 
 /**
  * 持久化 .env 文件路径：
@@ -101,7 +102,11 @@ import {
 } from './bridges/asyncDelivery';
 import { setCodingAgentNotifier, setCodingAgentTerminalNotifier } from './codingAgents';
 import { DiscordAdapter } from './bridges/adapters/discord';
-import { WeChatAdapter, qrLogin } from './bridges/adapters/wechat';
+import { WeChatAdapter, qrLogin, setWeChatVoiceReplyControl } from './bridges/adapters/wechat';
+import { FeishuAdapter, setFeishuVoiceReplyControl } from './bridges/adapters/feishu';
+import * as lark from '@larksuiteoapi/node-sdk';
+import QRCode from 'qrcode';
+import { configureBridgeVoiceRuntime } from './bridges/voiceReplies';
 import { ttsService } from './ttsService';
 import defaultTTSConfig from './tts.config';
 import type { TTSConfig } from './tts.config';
@@ -118,6 +123,22 @@ import { hearingManager } from './hearingManager';
 import { taskManager } from './taskManager';
 import { setScheduleReminderNotifier, taskScheduler } from './taskScheduler';
 import { initLive2DBridge } from './live2dBridge';
+import type { AvatarConfig } from './avatar/avatarConfig';
+import { DEFAULT_AVATAR_CONFIG } from './avatar/avatarConfig';
+import {
+  cloneAvatarConfig,
+  deleteAvatarModel,
+  importAvatarModelFolder,
+  modelBaseUrl,
+  normalizeAvatarConfig,
+  resolveAvatarProtocolPath,
+  selectAvatarModel,
+  withBuiltinAvatarProfile,
+} from './avatar/avatarManager';
+
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'hiyori-avatar', privileges: { standard: true, secure: true, supportFetchAPI: true } },
+]);
 
 // ── 实运行时加载持久化的 LLM 配置 ──────────────────────────────
 
@@ -138,8 +159,22 @@ let bridgeConfig: BridgeAppConfig = {
     accountId: process.env['WECHAT_ACCOUNT_ID'] ?? '',
     baseUrl: process.env['WECHAT_BASE_URL'] ?? 'https://ilinkai.weixin.qq.com',
     sendChunkDelay: parseFloat(process.env['WECHAT_SEND_CHUNK_DELAY'] ?? '0.35'),
+    voiceRepliesEnabled: process.env['WECHAT_VOICE_REPLIES_ENABLED'] === 'true',
+    voiceReplyDelivery: process.env['WECHAT_VOICE_REPLY_DELIVERY'] === 'native_voice' ? 'native_voice' : 'audio_file',
+  },
+  feishu: {
+    enabled: process.env['FEISHU_ENABLED'] === 'true',
+    appId: process.env['FEISHU_APP_ID'] ?? '',
+    appSecret: process.env['FEISHU_APP_SECRET'] ?? '',
+    allowedChatIds: process.env['FEISHU_ALLOWED_CHAT_IDS'] ?? '',
+    voiceRepliesEnabled: process.env['FEISHU_VOICE_REPLIES_ENABLED'] === 'true',
   },
 };
+let avatarConfig: AvatarConfig = cloneAvatarConfig(DEFAULT_AVATAR_CONFIG);
+
+configureBridgeVoiceRuntime({
+  getProvider: () => ttsService.isEnabled ? ttsConfig.providers[ttsConfig.activeProvider] : null,
+});
 
 /**
  * 根据 ttsConfig 当前状态激活/禁用 ttsService
@@ -180,6 +215,14 @@ function applyBridgeEnv(cfg: BridgeAppConfig): void {
   process.env['WECHAT_ACCOUNT_ID'] = cfg.wechat.accountId;
   process.env['WECHAT_BASE_URL'] = cfg.wechat.baseUrl;
   process.env['WECHAT_SEND_CHUNK_DELAY'] = String(cfg.wechat.sendChunkDelay);
+  process.env['WECHAT_VOICE_REPLIES_ENABLED'] = String(cfg.wechat.voiceRepliesEnabled);
+  process.env['WECHAT_VOICE_REPLY_DELIVERY'] = cfg.wechat.voiceReplyDelivery;
+
+  process.env['FEISHU_ENABLED'] = String(cfg.feishu.enabled);
+  process.env['FEISHU_APP_ID'] = cfg.feishu.appId;
+  process.env['FEISHU_APP_SECRET'] = cfg.feishu.appSecret;
+  process.env['FEISHU_ALLOWED_CHAT_IDS'] = cfg.feishu.allowedChatIds;
+  process.env['FEISHU_VOICE_REPLIES_ENABLED'] = String(cfg.feishu.voiceRepliesEnabled);
 }
 
 function currentAppConfig(): AppConfig {
@@ -189,12 +232,105 @@ function currentAppConfig(): AppConfig {
     tts: ttsConfig,
     skills: getSkillsConfig(),
     bridges: bridgeConfig,
+    avatar: avatarConfig,
   };
 }
 
 function persistCurrentAppConfig(): void {
   saveAppConfig(currentAppConfig(), { getSetting: () => null, setSetting });
 }
+
+async function setWeChatVoiceRepliesEnabled(
+  enabled: boolean,
+  source = 'wechat command',
+): Promise<{ enabled: boolean; detail?: string }> {
+  let nextEnabled = enabled;
+  let detail: string | undefined;
+
+  if (enabled) {
+    if (!ttsConfig.enabled) {
+      ttsConfig = {
+        ...ttsConfig,
+        enabled: true,
+      };
+    }
+
+    const runtimeResult = await ensureTTSRuntimeReady(ttsConfig, {
+      installAndStart: ttsServerManager.installAndStart,
+      onProgress: (msg) => console.info(`[BridgeVoice] ${source}: ${msg}`),
+    });
+    activateTTSProvider();
+    if (!runtimeResult.ok) {
+      nextEnabled = false;
+      detail = runtimeResult.detail;
+      console.warn('[BridgeVoice] WeChat voice replies disabled because TTS runtime failed:', runtimeResult.detail);
+    }
+    broadcastTTSChanged();
+  }
+
+  bridgeConfig = {
+    ...bridgeConfig,
+    wechat: {
+      ...bridgeConfig.wechat,
+      voiceRepliesEnabled: nextEnabled,
+    },
+  };
+  applyBridgeEnv(bridgeConfig);
+  persistCurrentAppConfig();
+
+  return { enabled: nextEnabled, detail };
+}
+
+setWeChatVoiceReplyControl({
+  getVoiceRepliesEnabled: () => bridgeConfig.wechat.voiceRepliesEnabled,
+  setVoiceRepliesEnabled: (enabled) => setWeChatVoiceRepliesEnabled(enabled),
+});
+
+async function setFeishuVoiceRepliesEnabled(
+  enabled: boolean,
+  source = 'feishu command',
+): Promise<{ enabled: boolean; detail?: string }> {
+  let nextEnabled = enabled;
+  let detail: string | undefined;
+
+  if (enabled) {
+    if (!ttsConfig.enabled) {
+      ttsConfig = {
+        ...ttsConfig,
+        enabled: true,
+      };
+    }
+
+    const runtimeResult = await ensureTTSRuntimeReady(ttsConfig, {
+      installAndStart: ttsServerManager.installAndStart,
+      onProgress: (msg) => console.info(`[BridgeVoice] ${source}: ${msg}`),
+    });
+    activateTTSProvider();
+    if (!runtimeResult.ok) {
+      nextEnabled = false;
+      detail = runtimeResult.detail;
+      console.warn('[BridgeVoice] Feishu voice replies disabled because TTS runtime failed:', runtimeResult.detail);
+    }
+    broadcastTTSChanged();
+  }
+
+  bridgeConfig = {
+    ...bridgeConfig,
+    feishu: {
+      ...bridgeConfig.feishu,
+      voiceRepliesEnabled: nextEnabled,
+    },
+  };
+  applyBridgeEnv(bridgeConfig);
+  persistCurrentAppConfig();
+
+  return { enabled: nextEnabled, detail };
+}
+
+setFeishuVoiceReplyControl({
+  getVoiceRepliesEnabled: () => bridgeConfig.feishu.voiceRepliesEnabled,
+  setVoiceRepliesEnabled: (enabled) => setFeishuVoiceRepliesEnabled(enabled),
+});
 
 function applyAppConfigToRuntime(cfg: AppConfig): void {
   aiConfig.activeProvider = cfg.llm.activeProvider;
@@ -204,6 +340,7 @@ function applyAppConfigToRuntime(cfg: AppConfig): void {
 
   ttsConfig = cfg.tts;
   bridgeConfig = cfg.bridges;
+  avatarConfig = withBuiltinProfile(normalizeAvatarConfig(cfg.avatar));
   applyBridgeEnv(bridgeConfig);
   saveSkillsConfig(cfg.skills);
 }
@@ -291,6 +428,7 @@ function parseReplyTargetFromMetadata(metadata: string | null): ReplyTarget | un
     if (!target || typeof target !== 'object') return undefined;
     if (target.kind === 'desktop') return target;
     if (target.kind === 'discord' && typeof target.channelId === 'string') return target;
+    if (target.kind === 'feishu' && typeof target.chatId === 'string') return target;
     if (target.kind === 'wechat' && typeof target.userId === 'string') {
       return { kind: 'wechat', userId: target.userId, delivery: 'pending' };
     }
@@ -309,6 +447,13 @@ async function deliverReplyTarget(replyTarget: ReplyTarget | undefined, text: st
       }
       await channel.send(content);
     },
+    sendFeishu: async (chatId, content) => {
+      const adapter = FeishuAdapter.activeAdapter;
+      if (!adapter) {
+        throw new Error('Feishu adapter is not online.');
+      }
+      await adapter.sendText(chatId, content);
+    },
   }, replyTarget, text);
 }
 
@@ -319,6 +464,7 @@ function loadPersistedConfig(): void {
       tts: defaultTTSConfig,
       skills: DEFAULT_SKILLS_CONFIG,
       bridges: bridgeConfig,
+      avatar: DEFAULT_AVATAR_CONFIG,
     }, { getSetting: () => null, setSetting });
     cfg.tts = mergeBuiltinTTSProviders(cfg.tts, defaultTTSConfig);
     applyAppConfigToRuntime(cfg);
@@ -327,6 +473,16 @@ function loadPersistedConfig(): void {
   } catch (error) {
     console.error('[Config] failed to load config.json; using in-memory defaults:', (error as Error).message);
   }
+}
+
+function getBuiltinAvatarModelDir(): string {
+  return app.isPackaged
+    ? join(__dirname, '../renderer/Resources/Hiyori_pro')
+    : join(app.getAppPath(), 'public', 'Resources', 'Hiyori_pro');
+}
+
+function withBuiltinProfile(config: AvatarConfig): AvatarConfig {
+  return withBuiltinAvatarProfile(config, getBuiltinAvatarModelDir());
 }
 
 /** 当前活跃对话 ID，用于切换时触发全局记忆精炼 */
@@ -484,6 +640,101 @@ function createWindow(): void {
       .catch(e => console.error('[Discord] apply failed:', (e as Error).message));
   });
 
+  ipcMain.handle('feishu:get', () => {
+    return {
+      enabled: bridgeConfig.feishu.enabled,
+      appId: bridgeConfig.feishu.appId,
+      appSecret: bridgeConfig.feishu.appSecret,
+      allowedChatIds: bridgeConfig.feishu.allowedChatIds,
+      voiceRepliesEnabled: bridgeConfig.feishu.voiceRepliesEnabled,
+    };
+  });
+
+  ipcMain.handle('feishu:status', () => {
+    return FeishuAdapter.activeAdapter !== null ? 'online' : 'offline';
+  });
+
+  ipcMain.handle('feishu:save', async (_e, cfg: {
+    enabled: boolean; appId: string; appSecret: string; allowedChatIds: string; voiceRepliesEnabled?: boolean;
+  }) => {
+    let voiceRepliesEnabled = Boolean(cfg.voiceRepliesEnabled);
+    if (voiceRepliesEnabled) {
+      if (!ttsConfig.enabled) {
+        ttsConfig = {
+          ...ttsConfig,
+          enabled: true,
+        };
+      }
+      const runtimeResult = await ensureTTSRuntimeReady(ttsConfig, {
+        installAndStart: ttsServerManager.installAndStart,
+        onProgress: (msg) => console.info(`[BridgeVoice] feishu save apply: ${msg}`),
+      });
+      activateTTSProvider();
+      if (!runtimeResult.ok) {
+        voiceRepliesEnabled = false;
+        console.warn('[BridgeVoice] Feishu voice replies disabled because TTS runtime failed:', runtimeResult.detail);
+      }
+      broadcastTTSChanged();
+    }
+
+    bridgeConfig.feishu = {
+      ...cfg,
+      voiceRepliesEnabled,
+    };
+    applyBridgeEnv(bridgeConfig);
+    persistCurrentAppConfig();
+
+    const convs = listConversations();
+    const convId = convs.length > 0 ? convs[0].id : createConversation().id;
+    await applyBridgeRuntime('feishu', bridgeConfig, convId)
+      .catch(e => console.error('[Feishu] apply failed:', (e as Error).message));
+  });
+
+  ipcMain.handle('feishu:register-app', async (event) => {
+    try {
+      const result = await lark.registerApp({
+        source: 'hiyori',
+        createOnly: true,
+        appPreset: {
+          name: 'Hiyori',
+          desc: 'Hiyori desktop assistant Feishu bridge',
+        },
+        addons: {
+          scopes: { tenant: ['im:message:send_as_bot', 'im:resource'] },
+          events: { items: { tenant: ['im.message.receive_v1'] } },
+        },
+        onQRCodeReady: async (info) => {
+          const qrcodeUrl = await QRCode.toDataURL(info.url, { width: 256, margin: 2 });
+          event.sender.send('feishu:register-app-update', {
+            status: 'pending',
+            url: info.url,
+            qrcodeUrl,
+            expireIn: info.expireIn,
+          });
+        },
+        onStatusChange: (info) => {
+          event.sender.send('feishu:register-app-update', {
+            status: info.status,
+            interval: info.interval,
+          });
+        },
+      });
+      event.sender.send('feishu:register-app-update', {
+        status: 'confirmed',
+        appId: result.client_id,
+      });
+      return {
+        success: true,
+        appId: result.client_id,
+        appSecret: result.client_secret,
+      };
+    } catch (error) {
+      const detail = (error as any)?.description ?? (error as Error).message ?? String(error);
+      event.sender.send('feishu:register-app-update', { status: 'error', error: detail });
+      return { success: false, error: detail };
+    }
+  });
+
   // ── TTS ──────────────────────────────────────────────────────
   ipcMain.handle('tts:speak:abort', () => {
     ttsService.abortAll();
@@ -514,6 +765,8 @@ function createWindow(): void {
       accountId: bridgeConfig.wechat.accountId,
       baseUrl: bridgeConfig.wechat.baseUrl,
       sendChunkDelay: bridgeConfig.wechat.sendChunkDelay,
+      voiceRepliesEnabled: bridgeConfig.wechat.voiceRepliesEnabled,
+      voiceReplyDelivery: bridgeConfig.wechat.voiceReplyDelivery,
     };
   });
 
@@ -522,7 +775,7 @@ function createWindow(): void {
   });
 
   ipcMain.handle('wechat:save', async (_e, cfg: {
-    enabled: boolean; token?: string; accountId?: string; baseUrl?: string; sendChunkDelay?: number;
+    enabled: boolean; token?: string; accountId?: string; baseUrl?: string; sendChunkDelay?: number; voiceRepliesEnabled?: boolean; voiceReplyDelivery?: 'audio_file' | 'native_voice';
   }) => {
     bridgeConfig.wechat = {
       ...bridgeConfig.wechat,
@@ -531,9 +784,10 @@ function createWindow(): void {
       accountId: cfg.accountId ?? bridgeConfig.wechat.accountId,
       baseUrl: cfg.baseUrl ?? bridgeConfig.wechat.baseUrl,
       sendChunkDelay: cfg.sendChunkDelay ?? bridgeConfig.wechat.sendChunkDelay,
+      voiceRepliesEnabled: cfg.voiceRepliesEnabled ?? bridgeConfig.wechat.voiceRepliesEnabled,
+      voiceReplyDelivery: cfg.voiceReplyDelivery === 'native_voice' ? 'native_voice' : (cfg.voiceReplyDelivery === 'audio_file' ? 'audio_file' : bridgeConfig.wechat.voiceReplyDelivery),
     };
-    applyBridgeEnv(bridgeConfig);
-    persistCurrentAppConfig();
+    await setWeChatVoiceRepliesEnabled(bridgeConfig.wechat.voiceRepliesEnabled, 'wechat save apply');
 
     const convs = listConversations();
     const convId = convs.length > 0 ? convs[0].id : createConversation().id;
@@ -613,6 +867,56 @@ function createWindow(): void {
     persistCurrentAppConfig();
   });
 
+  ipcMain.handle('avatar:get', () => cloneAvatarConfig(avatarConfig));
+
+  ipcMain.handle('avatar:import-folder', async () => {
+    const focused = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    const result = await dialog.showOpenDialog(focused, {
+      title: '选择 Live2D 模型文件夹',
+      properties: ['openDirectory'],
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return { ok: false, canceled: true, detail: '已取消' };
+    }
+    const imported = importAvatarModelFolder(result.filePaths[0], avatarConfig);
+    avatarConfig = withBuiltinProfile(imported.config);
+    persistCurrentAppConfig();
+    focused?.webContents.send('avatar:config-changed', avatarConfig);
+    return {
+      ok: true,
+      config: cloneAvatarConfig(avatarConfig),
+      profile: imported.profile,
+      baseUrl: modelBaseUrl(imported.profile.id),
+    };
+  });
+
+  ipcMain.handle('avatar:save', (_e, cfg: AvatarConfig) => {
+    avatarConfig = withBuiltinProfile(normalizeAvatarConfig(cfg));
+    persistCurrentAppConfig();
+    BrowserWindow.getAllWindows().forEach((target) => {
+      target.webContents.send('avatar:config-changed', avatarConfig);
+    });
+    return cloneAvatarConfig(avatarConfig);
+  });
+
+  ipcMain.handle('avatar:select', (_e, modelId: string) => {
+    avatarConfig = withBuiltinProfile(selectAvatarModel(avatarConfig, modelId));
+    persistCurrentAppConfig();
+    BrowserWindow.getAllWindows().forEach((target) => {
+      target.webContents.send('avatar:config-changed', avatarConfig);
+    });
+    return cloneAvatarConfig(avatarConfig);
+  });
+
+  ipcMain.handle('avatar:delete', (_e, modelId: string) => {
+    avatarConfig = withBuiltinProfile(deleteAvatarModel(avatarConfig, modelId));
+    persistCurrentAppConfig();
+    BrowserWindow.getAllWindows().forEach((target) => {
+      target.webContents.send('avatar:config-changed', avatarConfig);
+    });
+    return cloneAvatarConfig(avatarConfig);
+  });
+
   /**
    * 返回所有可用 skill 的列表，供 UI 展示 / 选择。
    * 返回格式：{ name, summary, collection, skillKey }[]
@@ -682,6 +986,21 @@ function createWindow(): void {
 
     // 内置方案关键字段强制用代码版本（用户只能改 speaker/language）
     ttsConfig = mergeBuiltinTTSProviders(ttsConfig, defaultTTSConfig);
+
+    if (!ttsConfig.enabled && (bridgeConfig.wechat.voiceRepliesEnabled || bridgeConfig.feishu.voiceRepliesEnabled)) {
+      bridgeConfig = {
+        ...bridgeConfig,
+        wechat: {
+          ...bridgeConfig.wechat,
+          voiceRepliesEnabled: false,
+        },
+        feishu: {
+          ...bridgeConfig.feishu,
+          voiceRepliesEnabled: false,
+        },
+      };
+      applyBridgeEnv(bridgeConfig);
+    }
 
     const runtimeResult = await ensureTTSRuntimeReady(ttsConfig, {
       installAndStart: ttsServerManager.installAndStart,
@@ -910,8 +1229,19 @@ function createWindow(): void {
   taskManager.on('task:progress',  pushTaskEvent('task:progress'));
 }
 
+function registerAvatarProtocol(): void {
+  protocol.handle('hiyori-avatar', (request) => {
+    const filePath = resolveAvatarProtocolPath(new URL(request.url), undefined, getBuiltinAvatarModelDir());
+    if (!filePath) {
+      return new Response('Not found', { status: 404 });
+    }
+    return net.fetch(pathToFileURL(filePath).toString());
+  });
+}
+
 app.whenReady().then(() => {
   initDatabase();
+  registerAvatarProtocol();
   loadPersistedConfig();
   setCodingAgentNotifier((conversationId, content) => {
     sendAgentWakeup(conversationId, content, getReplyTargetForConversation(conversationId));

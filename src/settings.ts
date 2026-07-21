@@ -27,12 +27,22 @@ interface DiscordConfig {
   proxyUrl: string;
 }
 
+interface FeishuConfig {
+  enabled: boolean;
+  appId: string;
+  appSecret: string;
+  allowedChatIds: string;
+  voiceRepliesEnabled?: boolean;
+}
+
 interface WeChatConfig {
   enabled: boolean;
   token?: string;
   accountId?: string;
   baseUrl?: string;
   sendChunkDelay?: number;
+  voiceRepliesEnabled?: boolean;
+  voiceReplyDelivery?: 'audio_file' | 'native_voice';
 }
 
 interface VoicePresetItem {
@@ -118,6 +128,13 @@ declare global {
       save(cfg: DiscordConfig): Promise<void>;
       getStatus(): Promise<'online' | 'offline'>;
     };
+    feishuAPI?: {
+      get(): Promise<FeishuConfig>;
+      save(cfg: FeishuConfig): Promise<void>;
+      getStatus(): Promise<'online' | 'offline'>;
+      registerApp(): Promise<{ success: boolean; appId?: string; appSecret?: string; error?: string }>;
+      onRegisterAppUpdate(cb: (state: any) => void): void;
+    };
     wechatAPI?: {
       get(): Promise<WeChatConfig>;
       save(cfg: WeChatConfig): Promise<void>;
@@ -178,17 +195,18 @@ let savedWindowHeight = 0;
 /** Tab 溢出重排回调（由 initTabOverflow 设置） */
 let _reflowTabs: (() => void) | null = null;
 let _settingsLoading = false;
-const _dirtySections = new Set<'llm' | 'tts' | 'discord' | 'wechat' | 'skills'>();
+type SettingsSection = 'llm' | 'tts' | 'discord' | 'feishu' | 'wechat' | 'skills';
+const _dirtySections = new Set<SettingsSection>();
 let _saveCurrentSkillsConfig: (() => Promise<void>) | null = null;
 let _settingsNavGuardOpen = false;
 
-function markSettingsDirty(section: 'llm' | 'tts' | 'discord' | 'wechat' | 'skills'): void {
+function markSettingsDirty(section: SettingsSection): void {
   if (_settingsLoading) return;
   _dirtySections.add(section);
   updateUnsavedState();
 }
 
-function clearSettingsDirty(section?: 'llm' | 'tts' | 'discord' | 'wechat' | 'skills'): void {
+function clearSettingsDirty(section?: SettingsSection): void {
   if (section) _dirtySections.delete(section);
   else _dirtySections.clear();
   updateUnsavedState();
@@ -332,10 +350,108 @@ async function saveDiscordSettings(): Promise<void> {
 
 // ── WeChat UI ─────────────────────────────────────────
 
+async function loadFeishuUI(): Promise<void> {
+  if (!window.feishuAPI) return;
+  const fs = await window.feishuAPI.get();
+  (document.getElementById('fs-enabled') as HTMLInputElement).checked = fs.enabled;
+  (document.getElementById('fs-app-id') as HTMLInputElement).value = fs.appId;
+  (document.getElementById('fs-app-secret') as HTMLInputElement).value = fs.appSecret;
+  (document.getElementById('fs-chat-ids') as HTMLInputElement).value = fs.allowedChatIds;
+  (document.getElementById('fs-voice-replies-enabled') as HTMLInputElement).checked = Boolean(fs.voiceRepliesEnabled);
+  await refreshFeishuStatus();
+}
+
+async function refreshFeishuStatus(): Promise<void> {
+  if (!window.feishuAPI) return;
+  const status = await window.feishuAPI.getStatus();
+  const dot = document.getElementById('fs-status-dot') as HTMLElement;
+  const listDot = document.getElementById('fs-list-dot') as HTMLElement | null;
+  const text = document.getElementById('fs-status-text') as HTMLElement;
+  const cls = status === 'online' ? 's-status-on' : 's-status-off';
+  dot.className = `s-status-dot ${cls}`;
+  if (listDot) listDot.className = `s-bridge-dot ${cls}`;
+  text.textContent = status === 'online' ? '已连接' : '未启动';
+}
+
+async function saveFeishuSettings(): Promise<void> {
+  if (!window.feishuAPI) return;
+  const cfg: FeishuConfig = {
+    enabled: (document.getElementById('fs-enabled') as HTMLInputElement).checked,
+    appId: (document.getElementById('fs-app-id') as HTMLInputElement).value.trim(),
+    appSecret: (document.getElementById('fs-app-secret') as HTMLInputElement).value.trim(),
+    allowedChatIds: (document.getElementById('fs-chat-ids') as HTMLInputElement).value.trim(),
+    voiceRepliesEnabled: (document.getElementById('fs-voice-replies-enabled') as HTMLInputElement).checked,
+  };
+  const btn = document.getElementById('fs-save-btn') as HTMLButtonElement;
+  btn.textContent = '保存中...';
+  btn.disabled = true;
+  try {
+    await window.feishuAPI.save(cfg);
+    clearSettingsDirty('feishu');
+    btn.textContent = '已保存';
+    setTimeout(() => {
+      void refreshFeishuStatus();
+      btn.textContent = '保存设置';
+      btn.disabled = false;
+    }, 2000);
+  } catch (e) {
+    btn.textContent = '保存失败';
+    setTimeout(() => { btn.textContent = '保存设置'; btn.disabled = false; }, 2000);
+    console.error('[Feishu save]', e);
+  }
+}
+
+async function startFeishuRegisterApp(): Promise<void> {
+  if (!window.feishuAPI) return;
+  const btn = document.getElementById('fs-register-btn') as HTMLButtonElement;
+  const display = document.getElementById('fs-register-display') as HTMLElement;
+  const statusText = document.getElementById('fs-register-status') as HTMLElement;
+  const img = document.getElementById('fs-register-img') as HTMLImageElement;
+  const link = document.getElementById('fs-register-link') as HTMLAnchorElement;
+
+  btn.disabled = true;
+  btn.textContent = '创建中...';
+  display.style.display = 'block';
+  statusText.textContent = '正在生成飞书授权二维码...';
+
+  window.feishuAPI.onRegisterAppUpdate((state: any) => {
+    if (state.qrcodeUrl) {
+      img.src = state.qrcodeUrl;
+    }
+    if (state.url) {
+      link.href = state.url;
+      link.textContent = '打不开二维码时点这里';
+      link.style.display = 'inline';
+    }
+    if (state.status === 'pending') {
+      statusText.textContent = '请使用飞书扫码确认创建应用。';
+    } else if (state.status === 'confirmed') {
+      statusText.textContent = '应用创建成功，已填入凭据，请保存设置。';
+    } else if (state.status === 'error') {
+      statusText.textContent = `创建失败：${state.error ?? '未知错误'}`;
+    } else if (state.status) {
+      statusText.textContent = `飞书授权状态：${state.status}`;
+    }
+  });
+
+  const result = await window.feishuAPI.registerApp();
+  btn.disabled = false;
+  btn.textContent = '二维码创建应用';
+  if (result.success && result.appId && result.appSecret) {
+    (document.getElementById('fs-enabled') as HTMLInputElement).checked = true;
+    (document.getElementById('fs-app-id') as HTMLInputElement).value = result.appId;
+    (document.getElementById('fs-app-secret') as HTMLInputElement).value = result.appSecret;
+    markSettingsDirty('feishu');
+    return;
+  }
+  statusText.textContent = `创建失败：${result.error ?? '未知错误'}`;
+}
+
 async function loadWeChatUI(): Promise<void> {
   if (!window.wechatAPI) return;
   const wc = await window.wechatAPI.get();
   (document.getElementById('wc-enabled') as HTMLInputElement).checked = wc.enabled;
+  (document.getElementById('wc-voice-replies-enabled') as HTMLInputElement).checked = Boolean(wc.voiceRepliesEnabled);
   (document.getElementById('wc-chunk-delay') as HTMLInputElement).value = String(wc.sendChunkDelay ?? 0.35);
   
   // 显示账号信息
@@ -366,8 +482,11 @@ async function refreshWeChatStatus(): Promise<void> {
 
 async function saveWeChatSettings(): Promise<void> {
   if (!window.wechatAPI) return;
+  const current = await window.wechatAPI.get().catch(() => null);
   const cfg: WeChatConfig = {
     enabled: (document.getElementById('wc-enabled') as HTMLInputElement).checked,
+    voiceRepliesEnabled: (document.getElementById('wc-voice-replies-enabled') as HTMLInputElement).checked,
+    voiceReplyDelivery: current?.voiceReplyDelivery ?? 'audio_file',
     sendChunkDelay: parseFloat((document.getElementById('wc-chunk-delay') as HTMLInputElement).value),
   };
   const btn = document.getElementById('wc-save-btn') as HTMLButtonElement;
@@ -932,6 +1051,19 @@ async function disableTTSFromToggle(): Promise<void> {
   const api = (window as any).ttsLocalAPI as Window['ttsLocalAPI'];
   const toggle = document.getElementById('tts-enabled') as HTMLInputElement;
   if (!ttsCfg || !ttsEditKey) return;
+
+  const wechatConfig = await window.wechatAPI?.get().catch(() => null);
+  if (wechatConfig?.voiceRepliesEnabled) {
+    const action = await showUnsavedSettingsDialog({
+      body: '关闭 TTS 引擎会同时关闭微信语音回复。要继续关闭吗？',
+      saveText: '关闭',
+      discardText: '取消',
+    });
+    if (action !== 'save') {
+      toggle.checked = true;
+      return;
+    }
+  }
 
   syncTTSFormToCfg();
   const provider = ttsCfg.providers[ttsCfg.activeProvider] ?? ttsCfg.providers[ttsEditKey];
@@ -1527,6 +1659,7 @@ export function openSettings(): void {
   Promise.all([
     loadSettingsUI(),
     loadDiscordUI(),
+    loadFeishuUI(),
     loadWeChatUI(),
     loadTTSUI(),
     loadSkillsUI(),
@@ -1549,6 +1682,7 @@ async function saveDirtySettingsBeforeClose(): Promise<void> {
   if (dirty.has('llm')) await saveSettings();
   if (dirty.has('tts')) await saveTTSSettings();
   if (dirty.has('discord')) await saveDiscordSettings();
+  if (dirty.has('feishu')) await saveFeishuSettings();
   if (dirty.has('wechat')) await saveWeChatSettings();
   if (dirty.has('skills')) await _saveCurrentSkillsConfig?.();
 }
@@ -1559,6 +1693,7 @@ async function reloadSettingsFromSavedConfig(): Promise<void> {
     await Promise.all([
       loadSettingsUI(),
       loadDiscordUI(),
+      loadFeishuUI(),
       loadWeChatUI(),
       loadTTSUI(),
       loadSkillsUI(),
@@ -1667,6 +1802,15 @@ export function initSettings(): void {
     else                           { input.type = 'password'; btn.textContent = '👁'; }
   });
 
+  document.getElementById('fs-save-btn')?.addEventListener('click', () => void saveFeishuSettings());
+  document.getElementById('fs-register-btn')?.addEventListener('click', () => void startFeishuRegisterApp());
+  document.getElementById('fs-eye-btn')?.addEventListener('click', () => {
+    const input = document.getElementById('fs-app-secret') as HTMLInputElement;
+    const btn = document.getElementById('fs-eye-btn') as HTMLButtonElement;
+    if (input.type === 'password') { input.type = 'text'; btn.textContent = '🙈'; }
+    else { input.type = 'password'; btn.textContent = '👁'; }
+  });
+
   // ── WeChat 表单事件 ──────────────────────────────────
   document.getElementById('wc-save-btn')?.addEventListener('click', () => void saveWeChatSettings());
   document.getElementById('wc-qr-start-btn')?.addEventListener('click', () => void startWeChatQRLogin());
@@ -1692,7 +1836,7 @@ export function initSettings(): void {
 }
 
 function bindDirtyTracking(): void {
-  const bind = (selector: string, section: 'llm' | 'tts' | 'discord' | 'wechat') => {
+  const bind = (selector: string, section: Exclude<SettingsSection, 'skills'>) => {
     document.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(selector)
       .forEach((el) => {
         el.addEventListener('input', () => markSettingsDirty(section));
@@ -1703,6 +1847,7 @@ function bindDirtyTracking(): void {
   bind('#s-tab-llm input, #s-tab-llm select, #s-tab-llm textarea', 'llm');
   bind('#s-tab-tts input, #s-tab-tts select, #s-tab-tts textarea', 'tts');
   bind('#s-bridge-discord input, #s-bridge-discord select, #s-bridge-discord textarea', 'discord');
+  bind('#s-bridge-feishu input, #s-bridge-feishu select, #s-bridge-feishu textarea', 'feishu');
   bind('#s-bridge-wechat input, #s-bridge-wechat select, #s-bridge-wechat textarea', 'wechat');
 }
 
@@ -1755,7 +1900,7 @@ async function confirmPendingSettingsChange(saveText: string, afterConfirm: () =
   }
 }
 
-function showUnsavedSettingsDialog(options: { body: string; saveText: string }): Promise<'save' | 'discard'> {
+function showUnsavedSettingsDialog(options: { body: string; saveText: string; discardText?: string }): Promise<'save' | 'discard'> {
   const dialog = document.getElementById('settings-unsaved-dialog');
   const body = dialog?.querySelector('p');
   const saveBtn = document.getElementById('settings-unsaved-save');
@@ -1765,6 +1910,7 @@ function showUnsavedSettingsDialog(options: { body: string; saveText: string }):
   }
   if (body) body.textContent = options.body;
   saveBtn.textContent = options.saveText;
+  discardBtn.textContent = options.discardText ?? '不保存';
 
   dialog.classList.add('visible');
   dialog.setAttribute('aria-hidden', 'false');

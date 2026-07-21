@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { AIConfig } from '../../ai.config';
 import type { TTSConfig } from '../../tts.config';
 import type { SkillsConfig } from '../../skillsConfig';
+import type { AvatarConfig } from '../../avatar/avatarConfig';
 import type { BridgeAppConfig } from '../appConfig';
 import { loadAppConfigFromFile, saveAppConfig, type SettingsStore } from '../configStore';
 
@@ -63,9 +64,15 @@ function defaults() {
       accountId: '',
       baseUrl: 'https://ilinkai.weixin.qq.com',
       sendChunkDelay: 0.35,
+      voiceRepliesEnabled: false,
+      voiceReplyDelivery: 'audio_file',
     },
   };
-  return { llm, tts, skills, bridges };
+  const avatar: AvatarConfig = {
+    activeModelId: 'builtin:hiyori_pro',
+    models: [],
+  };
+  return { llm, tts, skills, bridges, avatar };
 }
 
 describe('configStore', () => {
@@ -81,6 +88,9 @@ describe('configStore', () => {
     expect(JSON.parse(readFileSync(filePath, 'utf-8')).llm.providers.local.systemPrompt).toBeUndefined();
     expect(JSON.parse(store.values.get('llm_config') ?? '{}').activeProvider).toBe('local');
     expect(JSON.parse(store.values.get('bridge_config') ?? '{}').wechat.sendChunkDelay).toBe(0.35);
+    expect(JSON.parse(store.values.get('bridge_config') ?? '{}').wechat.voiceRepliesEnabled).toBe(false);
+    expect(JSON.parse(store.values.get('bridge_config') ?? '{}').wechat.voiceReplyDelivery).toBe('audio_file');
+    expect(JSON.parse(store.values.get('avatar_config') ?? '{}').activeModelId).toBe('builtin:hiyori_pro');
   });
 
   it('uses config.json to overwrite stale SQLite settings on startup', () => {

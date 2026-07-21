@@ -4,6 +4,7 @@ import { app } from 'electron';
 import type { AIConfig } from '../ai.config';
 import type { TTSConfig } from '../tts.config';
 import type { SkillsConfig } from '../skillsConfig';
+import type { AvatarConfig } from '../avatar/avatarConfig';
 import type { BridgeAppConfig, AppConfig, AppConfigDefaults } from './appConfig';
 import { createDefaultAppConfig, normalizeAppConfig } from './appConfig';
 
@@ -19,6 +20,7 @@ export interface ConfigStoreDefaults {
   tts: TTSConfig;
   skills: SkillsConfig;
   bridges: BridgeAppConfig;
+  avatar: AvatarConfig;
 }
 
 export function getAppConfigPath(): string {
@@ -57,6 +59,7 @@ export function syncAppConfigToSqlite(config: AppConfig, store: SettingsStore): 
   store.setSetting('tts_config', JSON.stringify(config.tts));
   store.setSetting('skills_config', JSON.stringify(config.skills));
   store.setSetting('bridge_config', JSON.stringify(config.bridges));
+  store.setSetting('avatar_config', JSON.stringify(config.avatar));
 }
 
 export function loadAppConfigFromFile(
@@ -84,5 +87,6 @@ function toDefaults(defaults: ConfigStoreDefaults): AppConfigDefaults {
     tts: defaults.tts,
     skills: defaults.skills,
     bridges: defaults.bridges,
+    avatar: defaults.avatar,
   };
 }
