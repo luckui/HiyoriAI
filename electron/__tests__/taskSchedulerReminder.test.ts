@@ -21,11 +21,11 @@ vi.mock('../taskManager', () => ({
 
 const { taskScheduler, setScheduleReminderNotifier } = await import('../taskScheduler');
 
-function dueSchedule(metadata: Record<string, unknown>) {
+function dueSchedule(metadata: Record<string, unknown>, prompt = '请提醒用户该开始工作了。') {
   return {
     id: 'schedule-1',
     task_title: '20:26工作提醒',
-    prompt: '20:26 到啦，该开始工作啦！',
+    prompt,
     schedule_type: 'once',
     cron_expr: null,
     interval_ms: null,
@@ -46,7 +46,7 @@ describe('task scheduler reminders', () => {
     setScheduleReminderNotifier(undefined);
   });
 
-  it('delivers reminder schedules without starting a child agent', async () => {
+  it('wakes the main conversation for reminder schedules without starting a child agent', async () => {
     const notify = vi.fn();
     setScheduleReminderNotifier(notify);
     getDueSchedules.mockReturnValue([
@@ -63,7 +63,7 @@ describe('task scheduler reminders', () => {
     expect(notify).toHaveBeenCalledWith({
       conversationId: 'conv-1',
       title: '20:26工作提醒',
-      message: '20:26 到啦，该开始工作啦！',
+      instruction: '请提醒用户该开始工作了。',
       replyTarget: { kind: 'discord', channelId: 'channel-1' },
     });
     expect(updateSchedule).toHaveBeenCalledWith('schedule-1', expect.objectContaining({
@@ -78,14 +78,14 @@ describe('task scheduler reminders', () => {
         kind: 'agent_task',
         conversationId: 'conv-2',
         toolsets: ['agent-debug'],
-      }),
+      }, '运行粉丝数统计脚本并记录结果。'),
     ]);
 
     await taskScheduler.tick();
 
     expect(createAndStart).toHaveBeenCalledWith(expect.objectContaining({
       title: '20:26工作提醒',
-      prompt: '20:26 到啦，该开始工作啦！',
+      prompt: '运行粉丝数统计脚本并记录结果。',
       conversationId: 'conv-2',
       type: 'cron',
       metadata: expect.objectContaining({ kind: 'agent_task' }),

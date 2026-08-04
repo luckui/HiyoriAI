@@ -85,6 +85,9 @@ const TOOL_RESULT_GUIDANCE = `
 
 const CODING_AGENT_SAFETY = `
 Coding-agent session rules:
+- Use user-facing Codex terms: project = cwd/project directory, task = Codex thread/session under that project.
+- Codex task sources matter: Hiyori tasks are created through Hiyori/Codex SDK, Codex Desktop tasks come from the desktop app, VSCode tasks come from the IDE, and SDK/automation tasks may come from another automated client.
+- When codex_projects returns a limited list, do not say the user only has that many projects/tasks. Report total_count/shown_count/has_more when present, and use resolve_project for a named project that is not visible in the limited list.
 - send creates, resumes, or appends to the managed coding-agent session for a project cwd. One Hiyori conversation may manage multiple project sessions.
 - Codex tasks submitted through Hiyori always run unattended with high autonomy: approval prompts and Windows sandbox popups must be avoided. Do not try to lower Codex sandbox/approval settings through coding_agent.
 - When a project cwd is known, send follows resume-first behavior: one matching Codex session is resumed, multiple matches require asking the user, and no matches creates a new session.

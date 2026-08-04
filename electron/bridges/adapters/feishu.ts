@@ -158,6 +158,24 @@ export class FeishuAdapter {
     });
   }
 
+  async sendReply(chatId: string, text: string): Promise<void> {
+    const provider = this.cfg.voiceRepliesEnabled
+      ? await getReadyBridgeVoiceProvider().catch((error) => {
+        console.warn('[Feishu] voice provider unavailable:', (error as Error).message);
+        return null;
+      })
+      : null;
+
+    await deliverFeishuVoiceReply({
+      chatId,
+      text,
+      voiceEnabled: this.cfg.voiceRepliesEnabled,
+      provider,
+      sendAudio: (targetChatId, opus, fileName, meta) => this.sendAudio(targetChatId, opus, fileName, meta),
+      sendText: (targetChatId, replyText) => this.sendText(targetChatId, replyText),
+    });
+  }
+
   private async handleMessageEvent(data: any): Promise<void> {
     const job = this.parseTextJob(data);
     if (!job) return;
@@ -231,20 +249,7 @@ export class FeishuAdapter {
         conversationId,
         `[来源：Lark / Feishu | 聊天：${job.chatId} | 用户：${job.userId}]\n${job.text}`,
       );
-      const provider = this.cfg.voiceRepliesEnabled
-        ? await getReadyBridgeVoiceProvider().catch((error) => {
-          console.warn('[Feishu] voice provider unavailable:', (error as Error).message);
-          return null;
-        })
-        : null;
-      await deliverFeishuVoiceReply({
-        chatId: job.chatId,
-        text: result.content,
-        voiceEnabled: this.cfg.voiceRepliesEnabled,
-        provider,
-        sendAudio: (chatId, opus, fileName, meta) => this.sendAudio(chatId, opus, fileName, meta),
-        sendText: (chatId, text) => this.sendText(chatId, text),
-      });
+      await this.sendReply(job.chatId, result.content);
     } catch (error) {
       const message = (error as Error).message ?? String(error);
       console.error('[Feishu] message handling failed:', message);

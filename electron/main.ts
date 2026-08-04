@@ -452,7 +452,7 @@ async function deliverReplyTarget(replyTarget: ReplyTarget | undefined, text: st
       if (!adapter) {
         throw new Error('Feishu adapter is not online.');
       }
-      await adapter.sendText(chatId, content);
+      await adapter.sendReply(chatId, content);
     },
   }, replyTarget, text);
 }
@@ -1246,14 +1246,15 @@ app.whenReady().then(() => {
   setCodingAgentNotifier((conversationId, content) => {
     sendAgentWakeup(conversationId, content, getReplyTargetForConversation(conversationId));
   });
-  setScheduleReminderNotifier(({ conversationId, title, message, replyTarget }) => {
-    const text = `【提醒】${title}\n${message}`.trim();
-    const target = replyTarget ?? getReplyTargetForConversation(conversationId);
-    if (!target || target.kind === 'desktop') {
-      void injectAgentMessage(conversationId, text);
-      return;
-    }
-    void deliverReplyTarget(target, text);
+  setScheduleReminderNotifier(({ conversationId, title, instruction, replyTarget }) => {
+    const text = [
+      '【定时提醒】',
+      `任务：${title}`,
+      `提醒指令：${instruction}`,
+      '',
+      '请直接向用户发出提醒或开启简短对话。除非提醒内容本身要求真实操作，否则不需要调用工具。',
+    ].join('\n');
+    sendAgentWakeup(conversationId, text, replyTarget ?? getReplyTargetForConversation(conversationId));
   });
   setCodingAgentTerminalNotifier((event) => {
     if (!mainWin || mainWin.isDestroyed() || mainWin.webContents.isDestroyed()) return;

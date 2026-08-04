@@ -20,6 +20,7 @@ interface ScheduleTaskParams {
   kind?: 'reminder' | 'agent_task';
   title?: string;
   message?: string;
+  instruction?: string;
   prompt?: string;
   schedule?: string;
   repeat_limit?: number;
@@ -72,7 +73,7 @@ const scheduleTaskTool: ToolDefinition<ScheduleTaskParams> = {
       description:
         '创建/管理调度：定时提醒或定时后台任务。\n' +
         '支持：一次性延迟（30m/2h）、循环间隔（every 30m）、指定时间。\n' +
-        '提醒用户/叫用户/到点通知用户 → kind="reminder"；到点检查、运行、收集、总结或操作电脑 → kind="agent_task"。',
+        '提醒、问候、陪聊、关心用户 → kind="reminder"；到点检查、运行、收集、总结或操作电脑 → kind="agent_task"。',
       parameters: {
         type: 'object',
         properties: {
@@ -84,17 +85,17 @@ const scheduleTaskTool: ToolDefinition<ScheduleTaskParams> = {
           kind: {
             type: 'string',
             description:
-              '【create 必填】调度类型。reminder=到点把 message 作为提醒正文通知用户，不启动子智能体、不调用工具；agent_task=到点启动后台子智能体执行 prompt。',
+              '【create 必填】调度类型。reminder=到点唤醒 Hiyori，由 Hiyori 按 instruction 自然提醒用户；agent_task=到点启动后台子智能体执行 prompt。',
             enum: ['reminder', 'agent_task'],
           },
           title: {
             type: 'string',
             description: '【create 必填】任务标题',
           },
-          message: {
+          instruction: {
             type: 'string',
             description:
-              '【kind=reminder 必填】到点直接发给用户看的提醒正文。必须是用户可见的自然语言消息，例如“20:26 到啦，该开始工作了。”',
+              '【kind=reminder 必填】给 Hiyori 看的提醒指令，不是直接发给用户的固定文案。例如“请提醒用户喝水。”、“请主动和用户轻松聊一句。”',
           },
           prompt: {
             type: 'string',
@@ -132,13 +133,16 @@ const scheduleTaskTool: ToolDefinition<ScheduleTaskParams> = {
         if (!params.title?.trim()) return '❌ 缺少 title 参数';
         if (!params.kind) return '❌ 缺少 kind 参数：提醒用户请选择 kind="reminder"，定时执行任务请选择 kind="agent_task"';
         if (params.kind === 'reminder') {
-          if (!params.message?.trim()) return '❌ 缺少 message 参数：kind="reminder" 时 message 是到点发给用户看的提醒正文';
-          if (params.prompt?.trim()) return '❌ kind="reminder" 不使用 prompt；请把用户可见提醒正文放到 message';
-          if (params.toolsets && params.toolsets.length > 0) return '❌ kind="reminder" 不使用 toolsets；提醒不会启动子智能体或调用工具';
+          if (!params.instruction?.trim()) return '❌ 缺少 instruction 参数：kind="reminder" 时 instruction 是给 Hiyori 看的提醒指令，例如“请提醒用户喝水”';
+          if (params.message?.trim()) return '❌ kind="reminder" 不使用 message；请把提醒意图写到 instruction，而不是预写最终文案';
+          if (params.prompt?.trim()) return '❌ kind="reminder" 不使用 prompt；需要真实执行任务时才使用 kind="agent_task"';
+          if (params.toolsets && params.toolsets.length > 0) return '❌ kind="reminder" 不使用 toolsets；提醒只会唤醒 Hiyori 对用户说话';
         } else if (!params.prompt?.trim()) {
           return '❌ 缺少 prompt 参数：kind="agent_task" 时 prompt 是后台子智能体执行指令';
         } else if (params.message?.trim()) {
           return '❌ kind="agent_task" 不使用 message；请把后台执行指令放到 prompt';
+        } else if (params.instruction?.trim()) {
+          return '❌ kind="agent_task" 不使用 instruction；请把后台执行指令放到 prompt';
         }
         if (!params.schedule?.trim()) return '❌ 缺少 schedule 参数';
 
@@ -155,7 +159,7 @@ const scheduleTaskTool: ToolDefinition<ScheduleTaskParams> = {
 
           const sched = taskScheduler.createSchedule({
             title: params.title.trim(),
-            prompt: params.kind === 'reminder' ? params.message!.trim() : params.prompt!.trim(),
+            prompt: params.kind === 'reminder' ? params.instruction!.trim() : params.prompt!.trim(),
             schedule: params.schedule.trim(),
             repeatLimit: params.repeat_limit,
             metadata: Object.keys(schedMeta).length > 0 ? schedMeta : undefined,

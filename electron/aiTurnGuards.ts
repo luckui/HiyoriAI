@@ -2,6 +2,14 @@ export function isAsyncResultNotification(userText: string): boolean {
   return userText.trimStart().startsWith('【异步结果通知】');
 }
 
+export function isScheduledReminderWakeup(userText: string): boolean {
+  return userText.trimStart().startsWith('【定时提醒】');
+}
+
+export function isSystemWakeupNotification(userText: string): boolean {
+  return isAsyncResultNotification(userText) || isScheduledReminderWakeup(userText);
+}
+
 export function isLikelyActionIntentText(userText: string): boolean {
   const t = userText.toLowerCase();
   if (!t) return false;
@@ -14,11 +22,11 @@ export function isLikelyTaskRequestText(userText: string): boolean {
 }
 
 export function shouldApplyActionCorrection(userText: string): boolean {
-  if (isAsyncResultNotification(userText)) return false;
+  if (isSystemWakeupNotification(userText)) return false;
   return isLikelyActionIntentText(userText);
 }
 
 export function shouldApplyTaskIntentNudge(userText: string): boolean {
-  if (isAsyncResultNotification(userText)) return false;
+  if (isSystemWakeupNotification(userText)) return false;
   return isLikelyTaskRequestText(userText);
 }

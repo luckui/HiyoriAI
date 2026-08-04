@@ -120,4 +120,37 @@ describe('async wakeup correction behavior', () => {
     expect(flattened).not.toContain('检测到用户可能在请求执行一项任务');
     expect(flattened).not.toContain('你刚才没有调用任何工具');
   });
+
+  it('does not inject task nudges or action correction for scheduled reminder wakeups', async () => {
+    const { sendChatMessage } = await import('../aiService');
+    const conversationId = 'scheduled-reminder-wakeup-correction';
+    const seenMessages: ChatMessage[][] = [];
+    fetchCompletionMock.mockImplementation(async (_provider, messages: ChatMessage[]) => {
+      seenMessages.push(messages);
+      return {
+        choices: [{
+          finish_reason: 'stop',
+          message: { content: '该继续上班啦，先把注意力拉回来，我们慢慢进入状态。' },
+        }],
+      };
+    });
+
+    const wakeup = [
+      '【定时提醒】',
+      '任务：继续上班提醒',
+      '提醒指令：请提醒用户继续上班啦，该回到工作状态了。',
+      '',
+      '请直接向用户发出提醒或开启简短对话。除非提醒内容本身要求真实操作，否则不需要调用工具。',
+    ].join('\n');
+
+    const result = await sendChatMessage(conversationId, wakeup);
+
+    expect(result.content).toBe('该继续上班啦，先把注意力拉回来，我们慢慢进入状态。');
+    expect(fetchCompletionMock).toHaveBeenCalledTimes(1);
+    const flattened = seenMessages[0].map((message) => (
+      typeof message.content === 'string' ? message.content : JSON.stringify(message.content)
+    )).join('\n');
+    expect(flattened).not.toContain('检测到用户可能在请求执行一项任务');
+    expect(flattened).not.toContain('你刚才没有调用任何工具');
+  });
 });

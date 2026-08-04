@@ -207,4 +207,20 @@ describe('createCodexRuntimeProvider', () => {
       else process.env.CODEX_PROXY = originalProxy;
     }
   });
+
+  it('marks Codex threads started by Hiyori with a Hiyori originator', () => {
+    const options = createCodexSdkOptions();
+
+    expect(options?.env?.CODEX_INTERNAL_ORIGINATOR_OVERRIDE).toBe('Hiyori');
+  });
+
+  it('preserves an explicit Codex originator override', () => {
+    const options = createCodexSdkOptions({
+      env: {
+        CODEX_INTERNAL_ORIGINATOR_OVERRIDE: 'Custom Host',
+      },
+    });
+
+    expect(options?.env?.CODEX_INTERNAL_ORIGINATOR_OVERRIDE).toBe('Custom Host');
+  });
 });

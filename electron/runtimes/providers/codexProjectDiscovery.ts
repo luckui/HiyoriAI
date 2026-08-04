@@ -14,6 +14,18 @@ export interface CodexTaskSummary {
   originator?: string;
   model?: string;
   source?: string;
+  sourceKind: CodexTaskSourceKind;
+  sourceLabel: string;
+}
+
+export type CodexTaskSourceKind = 'hiyori' | 'desktop' | 'vscode' | 'sdk' | 'external';
+
+export interface CodexTaskSourceCounts {
+  hiyori: number;
+  desktop: number;
+  vscode: number;
+  sdk: number;
+  external: number;
 }
 
 export interface CodexProjectSummary {
@@ -23,6 +35,15 @@ export interface CodexProjectSummary {
   latestTaskId: string;
   latestTaskTitle: string;
   updatedAt: number;
+  sourceCounts: CodexTaskSourceCounts;
+  sourceLabels: string[];
+}
+
+export interface CodexProjectIndex {
+  projects: CodexProjectSummary[];
+  totalCount: number;
+  shownCount: number;
+  hasMore: boolean;
 }
 
 export interface CodexDiscoveryOptions {
@@ -79,6 +100,11 @@ function truncateTitle(text: string): string {
 }
 
 export async function listCodexProjects(options: CodexDiscoveryOptions = {}): Promise<CodexProjectSummary[]> {
+  const index = await listCodexProjectIndex(options);
+  return index.projects;
+}
+
+export async function listCodexProjectIndex(options: CodexDiscoveryOptions = {}): Promise<CodexProjectIndex> {
   const tasks = await readCodexTasks(options);
   const groups = new Map<string, CodexTaskSummary[]>();
 
@@ -92,6 +118,7 @@ export async function listCodexProjects(options: CodexDiscoveryOptions = {}): Pr
   const projects = Array.from(groups.values()).map((group) => {
     group.sort((a, b) => b.updatedAt - a.updatedAt);
     const latest = group[0];
+    const sourceCounts = countSources(group);
     return {
       name: projectName(latest.cwd),
       cwd: latest.cwd,
@@ -99,12 +126,20 @@ export async function listCodexProjects(options: CodexDiscoveryOptions = {}): Pr
       latestTaskId: latest.id,
       latestTaskTitle: latest.title,
       updatedAt: latest.updatedAt,
+      sourceCounts,
+      sourceLabels: sourceLabels(sourceCounts),
     };
   });
 
-  return projects
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, options.limit ?? 20);
+  const sorted = projects.sort((a, b) => b.updatedAt - a.updatedAt);
+  const limit = options.limit ?? 20;
+  const shown = sorted.slice(0, limit);
+  return {
+    projects: shown,
+    totalCount: sorted.length,
+    shownCount: shown.length,
+    hasMore: shown.length < sorted.length,
+  };
 }
 
 export async function listCodexProjectTasks(options: CodexProjectQueryOptions = {}): Promise<CodexTaskSummary[]> {
@@ -128,7 +163,7 @@ export async function listCodexProjectTasks(options: CodexProjectQueryOptions = 
 
 export async function resolveCodexProject(options: CodexProjectResolveOptions): Promise<CodexProjectResolveResult> {
   const query = normalizeMatchText(options.query.trim());
-  const projects = await listCodexProjects(options);
+  const projects = await listCodexProjects({ sessionsRoot: options.sessionsRoot });
   if (!query) return { status: 'not_found', candidates: projects.slice(0, options.limit ?? 5) };
 
   const exact = projects.filter((project) => {
@@ -147,6 +182,60 @@ export async function resolveCodexProject(options: CodexProjectResolveOptions): 
   if (fuzzy.length === 1) return { status: 'matched', project: fuzzy[0], candidates: fuzzy };
   if (fuzzy.length > 1) return { status: 'ambiguous', candidates: fuzzy.slice(0, options.limit ?? 5) };
   return { status: 'not_found', candidates: projects.slice(0, options.limit ?? 5) };
+}
+
+export function classifyCodexTaskSource(originator?: string, source?: string): CodexTaskSourceKind {
+  const normalizedOriginator = (originator ?? '').trim().toLowerCase();
+  const normalizedSource = (source ?? '').trim().toLowerCase();
+  if (normalizedOriginator === 'hiyori') return 'hiyori';
+  if (normalizedOriginator === 'codex desktop') return 'desktop';
+  if (normalizedOriginator === 'codex_vscode' || normalizedSource === 'vscode') return 'vscode';
+  if (normalizedOriginator === 'codex_sdk_ts' || normalizedSource === 'exec') return 'sdk';
+  return 'external';
+}
+
+export function codexTaskSourceLabel(sourceKind: CodexTaskSourceKind): string {
+  switch (sourceKind) {
+    case 'hiyori':
+      return 'Hiyori';
+    case 'desktop':
+      return 'Codex Desktop';
+    case 'vscode':
+      return 'VSCode';
+    case 'sdk':
+      return 'SDK/自动化';
+    case 'external':
+      return '外部来源';
+  }
+}
+
+function emptySourceCounts(): CodexTaskSourceCounts {
+  return {
+    hiyori: 0,
+    desktop: 0,
+    vscode: 0,
+    sdk: 0,
+    external: 0,
+  };
+}
+
+function countSources(tasks: CodexTaskSummary[]): CodexTaskSourceCounts {
+  const counts = emptySourceCounts();
+  for (const task of tasks) counts[task.sourceKind]++;
+  return counts;
+}
+
+function sourceLabels(counts: CodexTaskSourceCounts): string[] {
+  const entries: Array<[CodexTaskSourceKind, number]> = [
+    ['hiyori', counts.hiyori],
+    ['desktop', counts.desktop],
+    ['vscode', counts.vscode],
+    ['sdk', counts.sdk],
+    ['external', counts.external],
+  ];
+  return entries
+    .filter(([, count]) => count > 0)
+    .map(([kind, count]) => `${codexTaskSourceLabel(kind)} ${count}`);
 }
 
 async function readCodexTasks(options: CodexDiscoveryOptions = {}): Promise<CodexTaskSummary[]> {
@@ -224,6 +313,8 @@ async function readTaskSummary(file: string, fallbackUpdatedAt: number): Promise
     originator: meta.originator,
     model: meta.model ?? meta.model_provider,
     source: meta.source,
+    sourceKind: classifyCodexTaskSource(meta.originator, meta.source),
+    sourceLabel: codexTaskSourceLabel(classifyCodexTaskSource(meta.originator, meta.source)),
   };
 }
 

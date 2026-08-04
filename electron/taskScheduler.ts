@@ -39,7 +39,7 @@ export type ScheduleKind = 'reminder' | 'agent_task';
 export interface ScheduleReminderNotification {
   conversationId: string;
   title: string;
-  message: string;
+  instruction: string;
   replyTarget?: ReplyTarget;
 }
 
@@ -313,7 +313,7 @@ class TaskScheduler {
               await scheduleReminderNotifier({
                 conversationId,
                 title: schedule.task_title,
-                message: schedule.prompt,
+                instruction: schedule.prompt,
                 replyTarget: meta.replyTarget as ReplyTarget | undefined,
               });
             } else {
@@ -438,7 +438,7 @@ class TaskScheduler {
         void scheduleReminderNotifier({
           conversationId,
           title: s.task_title,
-          message: s.prompt,
+          instruction: s.prompt,
           replyTarget: triggerMeta.replyTarget as ReplyTarget | undefined,
         });
       }

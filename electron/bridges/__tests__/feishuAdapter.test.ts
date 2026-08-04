@@ -10,6 +10,7 @@ const state = vi.hoisted(() => ({
   sendChatMessage: vi.fn(),
   conversations: [{ id: 'conv-latest' }],
   pendingReplyResolve: null as null | ((value: { content: string }) => void),
+  voiceDeliveries: [] as Array<{ chatId: string; text: string; voiceEnabled: boolean; hasProvider: boolean }>,
 }));
 
 vi.mock('@larksuiteoapi/node-sdk', () => ({
@@ -69,6 +70,38 @@ vi.mock('../../db', () => ({
   listConversations: () => state.conversations,
 }));
 
+vi.mock('../voiceReplies', () => ({
+  getReadyBridgeVoiceProvider: vi.fn(async () => ({
+    type: 'http-tts',
+    name: 'Mock TTS',
+    baseUrl: 'http://127.0.0.1:9880',
+    apiKey: '',
+  })),
+  deliverFeishuVoiceReply: vi.fn(async (deps: {
+    chatId: string;
+    text: string;
+    voiceEnabled: boolean;
+    provider?: unknown;
+    sendAudio: (chatId: string, opus: Buffer, fileName: string, meta?: { durationMs?: number }) => Promise<void>;
+    sendText: (chatId: string, text: string) => Promise<void>;
+  }) => {
+    state.voiceDeliveries.push({
+      chatId: deps.chatId,
+      text: deps.text,
+      voiceEnabled: deps.voiceEnabled,
+      hasProvider: Boolean(deps.provider),
+    });
+    if (deps.voiceEnabled && deps.provider) {
+      await deps.sendAudio(deps.chatId, Buffer.from('opus-data'), 'reply.opus', { durationMs: 1000 });
+    }
+    await deps.sendText(deps.chatId, deps.text);
+    return {
+      voiceAttempted: Boolean(deps.voiceEnabled && deps.provider),
+      voiceSent: deps.voiceEnabled && deps.provider ? 1 : 0,
+    };
+  }),
+}));
+
 describe('FeishuAdapter', () => {
   beforeEach(() => {
     state.sentMessages = [];
@@ -80,6 +113,7 @@ describe('FeishuAdapter', () => {
     state.sendChatMessage = vi.fn(async () => ({ content: 'Hiyori reply' }));
     state.conversations = [{ id: 'conv-latest' }];
     state.pendingReplyResolve = null;
+    state.voiceDeliveries = [];
   });
 
   it('receives a Feishu p2p text event and replies to the same chat', async () => {
@@ -211,6 +245,39 @@ describe('FeishuAdapter', () => {
       content: JSON.stringify({ file_key: 'file_key_audio' }),
       msgType: 'audio',
     }]);
+  });
+
+  it('uses the shared voice reply pipeline for outbound replies', async () => {
+    const { FeishuAdapter } = await import('../adapters/feishu');
+    const adapter = new FeishuAdapter({
+      enabled: true,
+      appId: 'cli_xxx',
+      appSecret: 'secret',
+      allowedChatIds: [],
+      conversationId: 'conv-bound',
+      voiceRepliesEnabled: true,
+    });
+
+    await adapter.sendReply('oc_chat', 'Reminder reply.');
+
+    expect(state.voiceDeliveries).toEqual([{
+      chatId: 'oc_chat',
+      text: 'Reminder reply.',
+      voiceEnabled: true,
+      hasProvider: true,
+    }]);
+    expect(state.sentMessages).toEqual([
+      {
+        receiveId: 'oc_chat',
+        content: JSON.stringify({ file_key: 'file_key_audio' }),
+        msgType: 'audio',
+      },
+      {
+        receiveId: 'oc_chat',
+        content: JSON.stringify({ text: 'Reminder reply.' }),
+        msgType: 'text',
+      },
+    ]);
   });
 
   it('handles /startvoice without sending the command to the LLM', async () => {

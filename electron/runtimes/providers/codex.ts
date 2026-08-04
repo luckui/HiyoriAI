@@ -327,23 +327,31 @@ export function createCodexRuntimeProvider(
 }
 
 export function createCodexSdkOptions(baseOptions?: CodexOptions): CodexOptions | undefined {
-  if (baseOptions?.env) return baseOptions;
   const proxy =
     process.env['CODEX_PROXY'] ||
     process.env['HTTPS_PROXY'] ||
     process.env['HTTP_PROXY'] ||
     process.env['DISCORD_PROXY'];
 
-  if (!proxy) return baseOptions;
+  const baseEnv = baseOptions?.env
+    ? { ...baseOptions.env }
+    : ({ ...process.env } as Record<string, string>);
+  if (baseOptions?.env) {
+    if (!baseEnv['CODEX_INTERNAL_ORIGINATOR_OVERRIDE']) {
+      baseEnv['CODEX_INTERNAL_ORIGINATOR_OVERRIDE'] = 'Hiyori';
+    }
+  } else {
+    baseEnv['CODEX_INTERNAL_ORIGINATOR_OVERRIDE'] = 'Hiyori';
+  }
+  if (proxy) {
+    baseEnv['HTTP_PROXY'] = baseEnv['HTTP_PROXY'] || proxy;
+    baseEnv['HTTPS_PROXY'] = baseEnv['HTTPS_PROXY'] || proxy;
+    baseEnv['http_proxy'] = baseEnv['http_proxy'] || proxy;
+    baseEnv['https_proxy'] = baseEnv['https_proxy'] || proxy;
+  }
 
   return {
     ...baseOptions,
-    env: {
-      ...process.env,
-      HTTP_PROXY: process.env['HTTP_PROXY'] || proxy,
-      HTTPS_PROXY: process.env['HTTPS_PROXY'] || proxy,
-      http_proxy: process.env['http_proxy'] || proxy,
-      https_proxy: process.env['https_proxy'] || proxy,
-    } as Record<string, string>,
+    env: baseEnv,
   };
 }

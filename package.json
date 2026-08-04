@@ -15,7 +15,7 @@
   "build": {
     "appId": "com.hiyori.desktop-pet",
     "productName": "Hiyori",
-    "copyright": "Copyright © 2026",
+    "copyright": "Copyright (c) 2026 Hiyori contributors",
     "directories": {
       "output": "dist"
     },
@@ -141,7 +141,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/luckui/ai-live2d-go/issues"
   },

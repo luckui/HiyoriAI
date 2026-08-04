@@ -30,20 +30,7 @@ describe('schedule_task tool contract', () => {
     });
   });
 
-  it('requires reminder schedules to use a user-visible message', () => {
-    const result = scheduleTaskTool.execute({
-      action: 'create',
-      kind: 'reminder',
-      title: '提醒工作',
-      prompt: '记得提醒用户工作',
-      schedule: '20:26',
-    }, { conversationId: 'conv-1' });
-
-    expect(String(result)).toContain('缺少 message');
-    expect(createSchedule).not.toHaveBeenCalled();
-  });
-
-  it('stores reminder message as the scheduled notification body', () => {
+  it('requires reminder schedules to use an instruction for Hiyori', () => {
     const result = scheduleTaskTool.execute({
       action: 'create',
       kind: 'reminder',
@@ -52,9 +39,22 @@ describe('schedule_task tool contract', () => {
       schedule: '20:26',
     }, { conversationId: 'conv-1' });
 
+    expect(String(result)).toContain('缺少 instruction');
+    expect(createSchedule).not.toHaveBeenCalled();
+  });
+
+  it('stores reminder instruction as the scheduled wakeup prompt', () => {
+    const result = scheduleTaskTool.execute({
+      action: 'create',
+      kind: 'reminder',
+      title: '提醒工作',
+      instruction: '请提醒用户该开始工作了。',
+      schedule: '20:26',
+    }, { conversationId: 'conv-1' });
+
     expect(createSchedule).toHaveBeenCalledWith(expect.objectContaining({
       title: '提醒工作',
-      prompt: '20:26 到啦，该开始工作了。',
+      prompt: '请提醒用户该开始工作了。',
       schedule: '20:26',
       metadata: expect.objectContaining({
         kind: 'reminder',
@@ -62,6 +62,20 @@ describe('schedule_task tool contract', () => {
       }),
     }));
     expect(String(result)).toContain('定时提醒已创建');
+  });
+
+  it('rejects prompt/toolsets for reminder schedules', () => {
+    const result = scheduleTaskTool.execute({
+      action: 'create',
+      kind: 'reminder',
+      title: '提醒工作',
+      instruction: '请提醒用户该开始工作了。',
+      prompt: '后台执行提醒任务',
+      schedule: '20:26',
+    }, { conversationId: 'conv-1' });
+
+    expect(String(result)).toContain('kind="reminder" 不使用 prompt');
+    expect(createSchedule).not.toHaveBeenCalled();
   });
 
   it('requires agent task schedules to use prompt instead of message', () => {

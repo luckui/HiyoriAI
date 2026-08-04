@@ -14,7 +14,7 @@ import { buildAgentPrompt } from './prompts/agent';
 import { buildDeveloperPrompt } from './prompts/developer';
 import { buildStreamerPrompt } from './prompts/streamer';
 import { browserSession } from './tools/impl/browserSession';
-import { isAsyncResultNotification, shouldApplyActionCorrection, shouldApplyTaskIntentNudge } from './aiTurnGuards';
+import { isSystemWakeupNotification, shouldApplyActionCorrection, shouldApplyTaskIntentNudge } from './aiTurnGuards';
 
 // ── 工具调用调试事件 ─────────────────────────────────────
 /** 单次工具调用的调试记录（推送给渲染层展示） */
@@ -229,8 +229,8 @@ async function _callWithToolLoopInternal(
       // 只处理“用户要求真实操作但模型口头回复”的场景；工具结果、异步通知等不走这里。
       if (round === 0 && !antiHallucinationNudgeUsed && withTools) {
         const latestUser = getLatestRealUserText(msgBuf);
-        if (isAsyncResultNotification(latestUser)) {
-          console.log('[AI Guard] skip action correction: async result notification');
+        if (isSystemWakeupNotification(latestUser)) {
+          console.log('[AI Guard] skip action correction: system wakeup notification');
         }
         if (shouldApplyActionCorrection(latestUser)) {
           console.log('[AI Guard] apply action correction: first reply had no tool call');
@@ -436,8 +436,8 @@ export async function sendChatMessage(
   // 任务意图预提示：agent/developer 模式下，用户消息含请求性字眼时轻量注入
   // chat 模式以自然对话为主，不强制工具调用
   const taskIntentNudge = shouldApplyTaskIntentNudge(userContent);
-  if (isAsyncResultNotification(userContent)) {
-    console.log('[AI Guard] skip task intent nudge: async result notification');
+  if (isSystemWakeupNotification(userContent)) {
+    console.log('[AI Guard] skip task intent nudge: system wakeup notification');
   } else if (currentAgentMode !== 'chat' && toolRegistry.isEmpty === false && taskIntentNudge) {
     console.log('[AI Guard] apply task intent nudge');
     messages.push({
