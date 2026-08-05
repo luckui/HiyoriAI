@@ -1,8 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { getReplyTargetForConversation } from '../../bridges/asyncDelivery';
 import {
   discoverLanRooms,
+  getMinecraftGoalCoordinator,
   minecraftRuntime,
   type MinecraftCommandOrigin,
+  type MinecraftGoalOrigin,
   type MinecraftStatus,
 } from '../../minecraft';
 import type { ToolContext, ToolDefinition } from '../types';
@@ -12,21 +15,20 @@ type MinecraftCompanionAction =
   | 'disconnect'
   | 'status'
   | 'say'
-  | 'follow'
-  | 'collect'
-  | 'stop';
+  | 'start_goal'
+  | 'stop_goal';
 
 interface MinecraftCompanionParams {
   action: MinecraftCompanionAction;
   owner?: string;
   host?: string;
   port?: number;
-  player?: string;
   message?: string;
-  block?: string;
-  quantity?: number;
-  radius?: number;
+  task?: string;
+  goal_id?: string;
 }
+
+const activeGoalByConversation = new Map<string, string>();
 
 const minecraftCompanionTool: ToolDefinition<MinecraftCompanionParams> = {
   schema: {
@@ -34,15 +36,15 @@ const minecraftCompanionTool: ToolDefinition<MinecraftCompanionParams> = {
     function: {
       name: 'minecraft_companion',
       description:
-        "Control Hiyori's persistent Minecraft companion body. A command changes the body's state once; movement and survival continue in Minecraft. Collection reports its final outcome later. Use status only when the user asks about the current game state.",
+        "Connect Hiyori's Minecraft companion body and start or stop natural-language Minecraft goals. Use start_goal for gameplay requests such as following the player, collecting nearby blocks, inspecting surroundings, farming, or helping with survival.",
       parameters: {
         type: 'object',
         properties: {
           action: {
             type: 'string',
-            enum: ['connect', 'disconnect', 'status', 'say', 'follow', 'collect', 'stop'],
+            enum: ['connect', 'disconnect', 'status', 'say', 'start_goal', 'stop_goal'],
             description:
-              'connect joins a Java LAN room; follow and collect start persistent behavior; stop returns the body to idle.',
+              'connect joins a Java LAN room; start_goal describes what Hiyori should do in Minecraft; stop_goal cancels the current goal.',
           },
           owner: {
             type: 'string',
@@ -53,16 +55,15 @@ const minecraftCompanionTool: ToolDefinition<MinecraftCompanionParams> = {
             description: 'LAN server host selected by the user. Omit to discover rooms automatically.',
           },
           port: { type: 'integer', description: 'LAN server port selected by the user.' },
-          player: { type: 'string', description: 'Visible Minecraft player name for follow.' },
           message: { type: 'string', description: 'Text Hiyori should say in Minecraft chat.' },
-          block: {
+          task: {
             type: 'string',
-            description: 'Minecraft registry block name, for example oak_log or coal_ore.',
+            description:
+              'Natural-language Minecraft goal from the user, for example "follow me", "collect the nearby sugar cane", or "look around and tell me what you see".',
           },
-          quantity: { type: 'integer', description: 'Number of blocks to collect, from 1 to 64.' },
-          radius: {
-            type: 'integer',
-            description: 'Search radius in blocks, from 1 to 64. Defaults to 32.',
+          goal_id: {
+            type: 'string',
+            description: 'Goal id returned by start_goal. Omit to stop the latest goal in this conversation.',
           },
         },
         required: ['action'],
@@ -134,29 +135,50 @@ const minecraftCompanionTool: ToolDefinition<MinecraftCompanionParams> = {
       await minecraftRuntime.command('say', { message: params.message.trim() });
       return result('已发送', '回复用户', '消息已发到 Minecraft 聊天。');
     }
-    if (params.action === 'follow') {
-      if (!params.player?.trim()) return missing('要跟随的玩家名');
-      await minecraftRuntime.command('follow', { player: params.player.trim() });
-      return result('正在跟随', '回复用户', `Hiyori 正在跟随 ${params.player.trim()}。`);
-    }
-    if (params.action === 'collect') {
-      if (!params.block?.trim()) return missing('要采集的方块名称');
-      if (!params.quantity) return missing('要采集的数量');
-      const accepted = await minecraftRuntime.startCollection(
-        { block: params.block.trim(), quantity: params.quantity, radius: params.radius },
-        origin,
-      );
+    if (params.action === 'start_goal') {
+      if (!params.task?.trim()) return missing('想让 Hiyori 在 Minecraft 里完成的事情');
+      const coordinator = getMinecraftGoalCoordinator();
+      if (!coordinator) {
+        return result(
+          '未就绪',
+          '回复用户',
+          'Minecraft 目标协调器还没有启动，请稍后再试。',
+        );
+      }
+      const goalId = randomUUID();
+      activeGoalByConversation.set(origin.conversationId, goalId);
+      minecraftRuntime.rememberOrigin(origin);
+      void coordinator.startGoal({
+        id: goalId,
+        title: 'Minecraft 目标',
+        instruction: params.task.trim(),
+        origin: goalOrigin(origin),
+      }).catch((error) => {
+        console.error('[Minecraft Companion] goal failed:', error instanceof Error ? error.message : String(error));
+      });
       return result(
-        '正在执行',
+        '已开始',
         '回复用户',
-        `Hiyori 已开始采集 ${accepted.quantity ?? params.quantity} 个 ${accepted.block ?? params.block}，完成后会自动带回结果。`,
+        `已开始 Minecraft 目标。\n目标 ID：${goalId}\n完成或需要你决定时会主动告诉你。`,
       );
     }
-    if (params.action === 'stop') {
-      await minecraftRuntime.command('stop', {});
-      return result('已停止', '回复用户', 'Hiyori 已停止当前 Minecraft 动作。');
+    if (params.action === 'stop_goal') {
+      const coordinator = getMinecraftGoalCoordinator();
+      if (!coordinator) return result('未就绪', '回复用户', 'Minecraft 目标协调器还没有启动。');
+      const goalId = params.goal_id?.trim() || activeGoalByConversation.get(origin.conversationId);
+      if (!goalId) return missing('要停止的 Minecraft 目标 ID');
+      await coordinator.stopGoal(goalId);
+      activeGoalByConversation.delete(origin.conversationId);
+      return result('已停止', '回复用户', `已请求停止 Minecraft 目标。\n目标 ID：${goalId}`);
     }
-    return result('无法处理', '回复用户', '不支持的 Minecraft 操作。');
+    if ((params.action as string) === 'collect' || (params.action as string) === 'follow') {
+      return result(
+        '无法处理',
+        '回复用户',
+        '请用 start_goal 描述想在 Minecraft 里完成的事情，例如“跟着我”或“帮我采附近的甘蔗”。',
+      );
+    }
+    return result('无法处理', '回复用户', '不支持的 Minecraft 操作。请用 start_goal 描述目标。');
   },
 };
 
@@ -165,6 +187,19 @@ function commandOrigin(context?: ToolContext): MinecraftCommandOrigin {
   return {
     conversationId,
     replyTarget: getReplyTargetForConversation(conversationId) ?? { kind: 'desktop' },
+  };
+}
+
+function goalOrigin(origin: MinecraftCommandOrigin): MinecraftGoalOrigin {
+  const replyKind = origin.replyTarget?.kind;
+  const source =
+    replyKind === 'discord' || replyKind === 'wechat' || replyKind === 'feishu' || replyKind === 'minecraft'
+      ? replyKind
+      : 'desktop';
+  return {
+    conversationId: origin.conversationId,
+    replyTarget: origin.replyTarget,
+    source,
   };
 }
 

@@ -91,6 +91,7 @@ import {
   addMessage as dbAddMessage,
 } from './db';
 import { sendChatMessage, setToolEventListener, stopCurrentAI } from './aiService';
+import { fetchCompletion } from './llmClient';
 import { triggerConversationLeave, memoryManager, globalMemoryManager, runStartupCatchUp, startIdleScheduler } from './memory/index';
 import { exportMemoryToMarkdown, importMemoryFromMarkdown } from './memory/memoryExport';
 import aiConfig from './ai.config';
@@ -123,8 +124,10 @@ import { hearingManager } from './hearingManager';
 import { taskManager } from './taskManager';
 import { setScheduleReminderNotifier, taskScheduler } from './taskScheduler';
 import { initLive2DBridge } from './live2dBridge';
-import { minecraftRuntime } from './minecraft';
+import { minecraftRuntime, setMinecraftGoalCoordinator } from './minecraft';
+import { MinecraftCognitionCoordinator } from './minecraft/cognitionCoordinator';
 import { configureMinecraftMainIntegration } from './minecraft/mainIntegration';
+import { createMinecraftPlannerModel } from './minecraft/plannerModel';
 import type { AvatarConfig } from './avatar/avatarConfig';
 import { DEFAULT_AVATAR_CONFIG } from './avatar/avatarConfig';
 import {
@@ -1306,8 +1309,33 @@ app.whenReady().then(() => {
   const defaultConvId = existingConvs.length > 0
     ? existingConvs[0].id
     : createConversation().id;
+  const minecraftCoordinator = new MinecraftCognitionCoordinator({
+    planner: createMinecraftPlannerModel({
+      complete: async (messages) => {
+        const provider = aiConfig.providers[aiConfig.activeProvider];
+        if (!provider) throw new Error(`未找到 provider: ${aiConfig.activeProvider}`);
+        const response = await fetchCompletion(provider, messages, undefined, undefined, {
+          maxTokens: 800,
+          temperature: 0.2,
+          disableThinking: true,
+        });
+        return response.choices[0]?.message.content?.trim() ?? '';
+      },
+    }),
+    runtime: minecraftRuntime,
+    notify: async (origin, message) => {
+      const conversationId = origin.conversationId ?? activeConversationId ?? defaultConvId;
+      sendAgentWakeup(
+        conversationId,
+        ['【Minecraft 目标通知】', message].join('\n'),
+        origin.replyTarget,
+      );
+    },
+  });
+  setMinecraftGoalCoordinator(minecraftCoordinator);
   minecraftIntegration = configureMinecraftMainIntegration({
     runtime: minecraftRuntime,
+    coordinator: minecraftCoordinator,
     sendChatMessage,
     playTTS: playTTSAudio,
     sendWakeup: sendAgentWakeup,
@@ -1342,6 +1370,7 @@ let isQuitting = false;
 
 app.on('before-quit', (event) => {
   void minecraftIntegration?.shutdown();
+  setMinecraftGoalCoordinator(undefined);
   // 停止定时任务调度器
   taskScheduler.stop();
 

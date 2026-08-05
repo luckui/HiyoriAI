@@ -2,12 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveToolset } from '../../../toolsets';
 
 const command = vi.fn();
-const startCollection = vi.fn();
 const rememberOrigin = vi.fn();
 const discoverLanRooms = vi.fn();
+const startGoal = vi.fn(async () => undefined);
+const stopGoal = vi.fn(async () => true);
 
 vi.mock('../../../minecraft', () => ({
-  minecraftRuntime: { command, startCollection, rememberOrigin },
+  minecraftRuntime: { command, rememberOrigin },
+  getMinecraftGoalCoordinator: vi.fn(() => ({ startGoal, stopGoal })),
   discoverLanRooms,
 }));
 
@@ -71,23 +73,52 @@ describe('minecraft_companion tool', () => {
     expect(rememberOrigin).toHaveBeenCalled();
   });
 
-  it('accepts collection once and does not instruct Hiyori to poll', async () => {
-    startCollection.mockResolvedValueOnce({
-      state: 'running',
-      jobId: 'job-1',
-      block: 'oak_log',
-      quantity: 12,
-      radius: 32,
-    });
-
+  it('starts a natural-language goal instead of exposing collect and follow choices', async () => {
     const result = await minecraftCompanionTool.execute(
-      { action: 'collect', block: 'oak_log', quantity: 12 },
+      { action: 'start_goal', task: '帮我采附近的甘蔗' },
       { conversationId: 'c1' },
     );
 
-    expect(result).toContain('正在执行');
-    expect(result).toContain('完成后会自动带回结果');
-    expect(result).not.toContain('查询状态');
-    expect(result).not.toContain('轮询');
+    expect(startGoal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Minecraft 目标',
+        instruction: '帮我采附近的甘蔗',
+        origin: expect.objectContaining({ conversationId: 'c1', source: 'desktop' }),
+      }),
+    );
+    expect(result).toContain('已开始 Minecraft 目标');
+    expect(result).toContain('完成或需要你决定时会主动告诉你');
+  });
+
+  it('stops the current natural-language goal for the conversation', async () => {
+    const started = await minecraftCompanionTool.execute(
+      { action: 'start_goal', task: '跟着我' },
+      { conversationId: 'c1' },
+    );
+    const id = /目标 ID：([^\n]+)/.exec(String(started))?.[1]?.trim();
+    expect(id).toBeTruthy();
+
+    const stopped = await minecraftCompanionTool.execute(
+      { action: 'stop_goal' },
+      { conversationId: 'c1' },
+    );
+
+    expect(stopGoal).toHaveBeenCalledWith(id);
+    expect(stopped).toContain('已请求停止 Minecraft 目标');
+  });
+
+  it('rejects obsolete low-level collect and follow actions with clear wording', async () => {
+    const collect = await minecraftCompanionTool.execute(
+      { action: 'collect', block: 'oak_log' } as never,
+      { conversationId: 'c1' },
+    );
+    const follow = await minecraftCompanionTool.execute(
+      { action: 'follow', player: 'GeoLingua' } as never,
+      { conversationId: 'c1' },
+    );
+
+    expect(collect).toContain('请用 start_goal 描述想在 Minecraft 里完成的事情');
+    expect(follow).toContain('请用 start_goal 描述想在 Minecraft 里完成的事情');
+    expect(command).not.toHaveBeenCalledWith('follow', expect.anything());
   });
 });
