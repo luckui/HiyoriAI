@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type {
+  MinecraftRawObservation,
   MinecraftBehavior,
   MinecraftRuntimeEvent,
   MinecraftStatus,
@@ -34,6 +35,7 @@ export interface MinecraftBotAdapter {
   connect(options: MinecraftConnectionOptions): Promise<void>;
   disconnect(): Promise<void>;
   status(): MinecraftStatus;
+  getRawObservation(ownerName?: string): MinecraftRawObservation;
   say(message: string): Promise<void>;
   startFollowing(player: string): Promise<void>;
   stopForeground(): Promise<void>;

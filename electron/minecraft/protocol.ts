@@ -12,6 +12,10 @@ export type MinecraftAction =
   | 'stop';
 
 export type {
+  MinecraftRawObservation,
+} from './perception';
+
+export type {
   MinecraftActionErrorCode,
   MinecraftActionInstruction,
   MinecraftActionName,

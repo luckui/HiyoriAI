@@ -95,6 +95,54 @@ describe('createMineflayerAdapter', () => {
     expect(collected).toBe(1);
   });
 
+  it('harvests reachable whole sugar cane plants without pathing to empty collision boxes', async () => {
+    const bot = createFakeBot();
+    bot.registry.blocksByName.reeds = { id: 83 };
+    const cane = [
+      { position: { x: 2, y: 64, z: 1 }, name: 'reeds', type: 83 },
+      { position: { x: 2, y: 65, z: 1 }, name: 'reeds', type: 83 },
+      { position: { x: 2, y: 66, z: 1 }, name: 'reeds', type: 83 },
+    ];
+    bot.findBlocks.mockReturnValue(cane.map((block: any) => block.position));
+    bot.blockAt.mockImplementation((position: any) =>
+      cane.find(
+        (block: any) =>
+          block.position.x === position.x &&
+          block.position.y === position.y &&
+          block.position.z === position.z,
+      ) ?? { position, name: 'air', type: 0 },
+    );
+    bot.canDigBlock = vi.fn(() => true);
+    bot.dig = vi.fn(async (block: any) => {
+      const index = cane.indexOf(block);
+      if (index >= 0) cane.splice(index, 1);
+    });
+
+    const adapter = createMineflayerAdapter(vi.fn(), {
+      createBot: () => bot,
+      plugins: [vi.fn(), vi.fn(), vi.fn(), vi.fn(), vi.fn()],
+      createFollowGoal: vi.fn(),
+    });
+    const connected = adapter.connect({ host: '127.0.0.1', port: 1, username: 'Hiyori' });
+    bot.emit('spawn');
+    await connected;
+
+    expect(adapter.resolveBlock('sugar_cane')).toBe('reeds');
+    const collected = await adapter.collect({
+      block: 'reeds',
+      quantity: 8,
+      radius: 16,
+      signal: new AbortController().signal,
+    });
+
+    expect(bot.collectBlock.collect).not.toHaveBeenCalled();
+    expect(bot.pathfinder.setGoal).not.toHaveBeenCalled();
+    expect(bot.dig).toHaveBeenCalledTimes(3);
+    expect(bot.dig.mock.calls.map(([block]: any[]) => block.position.y)).toEqual([66, 65, 64]);
+    expect(cane).toEqual([]);
+    expect(collected).toBe(3);
+  });
+
   it('updates the owner binding without reconnecting', async () => {
     const bot = createFakeBot();
     const createBot = vi.fn(() => bot);
