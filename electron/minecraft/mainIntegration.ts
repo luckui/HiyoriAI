@@ -97,12 +97,14 @@ function wakeupText(event: MinecraftRuntimeEvent): string {
   if (event.kind === 'collection-terminal') {
     return [
       '【Minecraft 任务结果】',
+      '事件：collection-terminal',
+      `任务 ID：${event.jobId}`,
       `方块：${event.block}`,
       `结果：${event.outcome}`,
       `数量：${event.collected}/${event.requested}`,
       event.message ? `说明：${event.message}` : undefined,
       '',
-      '请把结果自然地告诉用户。任务已经结束，不需要查询状态或再次发起采集。',
+      '请把结果自然告诉用户。任务已经结束，不需要查询状态或再次发起采集。',
     ]
       .filter((line) => line !== undefined)
       .join('\n');
@@ -110,6 +112,7 @@ function wakeupText(event: MinecraftRuntimeEvent): string {
   if (event.kind === 'food-shortage') {
     return [
       '【Minecraft 生存提醒】',
+      '事件：food-shortage',
       `Hiyori 的饥饿值是 ${event.food}，背包里没有可食用物品。`,
       '请告诉用户当前情况，并询问用户是否愿意给 Hiyori 食物。当前版本不要自行狩猎、收割或翻找容器。',
     ].join('\n');
@@ -117,9 +120,14 @@ function wakeupText(event: MinecraftRuntimeEvent): string {
   if (event.kind === 'disconnected') {
     return [
       '【Minecraft 连接提醒】',
+      '事件：disconnected',
       `Hiyori 已离开 Minecraft：${event.reason}`,
       '请如实告诉用户连接已经中断。',
     ].join('\n');
   }
-  return '【Minecraft 状态提醒】请根据当前事件自然地告诉用户。';
+  return [
+    '【Minecraft 状态提醒】',
+    `事件：${event.kind}`,
+    '请根据当前事件自然告诉用户。',
+  ].join('\n');
 }

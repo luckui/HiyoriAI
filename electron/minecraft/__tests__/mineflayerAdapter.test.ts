@@ -95,6 +95,45 @@ describe('createMineflayerAdapter', () => {
     expect(collected).toBe(1);
   });
 
+  it('resolves generic tree requests to the nearest visible log type', async () => {
+    const bot = createFakeBot();
+    bot.registry.blocksByName = {
+      oak_log: { id: 17 },
+      spruce_log: { id: 18 },
+    };
+    bot.findBlocks.mockImplementation(({ matching }: any) => {
+      if (matching === 17) return [{ x: 12, y: 64, z: 0 }];
+      if (matching === 18) return [{ x: 2, y: 64, z: 0 }];
+      return [];
+    });
+    bot.blockAt.mockImplementation((position: any) => ({
+      position,
+      name: position.x === 2 ? 'spruce_log' : 'oak_log',
+      type: position.x === 2 ? 18 : 17,
+    }));
+
+    const adapter = createMineflayerAdapter(vi.fn(), {
+      createBot: () => bot,
+      plugins: [vi.fn(), vi.fn(), vi.fn(), vi.fn()],
+      createFollowGoal: vi.fn(),
+    });
+    const connected = adapter.connect({ host: '127.0.0.1', port: 1, username: 'Hiyori' });
+    bot.emit('spawn');
+    await connected;
+
+    const result = await adapter.collectBlock({
+      block: 'tree',
+      radius: 16,
+      maxCount: 1,
+      preserveRoot: false,
+    });
+
+    expect(result.inventoryDelta).toEqual({ spruce_log: 1 });
+    expect(bot.collectBlock.collect).toHaveBeenCalledWith([
+      { position: { x: 2, y: 64, z: 0 }, name: 'spruce_log', type: 18 },
+    ]);
+  });
+
   it('harvests reachable whole sugar cane plants without pathing to empty collision boxes', async () => {
     const bot = createFakeBot();
     bot.registry.blocksByName.reeds = { id: 83 };

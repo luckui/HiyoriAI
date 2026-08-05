@@ -138,4 +138,50 @@ describe('MinecraftCognitionCoordinator', () => {
       '我走不过去，能带我靠近一点吗？',
     );
   });
+
+  it('emits goal progress debug lines for the terminal block', async () => {
+    const runtime = fakeRuntime();
+    const planner = fakePlanner([
+      {
+        kind: 'act',
+        rationale: 'nearby tree',
+        action: { id: 'act-1', name: 'collect_block', args: { block: 'oak_log' } },
+      },
+      { kind: 'complete', result: '砍到木头了。' },
+    ]);
+    const debug = vi.fn();
+    const coordinator = new MinecraftCognitionCoordinator({
+      planner,
+      runtime,
+      notify: vi.fn(async () => undefined),
+      debug,
+      maxPlannerTurns: 3,
+    });
+
+    await coordinator.startGoal({
+      id: 'goal-1',
+      title: 'Minecraft 目标',
+      instruction: '帮我砍树',
+      origin: { source: 'desktop', conversationId: 'conv-1' },
+    });
+
+    expect(debug).toHaveBeenCalledWith(expect.objectContaining({
+      goalId: 'goal-1',
+      status: 'running',
+      line: expect.stringContaining('目标：帮我砍树'),
+    }));
+    expect(debug).toHaveBeenCalledWith(expect.objectContaining({
+      goalId: 'goal-1',
+      line: expect.stringContaining('动作：collect_block'),
+    }));
+    expect(debug).toHaveBeenCalledWith(expect.objectContaining({
+      goalId: 'goal-1',
+      line: expect.stringContaining('结果：collected sugar cane'),
+    }));
+    expect(debug).toHaveBeenCalledWith(expect.objectContaining({
+      goalId: 'goal-1',
+      status: 'done',
+      line: expect.stringContaining('完成：砍到木头了。'),
+    }));
+  });
 });

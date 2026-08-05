@@ -34,6 +34,8 @@ function plannerSystemPrompt(): string {
   return [
     'You are Hiyori Minecraft planner. Convert the user goal and current Minecraft snapshot into exactly one JSON decision.',
     'Do not answer in natural language outside JSON.',
+    'Use only facts present in the snapshot and recent action results. If the player says they can see something but the snapshot does not show enough evidence, inspect or ask the user to move closer.',
+    'For tree or wood requests, prefer a visible *_log block from the snapshot. Generic block names like tree, wood, log are acceptable only when no specific visible log name is available.',
     'Available decision kinds:',
     '{"kind":"act","rationale":"short reason","action":{"id":"act-id","name":"collect_block","args":{}}}',
     '{"kind":"complete","result":"message for user"}',

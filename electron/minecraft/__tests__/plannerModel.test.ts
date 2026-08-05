@@ -38,7 +38,7 @@ describe('createMinecraftPlannerModel', () => {
     expect(decision.kind === 'act' && decision.action.name).toBe('collect_block');
   });
 
-  it('turns malformed model output into an ask-user decision', async () => {
+  it('turns malformed model output into a readable ask-user decision', async () => {
     const model = createMinecraftPlannerModel({ complete: async () => 'not json' });
 
     const decision = await model.decide({

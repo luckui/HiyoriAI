@@ -124,6 +124,41 @@ describe('Minecraft main integration', () => {
     );
   });
 
+  it('formats minecraft wakeups as readable action-specific instructions', () => {
+    const fake = createRuntime();
+    const sendWakeup = vi.fn();
+    configureMinecraftMainIntegration({
+      runtime: fake.runtime as any,
+      sendChatMessage: vi.fn(),
+      playTTS: vi.fn(),
+      sendWakeup,
+      getFallbackConversationId: () => 'fallback',
+    });
+    const origin = {
+      conversationId: 'conversation-1',
+      replyTarget: { kind: 'minecraft' as const, player: 'GeoLingua' },
+    };
+
+    fake.notify(origin, {
+      kind: 'collection-terminal',
+      jobId: 'job-1',
+      outcome: 'partial',
+      block: 'oak_log',
+      requested: 4,
+      collected: 1,
+      message: 'path unreachable',
+    });
+
+    const text = sendWakeup.mock.calls[0][1] as string;
+    expect(text).toContain('【Minecraft 任务结果】');
+    expect(text).toContain('事件：collection-terminal');
+    expect(text).toContain('任务 ID：job-1');
+    expect(text).toContain('方块：oak_log');
+    expect(text).toContain('请把结果自然告诉用户');
+    expect(text).not.toContain('銆');
+    expect(text).not.toContain('{event.');
+  });
+
   it('stops the channel and worker on shutdown', async () => {
     const fake = createRuntime();
     const integration = configureMinecraftMainIntegration({

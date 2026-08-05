@@ -52,6 +52,47 @@ const HOSTILE_MOBS = new Set([
   'zombie_villager',
 ]);
 
+const LOG_BLOCK_NAMES = [
+  'oak_log',
+  'spruce_log',
+  'birch_log',
+  'jungle_log',
+  'acacia_log',
+  'dark_oak_log',
+  'mangrove_log',
+  'cherry_log',
+  'crimson_stem',
+  'warped_stem',
+];
+
+const LEAF_BLOCK_NAMES = [
+  'oak_leaves',
+  'spruce_leaves',
+  'birch_leaves',
+  'jungle_leaves',
+  'acacia_leaves',
+  'dark_oak_leaves',
+  'mangrove_leaves',
+  'cherry_leaves',
+  'azalea_leaves',
+  'flowering_azalea_leaves',
+];
+
+const GENERIC_TREE_NAMES = new Set([
+  'tree',
+  'trees',
+  'log',
+  'logs',
+  'wood',
+  'woods',
+  'trunk',
+  'trunks',
+  '树',
+  '树木',
+  '木头',
+  '原木',
+]);
+
 export interface MineflayerAdapterDependencies {
   createBot: typeof createBot | ((options: any) => any);
   plugins: Array<(bot: any) => void>;
@@ -209,6 +250,7 @@ export function createMineflayerAdapter(
     resolveBlock(name) {
       if (!bot) return null;
       const normalized = name.trim().toLowerCase().replace(/[\s-]+/g, '_');
+      if (GENERIC_TREE_NAMES.has(normalized)) return nearestVisibleLogName(bot, 16);
       if (bot.registry?.blocksByName?.[normalized]) return normalized;
       if (normalized === 'sugar_cane' && bot.registry?.blocksByName?.reeds) return 'reeds';
       return null;
@@ -248,7 +290,7 @@ export function createMineflayerAdapter(
 
     async collectBlock(options): Promise<MinecraftActionResult> {
       const current = requireBot(bot);
-      const block = this.resolveBlock(options.block);
+      const block = resolveCollectBlock(current, options.block, options.radius);
       if (!block) throw new Error(`Unknown Minecraft block: ${options.block}`);
       const before = inventoryCounts(current)[block] ?? 0;
       const collected = await this.collect({
@@ -356,7 +398,17 @@ function inventoryCounts(bot: any): Record<string, number> {
 
 function visibleBlocks(bot: any): MinecraftObservedBlock[] {
   const blocksByName = bot.registry?.blocksByName ?? {};
-  const names = ['sugar_cane', 'reeds', 'oak_log', 'birch_log', 'stone', 'iron_ore', 'coal_ore'];
+  const names = [
+    'sugar_cane',
+    'reeds',
+    ...LOG_BLOCK_NAMES,
+    ...LEAF_BLOCK_NAMES,
+    'stone',
+    'iron_ore',
+    'deepslate_iron_ore',
+    'coal_ore',
+    'deepslate_coal_ore',
+  ];
   const seen = new Map<string, MinecraftObservedBlock>();
   for (const name of names) {
     const block = blocksByName[name];
@@ -375,6 +427,35 @@ function visibleBlocks(bot: any): MinecraftObservedBlock[] {
     }
   }
   return [...seen.values()];
+}
+
+function resolveCollectBlock(bot: any, name: string, radius: number): string | null {
+  const normalized = name.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (GENERIC_TREE_NAMES.has(normalized)) return nearestVisibleLogName(bot, radius);
+  if (bot.registry?.blocksByName?.[normalized]) return normalized;
+  if (normalized === 'sugar_cane' && bot.registry?.blocksByName?.reeds) return 'reeds';
+  return null;
+}
+
+function nearestVisibleLogName(bot: any, radius: number): string | null {
+  const blocksByName = bot.registry?.blocksByName ?? {};
+  let best: { name: string; distance: number } | undefined;
+  for (const name of LOG_BLOCK_NAMES) {
+    const block = blocksByName[name];
+    if (!block || typeof bot.findBlocks !== 'function') continue;
+    const positions = bot.findBlocks({ matching: block.id, maxDistance: radius, count: 8 }) ?? [];
+    for (const position of positions) {
+      const liveBlock = typeof bot.blockAt === 'function' ? bot.blockAt(position) : undefined;
+      if (liveBlock?.type !== undefined && liveBlock.type !== block.id) continue;
+      const distance = distanceToBot(bot, position);
+      if (!best || distance < best.distance) best = { name, distance };
+    }
+  }
+  return best?.name ?? firstAvailableLogName(blocksByName);
+}
+
+function firstAvailableLogName(blocksByName: Record<string, unknown>): string | null {
+  return LOG_BLOCK_NAMES.find((name) => blocksByName[name]) ?? null;
 }
 
 function visibleEntities(bot: any): MinecraftObservedEntity[] {

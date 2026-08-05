@@ -1331,6 +1331,15 @@ app.whenReady().then(() => {
         origin.replyTarget,
       );
     },
+    debug: (event) => {
+      if (!mainWin || mainWin.isDestroyed() || mainWin.webContents.isDestroyed()) return;
+      mainWin.webContents.send('hearing:terminal-block', {
+        blockId: `minecraft:${event.goalId}`,
+        title: event.title,
+        line: event.line,
+        status: event.status,
+      });
+    },
   });
   setMinecraftGoalCoordinator(minecraftCoordinator);
   minecraftIntegration = configureMinecraftMainIntegration({
