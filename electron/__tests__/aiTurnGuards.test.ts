@@ -37,14 +37,14 @@ describe('AI turn guard rules', () => {
     expect(isSystemWakeupNotification(reminderWakeup)).toBe(true);
   });
 
-  it('does not apply task intent nudges to async result notifications', () => {
+  it('does not apply task intent nudges to async result notifications or normal requests', () => {
     expect(shouldApplyTaskIntentNudge(codingAgentWakeup)).toBe(false);
-    expect(shouldApplyTaskIntentNudge('请帮我打开浏览器')).toBe(true);
+    expect(shouldApplyTaskIntentNudge('请帮我打开浏览器')).toBe(false);
   });
 
-  it('does not apply no-tool action correction to async result notifications', () => {
+  it('does not apply generic no-tool action correction to async result notifications or normal requests', () => {
     expect(shouldApplyActionCorrection(codingAgentWakeup)).toBe(false);
-    expect(shouldApplyActionCorrection('请帮我打开浏览器')).toBe(true);
+    expect(shouldApplyActionCorrection('请帮我打开浏览器')).toBe(false);
   });
 
   it('does not apply task nudges or action correction to scheduled reminder wakeups', () => {

@@ -8,13 +8,12 @@ import { isToolImageResult } from './tools/types';
 import { memoryManager, globalMemoryManager, recordMessageActivity } from './memory/index';
 import { stripThinkTags } from './utils/textUtils';
 import { fetchCompletion } from './llmClient';
-import { getManualTopicsForPrompt } from './tools/impl/manual';
+import { getSkillTopicsForPrompt } from './tools/impl/skill';
 import { buildChatPrompt } from './prompts/chat';
 import { buildAgentPrompt } from './prompts/agent';
 import { buildDeveloperPrompt } from './prompts/developer';
 import { buildStreamerPrompt } from './prompts/streamer';
 import { browserSession } from './tools/impl/browserSession';
-import { isSystemWakeupNotification, shouldApplyActionCorrection, shouldApplyTaskIntentNudge } from './aiTurnGuards';
 
 // ── 工具调用调试事件 ─────────────────────────────────────
 /** 单次工具调用的调试记录（推送给渲染层展示） */
@@ -101,27 +100,6 @@ function isLikelyBrowseIntent(userText: string): boolean {
   const t = userText.toLowerCase();
   if (!t) return false;
   return /(打开|进入|访问|去|导航|网页|网站|页面|链接|网址|url|浏览器|搜索|查找|点击|查看|看看|点开|执行)/i.test(t);
-}
-
-/**
- * 检测用户请求是否属于"需要调用工具才能完成"的动作类意图。
- * 范围比 isLikelyBrowseIntent 更广：涵盖终端/截图/系统控制等。
- * 用于第一轮无工具调用时的通用兜底纠偏。
- */
-function isLikelyActionIntent(userText: string): boolean {
-  const t = userText.toLowerCase();
-  if (!t) return false;
-  return /(帮我|我要|请你|帮|打开|进入|访问|导航|搜索|点击|查看|看看|点开|执行|运行|截图|截屏|终端|cmd|powershell|命令|操作|控制|输入|填写|登录|登陆|提交|发布|发送|下载|上传|刷新|切换|关闭|退出|删除|复制|粘贴)/i.test(t);
-}
-
-/**
- * 轻量任务意图检测：用户消息含"请/帮/查/找/看/给/写/改/删/开"等请求性字眼时触发。
- * 用于在第一轮请求前预注入提示，提醒 AI 主动判断是否需要调用工具。
- */
-function isLikelyTaskRequest(userText: string): boolean {
-  // 排除纯聊天性短句（问候、感谢、是否确认等）
-  if (/^(好的|嗯|谢谢|谢|ok|好|是的|对|不了|没事|算了|随便)[\s。！？]*$/i.test(userText.trim())) return false;
-  return /(请|帮|查|找|看|给|写|改|删|开|关|装|跑|执行|运行|搜|列|显示|告诉我|能不能|可以吗|帮我|帮忙|需要你)/i.test(userText);
 }
 
 function isLikelyToolFreeBrowserHallucination(replyText: string): boolean {
@@ -228,27 +206,6 @@ async function _callWithToolLoopInternal(
     // ── 无工具调用 → 返回最终文本 ──
     if (choice.finish_reason !== 'tool_calls' || !choice.message.tool_calls?.length) {
       const finalText = stripThinkTags(choice.message.content?.trim() ?? '');
-      // ── 第一轮无工具调用轻量纠偏 ──────────────────────────────────────
-      // 只处理“用户要求真实操作但模型口头回复”的场景；工具结果、异步通知等不走这里。
-      if (round === 0 && !antiHallucinationNudgeUsed && withTools) {
-        const latestUser = getLatestRealUserText(msgBuf);
-        if (isSystemWakeupNotification(latestUser)) {
-          console.log('[AI Guard] skip action correction: system wakeup notification');
-        }
-        if (shouldApplyActionCorrection(latestUser)) {
-          console.log('[AI Guard] apply action correction: first reply had no tool call');
-          antiHallucinationNudgeUsed = true;
-          msgBuf.push({ role: 'assistant', content: choice.message.content ?? finalText });
-          msgBuf.push({
-            role: 'user',
-            content:
-              '【系统提示】请重新判断上一条用户请求：如果它需要真实操作或读取当前环境，请调用合适工具获取结果后再回复；' +
-              '如果缺少必要信息，请询问用户；如果它其实是普通聊天或工具结果转述，请直接回复用户。' +
-              '不要只用文字声称已经执行了尚未执行的操作。',
-          });
-          continue;
-        }
-      }
       // 防浏览器幻觉：用户要求访问/操作网站，但模型未调用工具却给出“已完成/进行中”口头回复。
       if (!antiHallucinationNudgeUsed && withTools && hasBrowserTools(toolSchemas)) {
         const latestUser = getLatestRealUserText(msgBuf);
@@ -334,7 +291,7 @@ async function _callWithToolLoopInternal(
       return text.startsWith('🔄');
     });
 
-    // run_command 失败：注入专用纠偏，禁止 AI 解释错误原因，强制查说明书
+    // run_command 失败：给出基于错误事实的下一步判断，不强制跳转到知识库。
     const hasCommandFailure = execResults.some(({ tc, result }) => {
       if (tc.function.name !== 'run_command') return false;
       const text = isToolImageResult(result) ? result.text : String(result);
@@ -406,7 +363,7 @@ export async function sendChatMessage(
   const context = getRecentContext(conversationId, aiConfig.contextWindowRounds);
 
   // ── 模式感知的上下文工程 ─────────────────────────────────────
-  // 提示词、记忆、说明书按模式精细化注入，节省 token 但不缺功能
+  // 提示词、记忆、Skills 按模式精细化注入，节省 token 但不缺功能
   const currentAgentMode = getAgentMode();
 
   // 提示词：三档人格（chat=桌宠 / agent=助手 / developer=工程师）
@@ -419,8 +376,8 @@ export async function sendChatMessage(
     }
   })();
 
-  // 说明书目录：chat 无 read_manual 工具，不注入
-  const manualTopics = currentAgentMode === 'chat' ? '' : getManualTopicsForPrompt();
+  // Skills 目录：chat 无 read_skill 工具，不注入
+  const skillTopics = currentAgentMode === 'chat' ? '' : getSkillTopicsForPrompt();
 
   // 记忆：chat 仅注入用户画像，agent/developer 注入完整记忆（含环境配置）
   const memoryAppend = memoryManager.buildMemoryAppend(conversationId) + (
@@ -429,27 +386,12 @@ export async function sendChatMessage(
       : globalMemoryManager.buildGlobalMemoryAppend()
   );
 
-  const systemContent = basePrompt + manualTopics + memoryAppend;
+  const systemContent = basePrompt + skillTopics + memoryAppend;
 
   const messages: ChatMessage[] = [
     ...(systemContent ? [{ role: 'system' as const, content: systemContent }] : []),
     ...context.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
   ];
-
-  // 任务意图预提示：agent/developer 模式下，用户消息含请求性字眼时轻量注入
-  // chat 模式以自然对话为主，不强制工具调用
-  const taskIntentNudge = shouldApplyTaskIntentNudge(userContent);
-  if (isSystemWakeupNotification(userContent)) {
-    console.log('[AI Guard] skip task intent nudge: system wakeup notification');
-  } else if (currentAgentMode !== 'chat' && toolRegistry.isEmpty === false && taskIntentNudge) {
-    console.log('[AI Guard] apply task intent nudge');
-    messages.push({
-      role: 'user',
-      content:
-        '【系统提示】请判断用户这句话的类型：普通聊天可直接回复；需要真实操作、读取环境或调用外部能力时再使用工具；' +
-        '缺少必要信息时先询问用户。不要口头声称已经完成未执行的操作。',
-    });
-  }
 
   // 3. 调用 AI（含工具调用循环）
   let replyContent: string;

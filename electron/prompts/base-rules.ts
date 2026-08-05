@@ -36,7 +36,7 @@ export const TOOL_MAPPING = `
 【工具清单】
 • 浏览器：browser_open | browser_search | browser_click_smart | browser_type_smart | browser_read_page
 • 系统操作：sys_screenshot | sys_mouse | sys_keyboard | open_terminal | run_command
-• 知识库：read_manual(topic) - 遇到不熟悉的操作或工具执行失败时查阅
+• 技能库：read_skill(topic) - 需要特定工作流、用户明确要求按技能执行，或你确实不熟悉某类操作时查阅
 `.trim();
 
 /**

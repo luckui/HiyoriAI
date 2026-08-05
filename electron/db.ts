@@ -493,7 +493,7 @@ export function setGlobalMemoryCursor(conversationId: string, n: number): void {
 // ── 异步任务 CRUD ─────────────────────────────────────────
 
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
-export type TaskType = 'background' | 'delegate' | 'batch' | 'cron' | 'manual';
+export type TaskType = 'background' | 'delegate' | 'batch' | 'cron';
 
 export interface DBTask {
   id: string;

@@ -116,7 +116,7 @@ import { getAgentMode, setAgentMode } from './agentMode';
 import { DEFAULT_SKILLS_CONFIG, getSkillsConfig, saveSkillsConfig } from './skillsConfig';
 import type { BridgeAppConfig, AppConfig } from './config/appConfig';
 import { loadAppConfigFromFile, saveAppConfig } from './config/configStore';
-import { listTopicsForUI, listCollections, importSkillFolder, removeUserCollection } from './tools/impl/manual';
+import { listTopicsForUI, listCollections, importSkillFolder, removeUserCollection } from './tools/impl/skill';
 import * as ttsServerManager from './ttsServerManager';
 import * as sttServerManager from './sttServerManager';
 import { hearingManager } from './hearingManager';

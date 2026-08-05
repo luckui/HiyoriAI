@@ -6,7 +6,7 @@
 
 ## 核心概念
 
-**Skill = 一份结构化的 Markdown 手册**，AI 在需要时按需加载，获得使用某工具或遵循某流程的完整指导。
+**Skill = 一份结构化的 Markdown 技能说明**，AI 在需要时按需加载，获得使用某工具或遵循某流程的完整指导。
 
 Hiyori 的 skill 系统与以下外部 Agent 平台使用相同标准：
 
@@ -48,7 +48,7 @@ requires_cli: command     # 可选，需要预装的 CLI 工具名（用于验�
 # Skill 标题
 
 正文内容（Markdown 格式）。
-这部分只在 AI 调用 read_manual(topic="skill-name") 时才加载（渐进式披露）。
+这部分只在 AI 调用 read_skill(topic="skill-name") 时才加载（渐进式披露）。
 ```
 
 ---
@@ -101,9 +101,8 @@ npx skills add HKUDS/CLI-Anything --skill chromadb -g -y
 ## 兼容性
 
 - **本目录**（skills/）：Agent Skills 标准格式，`SKILL.md` 文件
-- **manual/ 目录**：传统格式，`*.md` 文件，支持可选 YAML frontmatter
 
-两种格式都会被 `read_manual` 工具扫描并展示给 AI。
+`read_skill` 只扫描 Agent Skills 标准格式。
 
 ---
 

@@ -25,10 +25,6 @@
         "to": ".env.defaults"
       },
       {
-        "from": "electron/manual",
-        "to": "electron/manual"
-      },
-      {
         "from": "tools/uv.exe",
         "to": "tools/uv.exe"
       },

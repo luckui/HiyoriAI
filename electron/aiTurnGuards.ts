@@ -22,11 +22,11 @@ export function isLikelyTaskRequestText(userText: string): boolean {
 }
 
 export function shouldApplyActionCorrection(userText: string): boolean {
-  if (isSystemWakeupNotification(userText)) return false;
-  return isLikelyActionIntentText(userText);
+  void userText;
+  return false;
 }
 
 export function shouldApplyTaskIntentNudge(userText: string): boolean {
-  if (isSystemWakeupNotification(userText)) return false;
-  return isLikelyTaskRequestText(userText);
+  void userText;
+  return false;
 }

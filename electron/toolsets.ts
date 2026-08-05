@@ -151,8 +151,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       // 核心能力
       "memory",                  // 全局核心记忆
       "todo",                    // 任务管理
-      "read_manual",             // 读取操作手册
-      "manual_manage",           // 编辑说明书（Agent 权限）
+      "read_skill",              // 读取 Skills
       "run_command",             // ⭐ 执行命令（含 background 后台模式）
       "process",                 // ⭐ 后台进程管理（poll/kill/send，配合 run_command background）
       "show_available_tools",    // 显示可用工具列表
@@ -201,8 +200,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       // 核心能力
       "memory",
       "todo",
-      "read_manual",
-      "manual_manage",
+      "read_skill",
       "run_command",
       "show_available_tools",
       "codex_projects",
@@ -290,8 +288,8 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       // 执行（子任务需要跑 Python 解析文档、处理数据）
       "run_command",             // 通用命令执行（pip install、python script.py 等）
 
-      // 知识库（子任务遇到不会的操作可查手册，如文档读取方法）
-      "read_manual",             // 读取操作说明书
+      // 技能库（子任务遇到不熟悉的操作可查技能，如文档读取方法）
+      "read_skill",              // 读取 Skills
     ],
   },
 
@@ -322,7 +320,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
     tools: [
       "memory",
       "todo",
-      "read_manual",             // 🆕 查阅操作手册（逛B站工作流、浏览器操作规范等）
+      "read_skill",              // 查阅 Skills（逛B站工作流、浏览器操作规范等）
       "show_available_tools",
       "switch_agent_mode",
       "schedule_task",           // 🆕 定时任务调度（每N分钟执行直播任务，如B站推荐解说）

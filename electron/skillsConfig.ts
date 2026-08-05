@@ -21,7 +21,7 @@ import { getSetting, setSetting } from './db';
 
 /**
  * skill 目录注入系统提示词时每个条目的展示详细程度：
- *   'none'  → 不注入该集合 / 技能（但 read_manual 仍可按名称读取全文）
+ *   'none'  → 不注入该集合 / 技能（模型不会在目录中看到它）
  *   'names' → 仅注入技能名称（无描述，最省 token）
  *   'short' → 名称 + 截断到 40 字的描述
  *   'full'  → 名称 + 截断到 100 字的描述（默认行为）
@@ -31,7 +31,7 @@ export type SkillListingMode = 'none' | 'names' | 'short' | 'full';
 export interface SkillsConfig {
   /**
    * 是否在 agent 模式下将 skills 目录注入系统提示词。
-   * false = 完全不注入任何 skill 条目，但 read_manual 工具仍可按名称访问全文。
+   * false = 完全不注入任何 skill 条目。
    */
   enabled: boolean;
 

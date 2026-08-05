@@ -50,13 +50,6 @@ describe('live streaming build boundaries', () => {
     expect(liveTool).toContain("import('../../streaming/streamerController')");
   });
 
-  it('keeps manualGenerator behind dynamic imports in tool code', () => {
-    const manualTool = readProjectFile('electron/tools/impl/manual_manage.ts');
-
-    expect(manualTool).not.toContain("from '../../manual/manualGenerator'");
-    expect(manualTool).toContain("import('../../manual/manualGenerator')");
-  });
-
   it('loads Live2D core from public root instead of bundling it', () => {
     const html = readProjectFile('src/index.html');
 

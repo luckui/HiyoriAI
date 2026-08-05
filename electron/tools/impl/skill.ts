@@ -1,18 +1,9 @@
 /**
- * 工具：read_manual
+ * 工具：read_skill
  *
- * 按需加载用户自定义知识库（说明书 / Skills）。
+ * 按需加载用户自定义 Skills。
  *
- * 支持两种存储格式：
- *
- * 1. 传统格式（electron/manual/）
- *    每个 .md 文件是一个主题，支持可选的 YAML frontmatter：
- *      manual/
- *        命令行操作.md       ← 可包含 ---\nname: ...\ndescription: ...\n--- 头部
- *        Python环境.md
- *        ...
- *
- * 2. Agent Skills 标准格式（electron/skills/）
+ * 支持 Agent Skills 标准格式（electron/skills/）：
  *    遵循 agentskills.io 开放标准，每个 skill 在独立文件夹中：
  *      skills/
  *        skill-name/
@@ -22,12 +13,12 @@
  *            SKILL.md        ← 支持嵌套分类
  *
  * 调用方式：
- *   read_manual()           → 返回所有可用主题目录（含 skills）
- *   read_manual("主题名")   → 返回该主题的完整内容（自动剥离 frontmatter）
+ *   read_skill()           → 返回所有可用技能目录
+ *   read_skill("主题名")   → 返回该主题的完整内容（自动剥离 frontmatter）
  *
  * 设计原则（渐进式披露）：
  *   - 系统提示中只注入 name + description，不占大量 token
- *   - AI 需要完整指导时主动调用 read_manual(topic=...) 加载全文
+ *   - AI 需要完整指导时主动调用 read_skill(topic=...) 加载全文
  *   - 与 Hermes Agent / VS Code Copilot 的 Agent Skills 标准兼容
  */
 
@@ -40,10 +31,6 @@ import { getSkillsConfig, type SkillListingMode } from '../../skillsConfig';
 /**
  * 目录路径（兼容开发模式和打包后）
  */
-const MANUAL_DIR = app.isPackaged
-  ? path.join(process.resourcesPath, 'electron', 'manual')
-  : path.join(app.getAppPath(), 'electron', 'manual');
-
 const SKILLS_DIR = app.isPackaged
   ? path.join(app.getPath('userData'), 'skills')
   : path.join(app.getAppPath(), 'electron', 'skills');
@@ -87,49 +74,17 @@ function stripFrontmatter(content: string): string {
 
 // ─── 主题枚举 ─────────────────────────────────────────────────────────────────
 
-/** 内部主题条目，filePath 可指向 .md 或 SKILL.md */
+/** 内部主题条目，filePath 指向 SKILL.md */
 type TopicEntry = { name: string; summary: string; category: string; filePath: string };
 
 /**
- * 枚举所有可用主题：
- *   1. electron/manual/ 下的 **\/*.md 文件（支持可选 frontmatter）
- *   2. electron/skills/ 下的 *\/*\/SKILL.md 文件（Agent Skills 标准格式）
+ * 枚举所有可用技能：
+ *   electron/skills/ 下的 *\/*\/SKILL.md 文件（Agent Skills 标准格式）
  */
 function listTopics(): TopicEntry[] {
   const results: TopicEntry[] = [];
 
-  // ── 1. 传统 manual/ 目录 ──────────────────────────────────────────
-  if (fs.existsSync(MANUAL_DIR)) {
-    function scanManualDir(dir: string, category: string) {
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        const fullPath = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          scanManualDir(fullPath, entry.name);
-        } else if (entry.name.endsWith('.md') && entry.name !== 'SKILL.md') {
-          try {
-            const content = fs.readFileSync(fullPath, 'utf-8');
-            const fm = parseFrontmatter(content);
-            // frontmatter 中的 name/description 优先，否则回退到文件名/首行
-            const topicName = fm.name || entry.name.replace(/\.md$/, '');
-            let summary = fm.description || '';
-            if (!summary) {
-              const body = stripFrontmatter(content);
-              summary = body
-                .split('\n')
-                .map(l => l.replace(/^#+\s*/, '').trim())
-                .find(l => l.length > 0)
-                ?.slice(0, 80) ?? '';
-            }
-            results.push({ name: topicName, summary, category, filePath: fullPath });
-          } catch { /* ignore */ }
-        }
-      }
-    }
-    scanManualDir(MANUAL_DIR, '');
-  }
-
-  // ── 2. Agent Skills 标准格式：skills/[category/]skill-name/SKILL.md ──
+  // ── Agent Skills 标准格式：skills/[category/]skill-name/SKILL.md ──
   function scanSkillsDir(dir: string, category: string) {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {
@@ -229,19 +184,19 @@ function formatTopicLine(t: TopicEntry, mode: SkillListingMode): string | null {
 }
 
 /**
- * 返回当前可用说明书 / Skills 主题列表，格式化为适合注入 system prompt 的字符串。
+ * 返回当前可用 Skills 主题列表，格式化为适合注入 system prompt 的字符串。
  * 每次对话初始化时调用，让 AI 在第一个 token 起就知道有哪些知识可查。
  *
  * 行为受 SkillsConfig 控制（见 electron/skillsConfig.ts）：
- *   - enabled=false         → 跳过全部 skill 条目，仅保留 manual/ 条目
+ *   - enabled=false         → 跳过全部 skill 条目
  *   - disabledCollections   → 跳过指定集合（如 "scientific"）
  *   - disabledSkills        → 跳过指定单个技能
  *   - listingMode           → 全局展示详细程度（none/names/short/full）
  *   - collectionModes       → 每个集合的展示模式覆盖
  *
- * 遵循渐进式披露：此处只注入 name + description，全文内容由 AI 按需调用 read_manual 加载。
+ * 遵循渐进式披露：此处只注入 name + description，全文内容由 AI 按需调用 read_skill 加载。
  */
-export function getManualTopicsForPrompt(): string {
+export function getSkillTopicsForPrompt(): string {
   const skillsCfg = getSkillsConfig();
   const topics = listTopics();
   if (topics.length === 0) return '';
@@ -258,18 +213,6 @@ export function getManualTopicsForPrompt(): string {
   let shownCount = 0;
 
   for (const [cat, items] of grouped) {
-    const isSkillCategory = items.some(t => t.filePath.startsWith(SKILLS_DIR));
-
-    // ── Manual/ 条目：始终保留，不受 skills 配置影响 ──
-    if (!isSkillCategory) {
-      if (cat && cat !== '通用') lines.push(`  [${cat}]`);
-      for (const t of items) {
-        lines.push(t.summary ? `    • ${t.name}（${t.summary}）` : `    • ${t.name}`);
-        shownCount++;
-      }
-      continue;
-    }
-
     // ── Skills 条目：受配置过滤 ──
     if (!skillsCfg.enabled) continue;
 
@@ -306,9 +249,9 @@ export function getManualTopicsForPrompt(): string {
   if (shownCount === 0) return '';
 
   return (
-    '\n\n【可用说明书 / Skills 目录】（共 ' + shownCount + ' 项）\n' +
+    '\n\n【可用 Skills 目录】（共 ' + shownCount + ' 项）\n' +
     lines.join('\n') + '\n' +
-    '调用 read_manual(topic="主题名") 查阅完整内容，topic 支持模糊匹配和跨目录搜索。'
+    '调用 read_skill(topic="主题名") 查阅完整内容，topic 支持模糊匹配和跨目录搜索。'
   );
 }
 
@@ -445,7 +388,7 @@ export function removeUserCollection(collId: string): { success: boolean; messag
 
 /**
  * 返回所有可用 skill 的扁平列表，供 UI 展示和编辑 SkillsConfig 使用。
- * 不含 manual/ 条目，只返回 skills/ 目录下的技能。
+ * 只返回 skills/ 目录下的技能。
  *
  * 返回字段：
  *   - name:       技能名（frontmatter 中的 name 字段）
@@ -542,28 +485,24 @@ export function importSkillFolder(srcPath: string): ImportResult {
   };
 }
 
-interface ReadManualParams {
+interface ReadSkillParams {
   topic?: string;
 }
 
-const readManualTool: ToolDefinition<ReadManualParams> = {
+const readSkillTool: ToolDefinition<ReadSkillParams> = {
   schema: {
     type: 'function',
     function: {
-      name: 'read_manual',
+      name: 'read_skill',
       description:
-        '查阅本地知识库（说明书 / Skills），获取特定操作的规范步骤、命令写法或工作流程。\n' +
+        '查阅本地 Skills，获取特定操作的规范步骤、命令写法或工作流程。\n' +
         '【何时调用】\n' +
-        '  • 不确定某个命令/操作的正确写法时（如 Windows 磁盘查询、conda 操作等）\n' +
-        '  • run_command 或其他工具执行失败，需要查阅正确用法时\n' +
-        '  • 调试超过 3 次仍未解决时，查阅"系统化调试工作流"方法论\n' +
-        '  • 实现新功能或修复 bug 前，查阅"测试驱动开发"了解 TDD 流程\n' +
-        '  • 复杂任务需要分解时，查阅"任务规划工作流"指导\n' +
-        '  • 用户提到"按说明书操作"、"翻一下手册"、"查一下 skill"时\n' +
-        '【何时创建新说明书】\n' +
-        '  复杂任务成功完成后（5+ 工具调用、多次迭代、克服错误），主动询问用户是否将工作流程保存为新说明书。\n' +
-        '  使用 manual_manage 工具创建。保存前必须征得用户同意。\n' +
-        '  跳过简单的一次性任务。优先考虑可复用的流程、用户纠正过的方法、非平凡的工作流。\n' +
+        '  • 用户明确要求按某个 skill/技能流程执行时\n' +
+        '  • 需要特定平台、工作流或项目约定的详细步骤时\n' +
+        '  • 不熟悉某类操作、连续尝试仍失败，或工具结果建议读取技能时\n' +
+        '【不要滥用】\n' +
+        '  普通聊天、简单问答、信息已经充足的工具结果，不需要读取技能。\n' +
+        '  不要把读取技能当作每个任务的固定前置步骤。\n' +
         '【用法】\n' +
         '  不传 topic → 列出所有可用主题（先看目录，再决定读哪一篇）\n' +
         '  传 topic   → 返回该主题的完整内容（自动剥离 YAML frontmatter）\n' +
@@ -588,10 +527,9 @@ const readManualTool: ToolDefinition<ReadManualParams> = {
       const topics = listTopics();
       if (topics.length === 0) {
         return (
-          '📖 知识库目录为空。\n' +
-          `说明书路径：${MANUAL_DIR}\n` +
+          '📖 Skills 目录为空。\n' +
           `Skills 路径：${SKILLS_DIR}\n` +
-          '可在 manual/ 下创建 .md 文件，或在 skills/ 下创建 skill-name/SKILL.md 文件。'
+          '可在 skills/ 下创建 skill-name/SKILL.md 文件。'
         );
       }
 
@@ -612,8 +550,8 @@ const readManualTool: ToolDefinition<ReadManualParams> = {
       }
 
       return (
-        `📖 可用知识库主题（共 ${topics.length} 项）：\n${lines.join('\n')}\n\n` +
-        '调用 read_manual(topic="主题名") 查阅具体内容。'
+        `📖 可用 Skills 主题（共 ${topics.length} 项）：\n${lines.join('\n')}\n\n` +
+        '调用 read_skill(topic="主题名") 查阅具体内容。'
       );
     }
 
@@ -622,7 +560,7 @@ const readManualTool: ToolDefinition<ReadManualParams> = {
     if (!filePath) {
       const topics = listTopics();
       if (topics.length === 0) {
-        return `❌ 未找到主题"${topic}"，且知识库当前为空（manual: ${MANUAL_DIR}，skills: ${SKILLS_DIR}）。`;
+        return `❌ 未找到主题"${topic}"，且 Skills 目录当前为空（skills: ${SKILLS_DIR}）。`;
       }
       const topicLines = topics.map(t =>
         t.summary ? `  • ${t.name}  —  ${t.summary}` : `  • ${t.name}`
@@ -630,7 +568,7 @@ const readManualTool: ToolDefinition<ReadManualParams> = {
       return (
         `❌ 未找到与"${topic}"匹配的主题。\n\n` +
         `📖 当前可用主题（共 ${topics.length} 项）：\n${topicLines}\n\n` +
-        '请根据以上目录选择最相关的主题，重新调用 read_manual(topic="主题名") 查阅。'
+        '请根据以上目录选择最相关的主题，重新调用 read_skill(topic="主题名") 查阅。'
       );
     }
 
@@ -638,7 +576,7 @@ const readManualTool: ToolDefinition<ReadManualParams> = {
       const raw = fs.readFileSync(filePath, 'utf-8').trim();
       if (!raw) {
         const topicName = path.basename(filePath, '.md');
-        return `⚠️ 说明书"${topicName}"内容为空。`;
+        return `⚠️ Skill "${topicName}" 内容为空。`;
       }
 
       // 从 frontmatter 提取显示名称（SKILL.md 用父目录名兜底，.md 用文件名兜底）
@@ -657,9 +595,9 @@ const readManualTool: ToolDefinition<ReadManualParams> = {
         : body;
       return `📖 【${topicName}】\n\n${truncated}`;
     } catch (e) {
-      return `❌ 读取说明书失败：${(e as Error).message}`;
+      return `❌ 读取 Skill 失败：${(e as Error).message}`;
     }
   },
 };
 
-export default readManualTool;
+export default readSkillTool;

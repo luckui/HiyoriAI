@@ -40,19 +40,13 @@ const AGENT_CORE_RULES = `
   ⚠️ 没有 todo 的多步操作 = 容易迷路。宁可多建也不要不建。
 `.trim();
 
-// ── 说明书引导（仅在需要调工具时触发） ─────────────────────────
-
-const MANUAL_GUIDANCE = `
-【说明书】
-你有一个本地知识库，记录了经过验证的工作流程、操作规范和踩坑记录。
-⚠️ 关键原则：系统提示中的目录只是索引（名称 + 摘要），不等于内容。
-  即使摘要看起来你已经知道怎么做，说明书全文里可能有强制步骤或特殊要求——
-  这些信息只有 read_manual 加载后才可见，不读全文就是漏掉它们。
-
-■ 准备调用工具执行实质性任务时：
-  扫描目录 → 找到相关条目 → read_manual(topic) 加载全文 → 按内容执行
-■ 无需触发：纯聊天、简单问答（不涉及工具调用）
-■ 说明书有错？用 manual_manage(action="patch") 当场修正
+const SKILL_GUIDANCE = `
+【技能库】
+你可以用 read_skill(topic) 按需读取本地技能说明。技能用于提供某类工作流、平台操作或项目约定。
+• 需要特定工作流或用户明确要求按技能执行时，先读取相关技能再行动。
+• 不熟悉某类操作、连续尝试仍失败，或工具结果建议读取技能时，可以读取相关技能。
+• 普通聊天、简单问答、信息已经充足的工具结果，不需要读取技能。
+• 不要把读取技能当作每个任务的固定前置步骤。
 `.trim();
 
 const CODING_AGENT_GUIDANCE = `
@@ -101,7 +95,7 @@ export function buildAgentPrompt(): string {
     '',
     AGENT_CORE_RULES,
     '',
-    MANUAL_GUIDANCE,
+    SKILL_GUIDANCE,
     '',
     TOOL_RESULT_GUIDANCE,
     '',

@@ -25,7 +25,7 @@
  * 排除说明：
  *   memory              → 可读取主播历史对话，隐私泄露风险
  *   todo                → 可污染任务列表，影响主播工作流
- *   read_manual         → 泄露内部操作文档结构
+ *   read_skill          → 泄露内部技能文档结构
  *   show_available_tools → 泄露系统工具列表
  *   switch_agent_mode   → 可切换到更高权限模式
  *   manage_tts          → 可静音或改变主播 TTS 设置

@@ -24,7 +24,7 @@ const chatTools = resolveToolset('chat');
 const requiredChatTools = [
   'memory',
   'todo',
-  'read_manual',
+  'read_skill',
   'run_command',
   'request_agent_mode',
   'browser_open',

@@ -21,8 +21,7 @@ import { ocrTools } from './impl/ocr';
 import runCommandTool from './impl/runCommand';
 import discordSendTool from './impl/discordSend';
 import wechatSendTool from './impl/wechatSend';  // 🆕 微信发送工具
-import readManualTool from './impl/manual';
-import manualManageTool from './impl/manual_manage';
+import readSkillTool from './impl/skill';
 import memoryTool from './impl/memory';
 import todoTool from './impl/todo';
 import requestAgentMode from './impl/requestAgentMode';  // 🆕 请求 Agent 模式
@@ -74,8 +73,7 @@ const registry = new ToolRegistry()
   .register(runCommandTool)
   .register(discordSendTool)
   .register(wechatSendTool)      // 🆕 注册微信发送工具
-  .register(readManualTool)
-  .register(manualManageTool)  // 说明书管理工具（AI 自我进化：创建/编辑工作流）
+  .register(readSkillTool)
   .register(memoryTool)        // 全局核心记忆工具（AI 主动管理用户画像）
   .register(todoTool)          // 任务管理工具（会话级任务追踪）
   .register(requestAgentMode)  // 🆕 请求 Agent 模式工具（Chat→Agent 渐进式升级）

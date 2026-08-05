@@ -146,11 +146,7 @@ class TaskManager extends EventEmitter {
     try {
       // 按任务类型分发到不同执行器（动态导入避免循环依赖）
       let result: string;
-      if (task.type === 'manual') {
-        // 说明书生成：单次 LLM 调用 + 文件写入
-        const { executeManualTask } = await import('./manual/manualGenerator');
-        result = await executeManualTask(task);
-      } else if (task.type === 'batch') {
+      if (task.type === 'batch') {
         // 批量任务：拆分 → 并行子任务 → 聚合结果
         const { runBatch } = await import('./batchRunner');
         result = await runBatch(task, abort.signal, (progress, text) => {

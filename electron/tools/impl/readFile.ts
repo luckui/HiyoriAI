@@ -193,7 +193,7 @@ async function execute(params: ReadFileParams): Promise<string | ToolImageResult
           '',
           '   ⚠️ 脚本必须 print()！run_command 直接返回输出，无需写临时文件再读取。',
           '   ⚠️ 首次需安装依赖：run_command({ command: "pip install python-docx pymupdf openpyxl python-pptx" })',
-          '   📖 更多格式详见 read_manual("文档读取")',
+          '   📖 更多格式可通过 read_skill("文档读取") 查阅（如存在对应技能）',
         ].join('\n');
       } else {
         hint = `❌ 无法读取二进制文件: ${file_path} (${ext})`;

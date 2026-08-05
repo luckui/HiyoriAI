@@ -30,7 +30,7 @@ const requestAgentMode: ToolDefinition<RequestAgentModeParams> = {
         '  • 需要自动点击/输入网页元素（需要browser_click_smart/type_smart）\n' +
         '  • 需要操作键盘鼠标（需要sys_key_press/mouse_click）\n' +
         '  • 需要打开终端（需要open_terminal Skill）\n' +
-        '  • 需要编辑文档（需要manual_manage）\n' +
+        '  • 需要复杂文件或文档编辑（需要完整 Agent 工具集）\n' +
         '【不要滥用】\n' +
         '  • 能用run_command解决的不要请求Agent（Chat模式已有run_command）\n' +
         '  • 能用browser_open打开网页的不要请求（Chat已有browser_open）',
