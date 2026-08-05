@@ -70,7 +70,10 @@ export function createMineflayerAdapter(
 
   return {
     async connect(options) {
-      if (bot) return;
+      if (bot) {
+        owner = options.owner ?? owner;
+        return;
+      }
       owner = options.owner;
       connection = options;
       bot = dependencies.createBot({

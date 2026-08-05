@@ -94,4 +94,27 @@ describe('createMineflayerAdapter', () => {
     ]);
     expect(collected).toBe(1);
   });
+
+  it('updates the owner binding without reconnecting', async () => {
+    const bot = createFakeBot();
+    const createBot = vi.fn(() => bot);
+    const adapter = createMineflayerAdapter(vi.fn(), {
+      createBot,
+      plugins: [vi.fn(), vi.fn(), vi.fn(), vi.fn()],
+      createFollowGoal: vi.fn(),
+    });
+    const connected = adapter.connect({ host: '127.0.0.1', port: 1, username: 'Hiyori' });
+    bot.emit('spawn');
+    await connected;
+
+    await adapter.connect({
+      host: '127.0.0.1',
+      port: 1,
+      username: 'Hiyori',
+      owner: 'GeoLingua',
+    });
+
+    expect(createBot).toHaveBeenCalledTimes(1);
+    expect(adapter.status().owner).toBe('GeoLingua');
+  });
 });

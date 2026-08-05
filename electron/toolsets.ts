@@ -139,6 +139,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "manage_tts",              // 🆕 管理本地 TTS 语音合成服务
       "manage_hearing",          // 🆕 管理听觉系统（STT 语音识别）
       "manage_live2d",           // 🆕 控制 Live2D 角色情绪与动作
+      "minecraft_companion",
 
       // 基础工具
       "take_screenshot",         // 截图（屏幕）
@@ -158,6 +159,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "switch_agent_mode",       // 🆕 切换 Agent 模式
       "codex_projects",
       "coding_agent",
+      "minecraft_companion",
       
       // 浏览器 - 完整工具集
       "browser_open",            // 打开网页（Skill）
@@ -205,6 +207,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "show_available_tools",
       "codex_projects",
       "coding_agent",
+      "minecraft_companion",
       
       // 🆕 打工人核心工具（文件操作）
       "read_file",               // 读取文件（支持行范围）

@@ -29,6 +29,7 @@ import showAvailableTools from './impl/showAvailableTools';  // 🆕 显示可�
 import switchAgentMode from './impl/switchAgentMode';  // 🆕 切换 Agent 模式
 import codingAgentTool from './impl/codingAgent';
 import codexProjectsTool from './impl/codexProjects';
+import minecraftCompanionTool from './impl/minecraftCompanion';
 
 // 🆕 打工人核心工具（文件操作）
 import readFileTool from './impl/readFile';
@@ -81,6 +82,7 @@ const registry = new ToolRegistry()
   .register(switchAgentMode)   // 🆕 切换 Agent 模式（AI 主动切换）
   .register(codexProjectsTool)  // Discover local Codex projects and tasks
   .register(codingAgentTool)    // User-facing bridge to Codex and coding agents
+  .register(minecraftCompanionTool)
   
   // 🆕 注册打工人核心工具（文件操作）
   .register(readFileTool)
