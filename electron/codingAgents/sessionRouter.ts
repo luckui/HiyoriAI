@@ -455,7 +455,21 @@ export class CodingAgentSessionRouter {
         '请基于以上结果回复用户。',
       ].filter((line): line is string => line !== undefined).join('\n');
     }
-    if (event.type === 'failed') return null;
+    if (event.type === 'failed') {
+      return [
+        '【异步结果通知】',
+        `来源：${displayName} 编程代理`,
+        '状态：失败',
+        '下一步：回复用户',
+        session?.title ? `任务：${session.title}` : undefined,
+        '',
+        '错误：',
+        '',
+        event.content,
+        '',
+        '请把失败原因转述给用户；如果错误提示需要用户更新软件、调整模型或修改配置，请明确说明。',
+      ].filter((line): line is string => line !== undefined).join('\n');
+    }
     if (event.type === 'interrupted') return `${displayName} 已中断。`;
     if (event.type === 'stopped') return `${displayName} 已停止。`;
     return null;

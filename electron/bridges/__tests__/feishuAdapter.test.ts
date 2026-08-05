@@ -247,6 +247,42 @@ describe('FeishuAdapter', () => {
     }]);
   });
 
+  it('uploads a local file and sends a Feishu file message with the file key', async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const { FeishuAdapter } = await import('../adapters/feishu');
+    const dir = mkdtempSync(join(tmpdir(), 'hiyori-feishu-file-test-'));
+    const filePath = join(dir, 'report.txt');
+    writeFileSync(filePath, 'report body');
+    const adapter = new FeishuAdapter({
+      enabled: true,
+      appId: 'cli_xxx',
+      appSecret: 'secret',
+      allowedChatIds: [],
+      conversationId: 'conv-bound',
+      voiceRepliesEnabled: false,
+    });
+
+    try {
+      await adapter.sendFile('oc_chat', filePath);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+
+    expect(state.uploadedFiles).toHaveLength(1);
+    expect(state.uploadedFiles[0]).toMatchObject({
+      fileType: 'stream',
+      fileName: 'report.txt',
+    });
+    expect(state.uploadedFiles[0].file.toString('utf-8')).toBe('report body');
+    expect(state.sentMessages).toEqual([{
+      receiveId: 'oc_chat',
+      content: JSON.stringify({ file_key: 'file_key_audio' }),
+      msgType: 'file',
+    }]);
+  });
+
   it('uses the shared voice reply pipeline for outbound replies', async () => {
     const { FeishuAdapter } = await import('../adapters/feishu');
     const adapter = new FeishuAdapter({

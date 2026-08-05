@@ -23,10 +23,12 @@ describe('coding agent tool registration', () => {
   it('keeps platform text delivery out of LLM-facing platform toolsets', () => {
     const discordTools = resolveToolset('discord');
     const wechatTools = resolveToolset('wechat');
+    const feishuTools = resolveToolset('feishu');
 
     expect(discordTools).toEqual(['discord_send_file']);
     expect(discordTools).not.toContain('discord_send');
     expect(wechatTools).toEqual(['wechat_send_file']);
     expect(wechatTools).not.toContain('wechat_send');
+    expect(feishuTools).toEqual(['feishu_send_file']);
   });
 });

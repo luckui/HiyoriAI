@@ -12,6 +12,7 @@
 import { LAppDelegate } from './lappdelegate';
 import type { LAppModel } from './lappmodel';
 import { showTypewriterBubble } from './chat';
+import { normalizeSpokenText, splitSpokenText } from '../shared/spokenText';
 
 // ── 获取当前 Live2D 模型实例 ───────────────────────────────────────
 
@@ -274,7 +275,7 @@ export async function playTTS(text: string, onDuration?: (ms: number, sentenceTe
   const enabled = await ttsAPI.isEnabled();
   if (!enabled) return;
 
-  const cleaned = cleanForTTS(text);
+  const cleaned = normalizeSpokenText(text, { language: 'auto' });
   if (!cleaned) {
     console.warn('[TTS] 跳过：清洗后文本为空');
     return;
@@ -297,7 +298,7 @@ export async function playTTS(text: string, onDuration?: (ms: number, sentenceTe
   _beatLastRms = 0;
   _beatLastTriggerMs = 0;
 
-  const sentences = splitSentences(cleaned);
+  const sentences = splitSpokenText(cleaned, { maxSegments: MAX_SEGMENTS });
   console.log(`[TTS] 切分为 ${sentences.length} 句:`, sentences);
 
   getLiveModel()?.setSpeaking(true);

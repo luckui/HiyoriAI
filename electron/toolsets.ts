@@ -113,6 +113,13 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
     ],
   },
 
+  "feishu": {
+    description: "Lark / Feishu 平台专属工具（当消息来自飞书时自动注入）",
+    tools: [
+      "feishu_send_file",        // Feishu 附件/截图发送
+    ],
+  },
+
   // ═════════════════════════════════════════════════════════════
   // 三级模式：Chat / Agent / Agent-Debug（扁平化，易读）
   // ═════════════════════════════════════════════════════════════

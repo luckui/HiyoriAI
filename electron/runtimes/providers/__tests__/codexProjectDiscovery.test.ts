@@ -1,6 +1,3 @@
-import { mkdtemp, mkdir, writeFile } from 'fs/promises';
-import { join } from 'path';
-import { tmpdir } from 'os';
 import { describe, expect, it } from 'vitest';
 import {
   listCodexProjectIndex,
@@ -9,44 +6,47 @@ import {
   resolveCodexProject,
 } from '../codexProjectDiscovery';
 
-async function writeSession(
-  root: string,
+function createListThreads(threads: any[]) {
+  return async ({ limit = 100, cursor }: any) => {
+    const start = cursor ? Number(cursor) : 0;
+    const data = threads.slice(start, start + limit);
+    const next = start + data.length < threads.length ? String(start + data.length) : null;
+    return { data, nextCursor: next };
+  };
+}
+
+function thread(
   id: string,
   cwd: string,
-  updatedAt: Date,
-  firstPrompt: string,
-  originator = 'Codex Desktop',
-  source = 'vscode'
-): Promise<void> {
-  const dir = join(root, '2026', '07', '17');
-  await mkdir(dir, { recursive: true });
-  const file = join(dir, `rollout-${id}.jsonl`);
-  const lines = [
-    JSON.stringify({
-      type: 'session_meta',
-      payload: { id, cwd, timestamp: updatedAt.toISOString(), originator, source },
-    }),
-    JSON.stringify({
-      type: 'response_item',
-      payload: {
-        type: 'message',
-        role: 'user',
-        content: [{ type: 'input_text', text: firstPrompt }],
-      },
-    }),
-  ];
-  await writeFile(file, lines.join('\n'), 'utf8');
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  updatedAt: number,
+  name: string,
+  source = 'vscode',
+  threadSource: string | null = null
+) {
+  return {
+    id,
+    cwd,
+    name,
+    preview: `${name} preview`,
+    source,
+    threadSource,
+    modelProvider: 'openai',
+    createdAt: updatedAt - 60,
+    updatedAt,
+    recencyAt: updatedAt,
+    path: `C:/Users/PC/.codex/sessions/${id}.jsonl`,
+  };
 }
 
 describe('codex project discovery', () => {
-  it('groups Codex sessions by cwd as projects and exposes tasks', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'codex-projects-'));
-    await writeSession(root, 'thread-old', 'D:/repo/live2d-pet', new Date('2026-07-16T10:00:00Z'), '修设置页面');
-    await writeSession(root, 'thread-new', 'D:/repo/live2d-pet', new Date('2026-07-17T10:00:00Z'), '整理提示词系统');
-    await writeSession(root, 'thread-other', 'D:/repo/other', new Date('2026-07-17T09:00:00Z'), '检查构建');
+  it('groups app-server Codex threads by cwd as projects and exposes named tasks', async () => {
+    const listThreads = createListThreads([
+      thread('thread-old', 'D:/repo/live2d-pet', 1780000000, '修设置页面'),
+      thread('thread-new', 'D:/repo/live2d-pet', 1780000100, '整理提示词系统'),
+      thread('thread-other', 'D:/repo/other', 1780000050, '检查构建'),
+    ]);
 
-    const projects = await listCodexProjects({ sessionsRoot: root });
+    const projects = await listCodexProjects({ listThreads });
 
     expect(projects).toHaveLength(2);
     expect(projects[0]).toMatchObject({
@@ -54,31 +54,39 @@ describe('codex project discovery', () => {
       cwd: 'D:/repo/live2d-pet',
       taskCount: 2,
       latestTaskId: 'thread-new',
+      latestTaskTitle: '整理提示词系统',
     });
 
-    const tasks = await listCodexProjectTasks({ sessionsRoot: root, project: 'live2d' });
+    const tasks = await listCodexProjectTasks({ listThreads, project: 'live2d' });
     expect(tasks.map((task) => task.id)).toEqual(['thread-new', 'thread-old']);
     expect(tasks[0].title).toBe('整理提示词系统');
   });
 
-  it('resolves a project by path basename or fuzzy alias', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'codex-resolve-'));
-    await writeSession(root, 'thread-one', 'D:/Other/Live2dWeb/live2d-pet', new Date('2026-07-17T10:00:00Z'), 'hello');
+  it('uses user-facing thread names for Codex Desktop temporary workspaces', async () => {
+    const listThreads = createListThreads([
+      thread('thread-xi', 'C:/Users/PC/Documents/Codex/2026-07-14/xi', 1780000100, '基金行情分析'),
+      thread('thread-b', 'C:/Users/PC/Documents/Codex/2026-07-31/b', 1780000200, 'B站视频数据监控'),
+    ]);
 
-    const resolved = await resolveCodexProject({ sessionsRoot: root, query: 'live2d' });
+    const projects = await listCodexProjects({ listThreads });
 
-    expect(resolved.status).toBe('matched');
-    expect(resolved.project?.cwd).toBe('D:/Other/Live2dWeb/live2d-pet');
+    expect(projects.map((project) => project.name)).toEqual([
+      '临时任务：B站视频数据监控',
+      '临时任务：基金行情分析',
+    ]);
+    expect(projects.map((project) => project.name).join('\n')).not.toContain('xi');
+    expect(projects.map((project) => project.name).join('\n')).not.toContain('/b');
   });
 
   it('reports total project count and source counts separately from the display limit', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'codex-project-index-'));
-    await writeSession(root, 'thread-desktop', 'D:/repo/live2d-pet', new Date('2026-07-17T10:00:00Z'), 'desktop task', 'Codex Desktop', 'vscode');
-    await writeSession(root, 'thread-hiyori', 'D:/repo/live2d-pet', new Date('2026-07-17T11:00:00Z'), 'hiyori task', 'Hiyori', 'exec');
-    await writeSession(root, 'thread-vscode', 'D:/repo/other', new Date('2026-07-17T09:00:00Z'), 'other task', 'codex_vscode', 'vscode');
-    await writeSession(root, 'thread-old', 'D:/repo/old-project', new Date('2026-07-16T09:00:00Z'), 'old task', 'Codex Desktop', 'vscode');
+    const listThreads = createListThreads([
+      thread('thread-desktop', 'D:/repo/live2d-pet', 1780000100, 'desktop task', 'vscode'),
+      thread('thread-hiyori', 'D:/repo/live2d-pet', 1780000200, 'hiyori task', 'appServer', 'hiyori'),
+      thread('thread-other', 'D:/repo/other', 1780000050, 'other task', 'vscode'),
+      thread('thread-old', 'D:/repo/old-project', 1779990000, 'old task', 'cli'),
+    ]);
 
-    const index = await listCodexProjectIndex({ sessionsRoot: root, limit: 2 });
+    const index = await listCodexProjectIndex({ listThreads, limit: 2 });
 
     expect(index.totalCount).toBe(3);
     expect(index.shownCount).toBe(2);
@@ -93,12 +101,13 @@ describe('codex project discovery', () => {
     });
   });
 
-  it('resolves projects using all sessions even when candidate output is limited', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'codex-resolve-limit-'));
-    await writeSession(root, 'thread-new', 'D:/repo/new-project', new Date('2026-07-17T10:00:00Z'), 'new');
-    await writeSession(root, 'thread-old', 'D:/repo/GF-POST-STA-MINE', new Date('2026-06-03T10:00:00Z'), 'old');
+  it('resolves projects using all app-server threads even when candidate output is limited', async () => {
+    const listThreads = createListThreads([
+      thread('thread-new', 'D:/repo/new-project', 1780000100, 'new'),
+      thread('thread-old', 'D:/repo/GF-POST-STA-MINE', 1770000000, 'old'),
+    ]);
 
-    const resolved = await resolveCodexProject({ sessionsRoot: root, query: 'GF-POST-STA-MINE', limit: 1 });
+    const resolved = await resolveCodexProject({ listThreads, query: 'GF-POST-STA-MINE', limit: 1 });
 
     expect(resolved.status).toBe('matched');
     expect(resolved.project?.cwd).toBe('D:/repo/GF-POST-STA-MINE');

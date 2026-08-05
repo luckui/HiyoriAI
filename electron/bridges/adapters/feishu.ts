@@ -1,4 +1,6 @@
 import * as lark from '@larksuiteoapi/node-sdk';
+import { readFile } from 'node:fs/promises';
+import { basename } from 'node:path';
 import type { FeishuBridgeConfig } from '../bridge.config';
 import { sendChatMessage } from '../../aiService';
 import { listConversations } from '../../db';
@@ -154,6 +156,32 @@ export class FeishuAdapter {
         receive_id: chatId,
         content: JSON.stringify({ file_key: fileKey }),
         msg_type: 'audio',
+      },
+    });
+  }
+
+  async sendFile(chatId: string, filePath: string): Promise<void> {
+    const fileName = basename(filePath);
+    const uploaded = await this.client.im.v1.file.create({
+      data: {
+        file_type: 'stream',
+        file_name: fileName,
+        file: await readFile(filePath),
+      },
+    } as any);
+    const fileKey = (uploaded as any)?.file_key ?? (uploaded as any)?.data?.file_key;
+    if (!fileKey) {
+      throw new Error('Feishu file upload did not return file_key');
+    }
+
+    await this.client.im.v1.message.create({
+      params: {
+        receive_id_type: 'chat_id',
+      },
+      data: {
+        receive_id: chatId,
+        content: JSON.stringify({ file_key: fileKey }),
+        msg_type: 'file',
       },
     });
   }

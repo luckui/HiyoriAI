@@ -151,17 +151,20 @@ function isLikelyCannotParseExcuse(replyText: string): boolean {
  * 介绍：Discord/WeChat Adapter 会在转发消息时注入平台标签：
  *   - Discord：`[来源：Discord | 频道：xxx | 用户：xxx]`
  *   - WeChat：`[来源：WeChat | 用户：xxx]`
+ *   - Lark / Feishu：`[来源：Lark / Feishu | 聊天：xxx | 用户：xxx]`
  *
  * 当检测到平台标签时，会自动注入对应平台的附件工具。
  * 普通文字回复由通知路由自动投递，不作为 LLM 工具暴露。
  *   - Discord → `discord_send_file`
  *   - WeChat → `wechat_send_file`
+ *   - Lark / Feishu → `feishu_send_file`
  *
- * @returns 平台名（'discord' | 'wechat'）或 null
+ * @returns 平台名（'discord' | 'wechat' | 'feishu'）或 null
  */
-function detectPlatform(userContent: string): string | null {
+export function detectPlatform(userContent: string): string | null {
   if (userContent.includes('[来源：Discord')) return 'discord';
   if (userContent.includes('[来源：WeChat')) return 'wechat';
+  if (userContent.includes('[来源：Lark / Feishu')) return 'feishu';
   return null;
 }
 

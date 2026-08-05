@@ -62,7 +62,7 @@ describe('bridge voice replies', () => {
     expect(splitBridgeVoiceSentences('你好呀！我已经完成了。下面是结果：一切正常')).toEqual([
       '你好呀！',
       '我已经完成了。',
-      '下面是结果：一切正常',
+      '下面是结果：一切正常。',
     ]);
   });
 
@@ -257,6 +257,6 @@ describe('bridge voice replies', () => {
     });
 
     expect(synthesize).toHaveBeenCalledTimes(1);
-    expect(synthesize).toHaveBeenCalledWith('你好呀！重点：项目 done 已经完成啦', provider);
+    expect(synthesize).toHaveBeenCalledWith('你好呀！重点：项目 done 已经完成啦。', provider);
   });
 });

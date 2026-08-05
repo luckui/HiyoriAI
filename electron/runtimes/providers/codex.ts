@@ -1,5 +1,5 @@
-import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
+import { EventEmitter } from 'events';
 import type {
   AgentRuntimeProvider,
   RuntimeEvent,
@@ -7,45 +7,44 @@ import type {
   RuntimeSubscription,
   StartRuntimeSessionInput,
 } from '../types';
-import type {
-  ApprovalMode,
-  CodexOptions,
-  SandboxMode,
-  Thread,
-  ThreadEvent,
-  ThreadOptions,
-  WebSearchMode,
-} from '@openai/codex-sdk';
+import { CodexAppServerClient, type CodexJsonRpcNotification } from './codexAppServerClient';
 
-interface CodexClientLike {
-  startThread(options?: ThreadOptions): ThreadLike;
-  resumeThread(id: string, options?: ThreadOptions): ThreadLike;
+type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+type ApprovalPolicy = 'untrusted' | 'on-failure' | 'on-request' | 'never';
+type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access';
+
+interface CodexAppServerLike {
+  start(): Promise<void>;
+  request(method: string, params?: any, timeoutMs?: number): Promise<any>;
+  onNotification(listener: (notification: CodexJsonRpcNotification) => void): () => void;
+  onStderr?(listener: (message: string) => void): () => void;
 }
-
-interface ThreadLike {
-  readonly id: string | null;
-  runStreamed(input: string): Promise<{
-    events: AsyncGenerator<ThreadEventLike>;
-  }>;
-}
-
-type ThreadEventLike = ThreadEvent;
-
-type CodexSdkModule = typeof import('@openai/codex-sdk');
-
-const dynamicImport = new Function('specifier', 'return import(specifier)') as (
-  specifier: string
-) => Promise<CodexSdkModule>;
 
 export interface CodexRuntimeProviderOptions {
-  createClient?: () => CodexClientLike;
-  codexOptions?: CodexOptions;
+  createClient?: () => CodexAppServerLike;
 }
 
 interface CodexSessionState {
   session: RuntimeSession;
-  thread: ThreadLike;
-  abortController?: AbortController;
+  threadId: string;
+  currentTurnId?: string;
+  unsubscribeNotifications: () => void;
+}
+
+function appServerEnv(): Record<string, string> {
+  const proxy =
+    process.env['CODEX_PROXY'] ||
+    process.env['HTTPS_PROXY'] ||
+    process.env['HTTP_PROXY'] ||
+    process.env['DISCORD_PROXY'];
+  const env: Record<string, string> = { ...process.env } as Record<string, string>;
+  if (proxy) {
+    env['HTTP_PROXY'] = env['HTTP_PROXY'] || proxy;
+    env['HTTPS_PROXY'] = env['HTTPS_PROXY'] || proxy;
+    env['http_proxy'] = env['http_proxy'] || proxy;
+    env['https_proxy'] = env['https_proxy'] || proxy;
+  }
+  return env;
 }
 
 export function createCodexRuntimeProvider(
@@ -53,17 +52,12 @@ export function createCodexRuntimeProvider(
 ): AgentRuntimeProvider {
   const emitter = new EventEmitter();
   const sessions = new Map<string, CodexSessionState>();
-  let client: CodexClientLike | undefined;
+  const sessionsByThreadId = new Map<string, CodexSessionState>();
+  let client: CodexAppServerLike | undefined;
 
-  async function getClient(): Promise<CodexClientLike> {
-    if (!client) {
-      if (options.createClient) {
-        client = options.createClient();
-      } else {
-        const { Codex } = await dynamicImport('@openai/codex-sdk');
-        client = new Codex(createCodexSdkOptions(options.codexOptions));
-      }
-    }
+  async function getClient(): Promise<CodexAppServerLike> {
+    if (!client) client = options.createClient?.() ?? new CodexAppServerClient({ env: appServerEnv() });
+    await client.start();
     return client;
   }
 
@@ -80,143 +74,164 @@ export function createCodexRuntimeProvider(
     emitter.emit(session.id, event);
   }
 
-  async function runTurn(state: CodexSessionState, input: string): Promise<void> {
-    const { events } = await state.thread.runStreamed(input);
-    for await (const event of events) {
-      applyThreadEvent(state, event);
-    }
+  function subscribeToThread(state: CodexSessionState, appServer: CodexAppServerLike): void {
+    state.unsubscribeNotifications = appServer.onNotification((notification) => {
+      const threadId = notification.params?.threadId;
+      if (threadId !== state.threadId) return;
+      applyNotification(state, notification);
+    });
   }
 
-  function scheduleTurn(state: CodexSessionState, input: string): void {
-    setTimeout(() => {
-      void runTurn(state, input).catch((error) => {
-        state.session.status = 'failed';
-        state.session.updatedAt = Date.now();
-        emit(state.session, 'failed', (error as Error).message);
-      });
-    }, 0);
-  }
-
-  function applyThreadEvent(state: CodexSessionState, event: ThreadEventLike): void {
+  function applyNotification(state: CodexSessionState, notification: CodexJsonRpcNotification): void {
     const { session } = state;
-    if (event.type === 'thread.started') {
-      session.providerSessionRef = event.thread_id;
-      session.metadata = { ...session.metadata, codexThreadId: event.thread_id };
-      session.updatedAt = Date.now();
-      emit(session, 'session_started', `codex thread started: ${event.thread_id}`, event);
-      return;
-    }
-
-    if (event.type === 'turn.started') {
+    if (notification.method === 'turn/started') {
+      state.currentTurnId = notification.params?.turn?.id;
       session.status = 'running';
       session.updatedAt = Date.now();
-      emit(session, 'notification', 'codex turn started', event);
+      emit(session, 'notification', 'codex turn started', notification);
       return;
     }
 
-    if (event.type === 'item.started' || event.type === 'item.updated' || event.type === 'item.completed') {
-      emitItemEvent(session, event.item, event);
-      return;
-    }
-
-    if (event.type === 'turn.completed') {
-      session.status = 'completed';
+    if (notification.method === 'thread/status/changed') {
+      session.status = mapThreadStatus(notification.params?.status);
       session.updatedAt = Date.now();
-      emit(session, 'completed', 'codex turn completed', event);
+      emit(session, 'notification', `codex status: ${session.status}`, notification);
       return;
     }
 
-    if (event.type === 'turn.failed') {
+    if (notification.method === 'item/agentMessage/delta') {
+      session.updatedAt = Date.now();
+      emit(session, 'assistant_delta', notification.params?.delta ?? '', notification);
+      return;
+    }
+
+    if (notification.method === 'item/started' || notification.method === 'item/completed') {
+      emitItemEvent(session, notification.params?.item, notification);
+      return;
+    }
+
+    if (notification.method === 'turn/completed') {
+      session.status = notification.params?.turn?.status === 'failed' ? 'failed' : 'completed';
+      session.updatedAt = Date.now();
+      const errorMessage = notification.params?.turn?.error?.message;
+      emit(session, session.status === 'failed' ? 'failed' : 'completed', errorMessage || 'codex turn completed', notification);
+      return;
+    }
+
+    if (notification.method === 'error') {
       session.status = 'failed';
       session.updatedAt = Date.now();
-      emit(session, 'failed', event.error.message, event);
+      emit(session, 'failed', appServerErrorMessage(notification.params), notification);
       return;
     }
 
-    if (event.type === 'error' && event.message.startsWith('Reconnecting...')) {
+    if (typeof (notification as any).id === 'number') {
+      session.status = 'waiting_for_input';
       session.updatedAt = Date.now();
-      emit(session, 'notification', event.message, event);
-      return;
-    }
-
-    if (event.type === 'error') {
-      session.status = 'failed';
-      session.updatedAt = Date.now();
-      emit(session, 'failed', event.message, event);
+      emit(session, 'waiting_for_input', `Codex app-server requested client action: ${notification.method}`, notification);
     }
   }
 
-  function emitItemEvent(
-    session: RuntimeSession,
-    item: ThreadEventLike extends { item: infer Item } ? Item : never,
-    raw: ThreadEventLike
-  ): void {
-    if (!item || typeof item !== 'object' || !('type' in item)) return;
+  function emitItemEvent(session: RuntimeSession, item: any, raw: CodexJsonRpcNotification): void {
+    if (!item || typeof item !== 'object') return;
 
-    if (item.type === 'agent_message') {
-      emit(session, 'assistant_message', item.text, raw);
+    if (item.type === 'agentMessage') {
+      emit(session, 'assistant_message', item.text ?? '', raw);
       return;
     }
 
     if (item.type === 'reasoning') {
-      emit(session, 'assistant_delta', item.text, raw);
+      const text = [...(item.summary ?? []), ...(item.content ?? [])].filter(Boolean).join('\n');
+      if (text) emit(session, 'assistant_delta', text, raw);
       return;
     }
 
-    if (item.type === 'command_execution') {
-      emit(session, 'tool_call', `${item.command}\n${item.aggregated_output}`.trim(), raw);
+    if (item.type === 'commandExecution') {
+      emit(session, 'tool_call', `${item.command ?? ''}\n${item.aggregatedOutput ?? ''}`.trim(), raw);
       return;
     }
 
-    if (item.type === 'mcp_tool_call') {
+    if (item.type === 'mcpToolCall') {
       emit(session, 'tool_call', `${item.server}.${item.tool}`, raw);
       return;
     }
 
-    if (item.type === 'file_change') {
-      emit(
-        session,
-        'tool_result',
-        item.changes.map((change) => `${change.kind}: ${change.path}`).join('\n'),
-        raw
-      );
+    if (item.type === 'dynamicToolCall') {
+      emit(session, 'tool_call', `${item.namespace ? `${item.namespace}.` : ''}${item.tool}`, raw);
       return;
     }
 
-    if (item.type === 'error') {
-      emit(session, 'failed', item.message, raw);
+    if (item.type === 'fileChange') {
+      emit(
+        session,
+        'tool_result',
+        (item.changes ?? []).map((change: any) => `${change.kind}: ${change.path}`).join('\n'),
+        raw
+      );
     }
   }
 
-  function normalizeReasoningEffort(value: unknown): ThreadOptions['modelReasoningEffort'] | undefined {
-    const effort = readString(value);
-    if (!effort) return undefined;
-    // OpenAI hosted tools such as web_search/image_gen reject reasoning.effort=minimal.
-    // Codex SDK may enable those tools internally, so keep the lightest safe value.
-    return (effort === 'minimal' ? 'low' : effort) as ThreadOptions['modelReasoningEffort'];
-  }
-
-  function createThreadOptions(input: StartRuntimeSessionInput): ThreadOptions {
-    const metadata = input.metadata ?? {};
-    return {
-      workingDirectory: input.cwd,
-      skipGitRepoCheck: metadata.skipGitRepoCheck === true ? true : undefined,
-      sandboxMode: readString(metadata.sandboxMode) as SandboxMode | undefined,
-      approvalPolicy: readString(metadata.approvalPolicy) as ApprovalMode | undefined,
-      model: readString(metadata.model),
-      modelReasoningEffort: normalizeReasoningEffort(metadata.modelReasoningEffort),
-      networkAccessEnabled:
-        typeof metadata.networkAccessEnabled === 'boolean' ? metadata.networkAccessEnabled : undefined,
-      webSearchMode: readString(metadata.webSearchMode) as WebSearchMode | undefined,
-      webSearchEnabled: typeof metadata.webSearchEnabled === 'boolean' ? metadata.webSearchEnabled : undefined,
-      additionalDirectories: Array.isArray(metadata.additionalDirectories)
-        ? metadata.additionalDirectories.filter((value): value is string => typeof value === 'string')
-        : undefined,
-    };
+  function mapThreadStatus(status: any): RuntimeSession['status'] {
+    if (status?.type === 'active') return 'running';
+    if (status?.type === 'idle' || status?.type === 'notLoaded') return 'completed';
+    if (status?.type === 'systemError') return 'failed';
+    return 'running';
   }
 
   function readString(value: unknown): string | undefined {
     return typeof value === 'string' && value.trim() ? value : undefined;
+  }
+
+  function appServerErrorMessage(params: any): string {
+    return (
+      readString(params?.message) ||
+      readString(params?.error?.message) ||
+      readString(params?.error) ||
+      'Codex app-server error'
+    );
+  }
+
+  function normalizeReasoningEffort(value: unknown): ReasoningEffort | undefined {
+    const effort = readString(value) as ReasoningEffort | undefined;
+    if (!effort) return undefined;
+    return effort === 'minimal' ? 'low' : effort;
+  }
+
+  function threadParams(input: StartRuntimeSessionInput): Record<string, unknown> {
+    const metadata = input.metadata ?? {};
+    return {
+      cwd: input.cwd,
+      model: readString(metadata.model),
+      approvalPolicy: (readString(metadata.approvalPolicy) as ApprovalPolicy | undefined) ?? 'never',
+      sandbox: (readString(metadata.sandboxMode) as SandboxMode | undefined) ?? 'danger-full-access',
+      serviceName: 'Hiyori',
+      threadSource: 'hiyori',
+    };
+  }
+
+  function turnParams(threadId: string, content: string, input?: StartRuntimeSessionInput): Record<string, unknown> {
+    const metadata = input?.metadata ?? {};
+    return {
+      threadId,
+      input: [{ type: 'text', text: content, text_elements: [] }],
+      cwd: input?.cwd,
+      approvalPolicy: (readString(metadata.approvalPolicy) as ApprovalPolicy | undefined) ?? 'never',
+      sandboxPolicy: { type: 'dangerFullAccess' },
+      model: readString(metadata.model),
+      effort: normalizeReasoningEffort(metadata.modelReasoningEffort),
+    };
+  }
+
+  function scheduleTurn(state: CodexSessionState, content: string, input?: StartRuntimeSessionInput): void {
+    setTimeout(() => {
+      void getClient()
+        .then((appServer) => appServer.request('turn/start', turnParams(state.threadId, content, input), 30000))
+        .catch((error) => {
+          state.session.status = 'failed';
+          state.session.updatedAt = Date.now();
+          emit(state.session, 'failed', (error as Error).message);
+        });
+    }, 0);
   }
 
   return {
@@ -233,38 +248,45 @@ export function createCodexRuntimeProvider(
     },
 
     async startSession(input) {
-      const now = Date.now();
-      const threadOptions = createThreadOptions(input);
+      const appServer = await getClient();
       const resumeThreadId = readString(input.metadata?.providerSessionRef);
-      const thread = resumeThreadId
-        ? (await getClient()).resumeThread(resumeThreadId, threadOptions)
-        : (await getClient()).startThread(threadOptions);
+      const response = resumeThreadId
+        ? await appServer.request('thread/resume', { threadId: resumeThreadId, ...threadParams(input) })
+        : await appServer.request('thread/start', threadParams(input));
+      const thread = response.thread;
+      const now = Date.now();
       const session: RuntimeSession = {
         id: randomUUID(),
         providerId: 'codex',
-        providerSessionRef: resumeThreadId || thread.id || '',
+        providerSessionRef: thread.id,
         hiyoriConversationId: input.hiyoriConversationId,
-        cwd: input.cwd,
-        title: input.title,
+        cwd: thread.cwd ?? input.cwd,
+        title: thread.name ?? input.title,
         status: 'running',
         createdAt: now,
         updatedAt: now,
         metadata: { ...(input.metadata ?? {}), resumedProviderSessionRef: resumeThreadId || undefined },
       };
-      const state: CodexSessionState = { session, thread };
+      const state: CodexSessionState = {
+        session,
+        threadId: thread.id,
+        unsubscribeNotifications: () => undefined,
+      };
       sessions.set(session.id, state);
-      scheduleTurn(state, input.initialMessage);
+      sessionsByThreadId.set(thread.id, state);
+      subscribeToThread(state, appServer);
+      emit(session, 'session_started', `codex thread started: ${thread.id}`, response);
+      scheduleTurn(state, input.initialMessage, input);
       return session;
     },
 
     async resumeSession(input) {
       const codexThreadId = readString(input.metadata?.providerSessionRef);
-      if (!codexThreadId) {
-        throw new Error('Codex providerSessionRef is required to resume a thread');
-      }
-      const now = Date.now();
-      const thread = (await getClient()).resumeThread(codexThreadId, {
-        ...createThreadOptions({
+      if (!codexThreadId) throw new Error('Codex providerSessionRef is required to resume a thread');
+      const appServer = await getClient();
+      const response = await appServer.request('thread/resume', {
+        threadId: codexThreadId,
+        ...threadParams({
           providerId: input.providerId,
           hiyoriConversationId: input.hiyoriConversationId,
           title: input.title,
@@ -273,19 +295,28 @@ export function createCodexRuntimeProvider(
           metadata: input.metadata,
         }),
       });
+      const now = Date.now();
+      const thread = response.thread;
       const session: RuntimeSession = {
         id: input.runtimeSessionId,
         providerId: 'codex',
-        providerSessionRef: codexThreadId,
+        providerSessionRef: thread.id,
         hiyoriConversationId: input.hiyoriConversationId,
-        cwd: input.cwd,
-        title: input.title,
-        status: 'running',
+        cwd: thread.cwd ?? input.cwd,
+        title: thread.name ?? input.title,
+        status: mapThreadStatus(thread.status),
         createdAt: now,
         updatedAt: now,
         metadata: input.metadata ?? {},
       };
-      sessions.set(session.id, { session, thread });
+      const state: CodexSessionState = {
+        session,
+        threadId: thread.id,
+        unsubscribeNotifications: () => undefined,
+      };
+      sessions.set(session.id, state);
+      sessionsByThreadId.set(thread.id, state);
+      subscribeToThread(state, appServer);
       return session;
     },
 
@@ -300,7 +331,9 @@ export function createCodexRuntimeProvider(
     async interrupt(sessionId) {
       const state = sessions.get(sessionId);
       if (!state) throw new Error(`Codex runtime session not found: ${sessionId}`);
-      state.abortController?.abort();
+      if (state.currentTurnId) {
+        await (await getClient()).request('turn/interrupt', { threadId: state.threadId, turnId: state.currentTurnId });
+      }
       state.session.status = 'interrupted';
       state.session.updatedAt = Date.now();
       emit(state.session, 'interrupted', 'codex turn interrupted');
@@ -309,7 +342,9 @@ export function createCodexRuntimeProvider(
     async stop(sessionId) {
       const state = sessions.get(sessionId);
       if (!state) throw new Error(`Codex runtime session not found: ${sessionId}`);
-      state.abortController?.abort();
+      state.unsubscribeNotifications();
+      sessions.delete(sessionId);
+      sessionsByThreadId.delete(state.threadId);
       state.session.status = 'stopped';
       state.session.updatedAt = Date.now();
       emit(state.session, 'stopped', 'codex session stopped');
@@ -326,32 +361,6 @@ export function createCodexRuntimeProvider(
   };
 }
 
-export function createCodexSdkOptions(baseOptions?: CodexOptions): CodexOptions | undefined {
-  const proxy =
-    process.env['CODEX_PROXY'] ||
-    process.env['HTTPS_PROXY'] ||
-    process.env['HTTP_PROXY'] ||
-    process.env['DISCORD_PROXY'];
-
-  const baseEnv = baseOptions?.env
-    ? { ...baseOptions.env }
-    : ({ ...process.env } as Record<string, string>);
-  if (baseOptions?.env) {
-    if (!baseEnv['CODEX_INTERNAL_ORIGINATOR_OVERRIDE']) {
-      baseEnv['CODEX_INTERNAL_ORIGINATOR_OVERRIDE'] = 'Hiyori';
-    }
-  } else {
-    baseEnv['CODEX_INTERNAL_ORIGINATOR_OVERRIDE'] = 'Hiyori';
-  }
-  if (proxy) {
-    baseEnv['HTTP_PROXY'] = baseEnv['HTTP_PROXY'] || proxy;
-    baseEnv['HTTPS_PROXY'] = baseEnv['HTTPS_PROXY'] || proxy;
-    baseEnv['http_proxy'] = baseEnv['http_proxy'] || proxy;
-    baseEnv['https_proxy'] = baseEnv['https_proxy'] || proxy;
-  }
-
-  return {
-    ...baseOptions,
-    env: baseEnv,
-  };
+export function createCodexAppServerEnv(): Record<string, string> {
+  return appServerEnv();
 }

@@ -199,7 +199,7 @@ describe('CodingAgentSessionRouter', () => {
     expect(delivered[0]).toContain('请基于以上结果回复用户');
   });
 
-  it('does not wake the conversation on coding agent failure', async () => {
+  it('wakes the conversation when the coding agent turn fails', async () => {
     const registry = new RuntimeRegistry();
     registry.register({
       id: 'failing',
@@ -251,7 +251,10 @@ describe('CodingAgentSessionRouter', () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    expect(delivered).toEqual([]);
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]).toContain('failing 编程代理');
+    expect(delivered[0]).toContain('失败');
+    expect(delivered[0]).toContain('quota exhausted');
   });
 
   it('does not push low-level command details to the chat notifier', async () => {

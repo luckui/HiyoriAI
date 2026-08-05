@@ -1,14 +1,12 @@
-import { createReadStream } from 'fs';
-import { readdir, stat } from 'fs/promises';
-import { homedir } from 'os';
-import { basename, join, normalize } from 'path';
-import { createInterface } from 'readline';
+import { basename, normalize } from 'path';
+import { CodexAppServerClient } from './codexAppServerClient';
 
 export interface CodexTaskSummary {
   id: string;
   cwd: string;
   title: string;
-  file: string;
+  preview: string;
+  file?: string;
   createdAt?: string;
   updatedAt: number;
   originator?: string;
@@ -47,8 +45,8 @@ export interface CodexProjectIndex {
 }
 
 export interface CodexDiscoveryOptions {
-  sessionsRoot?: string;
   limit?: number;
+  listThreads?: (params: CodexThreadListParams) => Promise<CodexThreadListResponse>;
 }
 
 export interface CodexProjectQueryOptions extends CodexDiscoveryOptions {
@@ -65,39 +63,37 @@ export type CodexProjectResolveResult =
   | { status: 'ambiguous'; candidates: CodexProjectSummary[] }
   | { status: 'not_found'; candidates: CodexProjectSummary[] };
 
-interface SessionMetaPayload {
-  id?: string;
-  session_id?: string;
+interface CodexThreadListParams {
+  cursor?: string | null;
+  limit?: number | null;
+  archived?: boolean | null;
+  cwd?: string | string[] | null;
+  searchTerm?: string | null;
+  sourceKinds?: string[] | null;
+}
+
+interface CodexThreadListResponse {
+  data: CodexThreadSummary[];
+  nextCursor?: string | null;
+}
+
+interface CodexThreadSummary {
+  id: string;
+  preview?: string;
   cwd?: string;
-  timestamp?: string;
-  originator?: string;
-  source?: string;
-  model?: string;
-  model_provider?: string;
+  path?: string | null;
+  name?: string | null;
+  source?: string | { custom?: string } | { subAgent?: unknown };
+  threadSource?: string | null;
+  modelProvider?: string;
+  createdAt?: number;
+  updatedAt?: number;
+  recencyAt?: number | null;
 }
 
-interface SessionJsonlRecord {
-  type?: string;
-  payload?: any;
-}
+const CODEX_THREAD_SOURCE_KINDS = ['cli', 'vscode', 'exec', 'appServer', 'unknown'];
 
-function defaultSessionsRoot(): string {
-  return join(homedir(), '.codex', 'sessions');
-}
-
-function projectName(cwd: string): string {
-  return basename(normalize(cwd)) || cwd;
-}
-
-function normalizeMatchText(value: string): string {
-  return value.replace(/\\/g, '/').toLowerCase();
-}
-
-function truncateTitle(text: string): string {
-  const normalized = text.replace(/\s+/g, ' ').trim();
-  if (!normalized) return '未命名任务';
-  return normalized.length > 80 ? `${normalized.slice(0, 77)}...` : normalized;
-}
+let sharedClient: CodexAppServerClient | undefined;
 
 export async function listCodexProjects(options: CodexDiscoveryOptions = {}): Promise<CodexProjectSummary[]> {
   const index = await listCodexProjectIndex(options);
@@ -120,7 +116,7 @@ export async function listCodexProjectIndex(options: CodexDiscoveryOptions = {})
     const latest = group[0];
     const sourceCounts = countSources(group);
     return {
-      name: projectName(latest.cwd),
+      name: projectDisplayName(latest),
       cwd: latest.cwd,
       taskCount: group.length,
       latestTaskId: latest.id,
@@ -155,15 +151,16 @@ export async function listCodexProjectTasks(options: CodexProjectQueryOptions = 
   return tasks
     .filter((task) => {
       const cwd = normalizeMatchText(normalize(task.cwd));
-      const name = normalizeMatchText(projectName(task.cwd));
-      return cwd === target || cwd.includes(target) || name === target || name.includes(target);
+      const project = normalizeMatchText(projectDisplayName(task));
+      const title = normalizeMatchText(task.title);
+      return cwd === target || cwd.includes(target) || project === target || project.includes(target) || title.includes(target);
     })
     .slice(0, options.limit ?? 10);
 }
 
 export async function resolveCodexProject(options: CodexProjectResolveOptions): Promise<CodexProjectResolveResult> {
   const query = normalizeMatchText(options.query.trim());
-  const projects = await listCodexProjects({ sessionsRoot: options.sessionsRoot });
+  const projects = await listCodexProjects({ listThreads: options.listThreads });
   if (!query) return { status: 'not_found', candidates: projects.slice(0, options.limit ?? 5) };
 
   const exact = projects.filter((project) => {
@@ -177,20 +174,21 @@ export async function resolveCodexProject(options: CodexProjectResolveOptions): 
   const fuzzy = projects.filter((project) => {
     const name = normalizeMatchText(project.name);
     const cwd = normalizeMatchText(normalize(project.cwd));
-    return name.includes(query) || cwd.includes(query);
+    const title = normalizeMatchText(project.latestTaskTitle);
+    return name.includes(query) || cwd.includes(query) || title.includes(query);
   });
   if (fuzzy.length === 1) return { status: 'matched', project: fuzzy[0], candidates: fuzzy };
   if (fuzzy.length > 1) return { status: 'ambiguous', candidates: fuzzy.slice(0, options.limit ?? 5) };
   return { status: 'not_found', candidates: projects.slice(0, options.limit ?? 5) };
 }
 
-export function classifyCodexTaskSource(originator?: string, source?: string): CodexTaskSourceKind {
-  const normalizedOriginator = (originator ?? '').trim().toLowerCase();
+export function classifyCodexTaskSource(source?: string, threadSource?: string | null): CodexTaskSourceKind {
   const normalizedSource = (source ?? '').trim().toLowerCase();
-  if (normalizedOriginator === 'hiyori') return 'hiyori';
-  if (normalizedOriginator === 'codex desktop') return 'desktop';
-  if (normalizedOriginator === 'codex_vscode' || normalizedSource === 'vscode') return 'vscode';
-  if (normalizedOriginator === 'codex_sdk_ts' || normalizedSource === 'exec') return 'sdk';
+  const normalizedThreadSource = (threadSource ?? '').trim().toLowerCase();
+  if (normalizedThreadSource === 'hiyori') return 'hiyori';
+  if (normalizedSource === 'vscode') return 'desktop';
+  if (normalizedSource === 'appserver' || normalizedSource === 'exec') return 'sdk';
+  if (normalizedSource === 'cli') return 'external';
   return 'external';
 }
 
@@ -207,6 +205,25 @@ export function codexTaskSourceLabel(sourceKind: CodexTaskSourceKind): string {
     case 'external':
       return '外部来源';
   }
+}
+
+function normalizeMatchText(value: string): string {
+  return value.replace(/\\/g, '/').toLowerCase();
+}
+
+function truncateTitle(text: string): string {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (!normalized) return '未命名任务';
+  return normalized.length > 80 ? `${normalized.slice(0, 77)}...` : normalized;
+}
+
+function isCodexTemporaryWorkspace(cwd: string): boolean {
+  return /[\\/]Documents[\\/]Codex[\\/]\d{4}-\d{2}-\d{2}[\\/][^\\/]+$/i.test(cwd);
+}
+
+function projectDisplayName(task: Pick<CodexTaskSummary, 'cwd' | 'title'>): string {
+  if (isCodexTemporaryWorkspace(task.cwd)) return `临时任务：${task.title}`;
+  return basename(normalize(task.cwd)) || task.cwd;
 }
 
 function emptySourceCounts(): CodexTaskSourceCounts {
@@ -239,98 +256,52 @@ function sourceLabels(counts: CodexTaskSourceCounts): string[] {
 }
 
 async function readCodexTasks(options: CodexDiscoveryOptions = {}): Promise<CodexTaskSummary[]> {
-  const files = await listJsonlFiles(options.sessionsRoot ?? defaultSessionsRoot()).catch(() => []);
-  const sorted = files.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 500);
-  const tasks: CodexTaskSummary[] = [];
+  const listThreads = options.listThreads ?? defaultListThreads;
+  const threads: CodexThreadSummary[] = [];
+  let cursor: string | null | undefined;
 
-  for (const file of sorted) {
-    const task = await readTaskSummary(file.path, file.updatedAt);
-    if (!task) continue;
-    tasks.push(task);
-  }
+  do {
+    const response = await listThreads({
+      cursor,
+      limit: 100,
+      archived: false,
+      sourceKinds: CODEX_THREAD_SOURCE_KINDS,
+    });
+    threads.push(...response.data);
+    cursor = response.nextCursor;
+  } while (cursor && threads.length < 500);
 
-  return tasks.sort((a, b) => b.updatedAt - a.updatedAt);
+  return threads.map(toTaskSummary).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-async function listJsonlFiles(dir: string): Promise<Array<{ path: string; updatedAt: number }>> {
-  const entries = await readdir(dir, { withFileTypes: true });
-  const files: Array<{ path: string; updatedAt: number }> = [];
-
-  for (const entry of entries) {
-    const fullPath = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...await listJsonlFiles(fullPath));
-      continue;
-    }
-    if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
-    const info = await stat(fullPath);
-    files.push({ path: fullPath, updatedAt: info.mtimeMs });
-  }
-
-  return files;
+async function defaultListThreads(params: CodexThreadListParams): Promise<CodexThreadListResponse> {
+  if (!sharedClient) sharedClient = new CodexAppServerClient();
+  await sharedClient.start();
+  return sharedClient.request('thread/list', params);
 }
 
-async function readTaskSummary(file: string, fallbackUpdatedAt: number): Promise<CodexTaskSummary | undefined> {
-  const rl = createInterface({
-    input: createReadStream(file, { encoding: 'utf8' }),
-    crlfDelay: Infinity,
-  });
-
-  let meta: SessionMetaPayload | undefined;
-  let firstUserText = '';
-  let lineCount = 0;
-
-  try {
-    for await (const line of rl) {
-      lineCount++;
-      if (!meta && line.includes('"session_meta"')) {
-        const record = JSON.parse(line) as SessionJsonlRecord;
-        if (record.type === 'session_meta') meta = record.payload;
-      }
-      if (!firstUserText && line.includes('"role":"user"')) {
-        firstUserText = extractUserText(line);
-      }
-      if (meta && firstUserText) break;
-      if (lineCount > 200) break;
-    }
-  } catch {
-    return undefined;
-  } finally {
-    rl.close();
-  }
-
-  const id = meta?.id ?? meta?.session_id;
-  if (!id || !meta?.cwd) return undefined;
-  const updatedAt = meta.timestamp ? Date.parse(meta.timestamp) || fallbackUpdatedAt : fallbackUpdatedAt;
-
+function toTaskSummary(thread: CodexThreadSummary): CodexTaskSummary {
+  const source = normalizeThreadSource(thread.source);
+  const sourceKind = classifyCodexTaskSource(source, thread.threadSource);
   return {
-    id,
-    cwd: meta.cwd,
-    title: truncateTitle(firstUserText),
-    file,
-    createdAt: meta.timestamp,
-    updatedAt,
-    originator: meta.originator,
-    model: meta.model ?? meta.model_provider,
-    source: meta.source,
-    sourceKind: classifyCodexTaskSource(meta.originator, meta.source),
-    sourceLabel: codexTaskSourceLabel(classifyCodexTaskSource(meta.originator, meta.source)),
+    id: thread.id,
+    cwd: thread.cwd ?? '',
+    title: truncateTitle(thread.name || thread.preview || thread.id),
+    preview: thread.preview ?? '',
+    file: thread.path ?? undefined,
+    createdAt: thread.createdAt ? new Date(thread.createdAt * 1000).toISOString() : undefined,
+    updatedAt: (thread.recencyAt ?? thread.updatedAt ?? thread.createdAt ?? 0) * 1000,
+    originator: thread.threadSource ?? undefined,
+    model: thread.modelProvider,
+    source,
+    sourceKind,
+    sourceLabel: codexTaskSourceLabel(sourceKind),
   };
 }
 
-function extractUserText(line: string): string {
-  try {
-    const record = JSON.parse(line) as SessionJsonlRecord;
-    const payload = record.payload;
-    if (payload?.type !== 'message' || payload.role !== 'user') return '';
-    const content = payload.content;
-    if (typeof content === 'string') return content;
-    if (!Array.isArray(content)) return '';
-    return content
-      .map((part) => part?.text ?? part?.input_text ?? '')
-      .filter(Boolean)
-      .join('\n');
-  } catch {
-    return '';
-  }
+function normalizeThreadSource(source: CodexThreadSummary['source']): string | undefined {
+  if (typeof source === 'string') return source;
+  if (source && typeof source === 'object' && 'custom' in source) return source.custom;
+  if (source && typeof source === 'object' && 'subAgent' in source) return 'subAgent';
+  return undefined;
 }

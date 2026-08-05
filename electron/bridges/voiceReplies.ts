@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import ffmpeg from '@ffmpeg-installer/ffmpeg';
 import type { TTSProviderConfig } from '../tts.config';
+import { normalizeSpokenText, splitSpokenText } from '../../shared/spokenText';
 
 export type WeChatVoiceDeliveryMode = 'audio_file' | 'native_voice';
 
@@ -70,7 +71,6 @@ interface BridgeVoiceRuntime {
 const MAX_VOICE_SENTENCES = 8;
 const MAX_SENTENCE_LENGTH = 180;
 const WAV_HEADER_BYTES = 44;
-const RE_EMOJI = /\p{Extended_Pictographic}[\u{FE0F}\u{FE0E}\u{200D}\u{20E3}\p{Extended_Pictographic}]*/gu;
 let runtime: BridgeVoiceRuntime = {
   getProvider: () => null,
 };
@@ -89,6 +89,10 @@ export async function getReadyBridgeVoiceProvider(): Promise<TTSProviderConfig |
 export function splitBridgeVoiceSentences(text: string): string[] {
   const normalized = cleanBridgeVoiceText(text);
   if (!normalized) return [];
+  return splitSpokenText(normalized, {
+    maxSegments: MAX_VOICE_SENTENCES,
+    maxSentenceLength: MAX_SENTENCE_LENGTH,
+  });
   const readableSentences = normalized.match(/[^。！？!?；;.!?]+[。！？!?；;.!?]?/g) ?? [normalized];
   const readableChunks: string[] = [];
   for (const sentence of readableSentences.map(s => s.trim()).filter(Boolean)) {
@@ -117,6 +121,7 @@ export function splitBridgeVoiceSentences(text: string): string[] {
 }
 
 export function cleanBridgeVoiceText(text: string): string {
+  return normalizeSpokenText(text, { language: 'auto' });
   return text
     .replace(/（[^（）]*）/g, '')
     .replace(/\([^()]*\)/g, '')
@@ -142,6 +147,17 @@ export function cleanBridgeVoiceText(text: string): string {
     .replace(/\s*[，,]\s*$/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function cleanBridgeVoiceTextForProvider(text: string, provider: TTSProviderConfig): string {
+  return normalizeSpokenText(text, { language: provider.language });
+}
+
+function splitBridgeVoiceSentencesForProvider(text: string, provider: TTSProviderConfig): string[] {
+  return splitSpokenText(cleanBridgeVoiceTextForProvider(text, provider), {
+    maxSegments: MAX_VOICE_SENTENCES,
+    maxSentenceLength: MAX_SENTENCE_LENGTH,
+  });
 }
 
 export async function synthesizeBridgeVoice(
@@ -303,7 +319,7 @@ export async function deliverWeChatVoiceReply(
 
     try {
       if (deliveryMode === 'audio_file') {
-        const cleaned = cleanBridgeVoiceText(deps.text);
+        const cleaned = cleanBridgeVoiceTextForProvider(deps.text, deps.provider);
         if (!cleaned) throw new Error('Voice reply text is empty after cleanup');
         console.log(`[BridgeVoice] WeChat audio_file synthesize full text (${cleaned.length} chars): ${cleaned.slice(0, 120)}`);
         const mergedWav = Buffer.from(await synthesize(cleaned, deps.provider));
@@ -317,7 +333,7 @@ export async function deliverWeChatVoiceReply(
           await rm(filePath, { force: true }).catch(() => {});
         }
       } else {
-        const sentences = splitBridgeVoiceSentences(deps.text);
+        const sentences = splitBridgeVoiceSentencesForProvider(deps.text, deps.provider);
         const wavs: Array<Buffer | ArrayBuffer> = [];
         for (let i = 0; i < sentences.length; i++) {
           wavs.push(await synthesize(sentences[i], deps.provider));
@@ -436,7 +452,7 @@ export async function deliverFeishuVoiceReply(
     const encodeOpus = deps.encodeOpus ?? encodeFeishuOpusVoice;
 
     try {
-      const sentences = splitBridgeVoiceSentences(deps.text);
+      const sentences = splitBridgeVoiceSentencesForProvider(deps.text, deps.provider);
       if (sentences.length === 0) throw new Error('Voice reply text is empty after cleanup');
       for (let i = 0; i < sentences.length; i++) {
         const wav = await synthesize(sentences[i], deps.provider);

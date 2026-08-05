@@ -1,46 +1,37 @@
 import { describe, expect, it } from 'vitest';
-import { createCodexRuntimeProvider, createCodexSdkOptions } from '../providers/codex';
+import { createCodexAppServerEnv, createCodexRuntimeProvider } from '../providers/codex';
 import type { RuntimeEvent } from '../types';
+import type { CodexJsonRpcNotification } from '../providers/codexAppServerClient';
 
-type FakeThreadEvent =
-  | { type: 'thread.started'; thread_id: string }
-  | { type: 'item.completed'; item: { id: string; type: 'agent_message'; text: string } }
-  | { type: 'item.completed'; item: { id: string; type: 'command_execution'; command: string; aggregated_output: string; status: string; exit_code?: number } }
-  | { type: 'turn.completed'; usage: Record<string, number> };
-
-function createFakeCodexClient(events: FakeThreadEvent[]) {
-  const started: Array<Record<string, unknown> | undefined> = [];
-  const resumed: string[] = [];
-  const resumedOptions: Array<Record<string, unknown> | undefined> = [];
-  const prompts: unknown[] = [];
+function createFakeAppServer() {
+  const requests: Array<{ method: string; params: any }> = [];
+  const listeners = new Set<(notification: CodexJsonRpcNotification) => void>();
   const thread = {
     id: 'thread-existing',
-    async runStreamed(input: unknown) {
-      prompts.push(input);
-      return {
-        events: (async function* () {
-          for (const event of events) yield event;
-        })(),
-      };
-    },
+    cwd: 'D:/repo',
+    name: 'Codex Work',
+    status: { type: 'idle' },
   };
-
   return {
-    client: {
-      startThread(options?: Record<string, unknown>) {
-        started.push(options);
-        return thread;
+    appServer: {
+      async start() {},
+      async request(method: string, params?: any) {
+        requests.push({ method, params });
+        if (method === 'thread/start') return { thread };
+        if (method === 'thread/resume') return { thread: { ...thread, id: params.threadId } };
+        if (method === 'turn/start') return { turn: { id: 'turn-1', status: 'running', items: [] } };
+        if (method === 'turn/interrupt') return {};
+        throw new Error(`Unexpected method: ${method}`);
       },
-      resumeThread(id: string, options?: Record<string, unknown>) {
-        resumed.push(id);
-        resumedOptions.push(options);
-        return thread;
+      onNotification(listener: (notification: CodexJsonRpcNotification) => void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
       },
     },
-    started,
-    resumed,
-    resumedOptions,
-    prompts,
+    requests,
+    emit(notification: CodexJsonRpcNotification) {
+      for (const listener of listeners) listener(notification);
+    },
   };
 }
 
@@ -53,7 +44,7 @@ async function delay(ms: number): Promise<void> {
 }
 
 describe('createCodexRuntimeProvider', () => {
-  it('is unavailable when the sdk cannot be created', async () => {
+  it('is unavailable when the app-server cannot be created', async () => {
     const provider = createCodexRuntimeProvider({
       createClient() {
         throw new Error('missing codex');
@@ -66,58 +57,72 @@ describe('createCodexRuntimeProvider', () => {
     });
   });
 
-  it('starts a Codex thread through the SDK and maps streamed events', async () => {
-    const fake = createFakeCodexClient([
-      { type: 'thread.started', thread_id: 'thread-1' },
-      { type: 'item.completed', item: { id: 'item-1', type: 'agent_message', text: 'done' } },
-      { type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } },
-    ]);
-    const provider = createCodexRuntimeProvider({ createClient: () => fake.client });
+  it('starts a Codex thread through app-server and maps notifications', async () => {
+    const fake = createFakeAppServer();
+    const provider = createCodexRuntimeProvider({ createClient: () => fake.appServer });
     const seen: RuntimeEvent[] = [];
 
     const session = await provider.startSession({
       providerId: 'codex',
       hiyoriConversationId: 'conv-1',
-      title: 'Codex Work',
+      title: 'Fallback Title',
       initialMessage: 'fix tests',
       cwd: 'D:/repo',
       metadata: {
-        providerSessionRef: 'thread-existing',
         model: 'gpt-5.1-codex',
         modelReasoningEffort: 'high',
         sandboxMode: 'workspace-write',
         approvalPolicy: 'on-request',
-        networkAccessEnabled: true,
-        skipGitRepoCheck: true,
       },
     });
     provider.subscribe(session.id, (event) => seen.push(event));
     await waitForEvents();
-    await provider.sendMessage(session.id, { content: 'continue' });
+    fake.emit({
+      method: 'turn/started',
+      params: { threadId: 'thread-existing', turn: { id: 'turn-1' } },
+    });
+    fake.emit({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread-existing',
+        turnId: 'turn-1',
+        item: { id: 'item-1', type: 'agentMessage', text: 'done' },
+      },
+    });
+    fake.emit({
+      method: 'turn/completed',
+      params: { threadId: 'thread-existing', turn: { id: 'turn-1', status: 'completed' } },
+    });
 
     expect(session.providerId).toBe('codex');
-    expect(session.providerSessionRef).toBe('thread-1');
-    expect(fake.resumed).toEqual(['thread-existing']);
-    expect(fake.resumedOptions[0]).toMatchObject({
-      workingDirectory: 'D:/repo',
-      model: 'gpt-5.1-codex',
-      modelReasoningEffort: 'high',
-      sandboxMode: 'workspace-write',
-      approvalPolicy: 'on-request',
-      networkAccessEnabled: true,
-      skipGitRepoCheck: true,
+    expect(session.providerSessionRef).toBe('thread-existing');
+    expect(session.title).toBe('Codex Work');
+    expect(fake.requests[0]).toMatchObject({
+      method: 'thread/start',
+      params: {
+        cwd: 'D:/repo',
+        model: 'gpt-5.1-codex',
+        approvalPolicy: 'on-request',
+        sandbox: 'workspace-write',
+        serviceName: 'Hiyori',
+        threadSource: 'hiyori',
+      },
     });
-    await waitForEvents();
-    expect(fake.prompts).toEqual(['fix tests', 'continue']);
-    expect(seen.map((event) => `${event.type}:${event.content}`)).toContain(
-      'assistant_message:done'
-    );
+    expect(fake.requests[1]).toMatchObject({
+      method: 'turn/start',
+      params: {
+        threadId: 'thread-existing',
+        effort: 'high',
+        input: [{ type: 'text', text: 'fix tests', text_elements: [] }],
+      },
+    });
+    expect(seen.map((event) => `${event.type}:${event.content}`)).toContain('assistant_message:done');
     expect(seen.map((event) => event.type)).toContain('completed');
   });
 
-  it('normalizes unsupported minimal reasoning effort before calling the Codex SDK', async () => {
-    const fake = createFakeCodexClient([]);
-    const provider = createCodexRuntimeProvider({ createClient: () => fake.client });
+  it('normalizes unsupported minimal reasoning effort before starting a turn', async () => {
+    const fake = createFakeAppServer();
+    const provider = createCodexRuntimeProvider({ createClient: () => fake.appServer });
 
     await provider.startSession({
       providerId: 'codex',
@@ -128,15 +133,47 @@ describe('createCodexRuntimeProvider', () => {
         modelReasoningEffort: 'minimal',
       },
     });
+    await waitForEvents();
 
-    expect(fake.started[0]).toMatchObject({
-      modelReasoningEffort: 'low',
-    });
+    const turnStart = fake.requests.find((request) => request.method === 'turn/start');
+    expect(turnStart?.params.effort).toBe('low');
   });
 
-  it('resumes existing Codex threads', async () => {
-    const fake = createFakeCodexClient([]);
-    const provider = createCodexRuntimeProvider({ createClient: () => fake.client });
+  it('extracts nested app-server error messages from error notifications', async () => {
+    const fake = createFakeAppServer();
+    const provider = createCodexRuntimeProvider({ createClient: () => fake.appServer });
+    const seen: RuntimeEvent[] = [];
+
+    const session = await provider.startSession({
+      providerId: 'codex',
+      hiyoriConversationId: 'conv-error',
+      title: 'Error',
+      initialMessage: 'say hi',
+    });
+    provider.subscribe(session.id, (event) => seen.push(event));
+    await waitForEvents();
+
+    fake.emit({
+      method: 'error',
+      params: {
+        threadId: 'thread-existing',
+        type: 'error',
+        status: 400,
+        error: {
+          type: 'invalid_request_error',
+          message: "The 'gpt-5.6-sol' model requires a newer version of Codex.",
+        },
+      },
+    });
+
+    expect(seen.map((event) => `${event.type}:${event.content}`)).toContain(
+      "failed:The 'gpt-5.6-sol' model requires a newer version of Codex."
+    );
+  });
+
+  it('resumes existing Codex threads through app-server', async () => {
+    const fake = createFakeAppServer();
+    const provider = createCodexRuntimeProvider({ createClient: () => fake.appServer });
 
     const session = await provider.resumeSession({
       providerId: 'codex',
@@ -150,77 +187,46 @@ describe('createCodexRuntimeProvider', () => {
 
     expect(session.id).toBe('session-1');
     expect(session.providerSessionRef).toBe('thread-existing');
-    expect(fake.resumed).toEqual(['thread-existing']);
+    expect(fake.requests[0]).toMatchObject({
+      method: 'thread/resume',
+      params: { threadId: 'thread-existing' },
+    });
   });
 
   it('schedules follow-up turns without blocking the caller', async () => {
-    const prompts: unknown[] = [];
-    const provider = createCodexRuntimeProvider({
-      createClient: () => ({
-        startThread() {
-          return {
-            id: 'thread-async',
-            async runStreamed(input: unknown) {
-              prompts.push(input);
-              return {
-                events: (async function* () {
-                  await delay(50);
-                  yield { type: 'turn.completed', usage: {} } as FakeThreadEvent;
-                })(),
-              };
-            },
-          };
-        },
-        resumeThread() {
-          throw new Error('not used');
-        },
-      }),
-    });
-
+    const fake = createFakeAppServer();
+    const provider = createCodexRuntimeProvider({ createClient: () => fake.appServer });
     const session = await provider.startSession({
       providerId: 'codex',
       hiyoriConversationId: 'conv-async',
       title: 'Async',
       initialMessage: 'first',
     });
-    await delay(0);
+    await waitForEvents();
 
     const startedAt = Date.now();
     await provider.sendMessage(session.id, { content: 'continue' });
     const elapsed = Date.now() - startedAt;
 
     expect(elapsed).toBeLessThan(30);
-    await delay(80);
-    expect(prompts).toContain('continue');
+    await delay(10);
+    expect(fake.requests.filter((request) => request.method === 'turn/start').map((request) => request.params.input[0].text)).toEqual([
+      'first',
+      'continue',
+    ]);
   });
 
-  it('passes proxy environment to the SDK client when CODEX_PROXY is configured', async () => {
+  it('passes proxy environment to the app-server process when CODEX_PROXY is configured', () => {
     const originalProxy = process.env.CODEX_PROXY;
     process.env.CODEX_PROXY = 'http://127.0.0.1:7897';
     try {
-      const options = createCodexSdkOptions();
+      const env = createCodexAppServerEnv();
 
-      expect(options?.env?.HTTPS_PROXY).toBe('http://127.0.0.1:7897');
-      expect(options?.env?.HTTP_PROXY).toBe('http://127.0.0.1:7897');
+      expect(env.HTTPS_PROXY).toBe('http://127.0.0.1:7897');
+      expect(env.HTTP_PROXY).toBe('http://127.0.0.1:7897');
     } finally {
       if (originalProxy === undefined) delete process.env.CODEX_PROXY;
       else process.env.CODEX_PROXY = originalProxy;
     }
-  });
-
-  it('marks Codex threads started by Hiyori with a Hiyori originator', () => {
-    const options = createCodexSdkOptions();
-
-    expect(options?.env?.CODEX_INTERNAL_ORIGINATOR_OVERRIDE).toBe('Hiyori');
-  });
-
-  it('preserves an explicit Codex originator override', () => {
-    const options = createCodexSdkOptions({
-      env: {
-        CODEX_INTERNAL_ORIGINATOR_OVERRIDE: 'Custom Host',
-      },
-    });
-
-    expect(options?.env?.CODEX_INTERNAL_ORIGINATOR_OVERRIDE).toBe('Custom Host');
   });
 });

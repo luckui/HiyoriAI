@@ -55,6 +55,7 @@ import checkPythonEnvTool from './impl/checkPythonEnv';
 import writeFileTool from './impl/writeFile';
 import discordSendFileTool from './impl/discordSendFile';
 import wechatSendFileTool from './impl/wechatSendFile';
+import feishuSendFileTool from './impl/feishuSendFile';
 import manageTTSTool from './impl/manageTTS';
 import manageHearingTool from './impl/manageHearing';
 import manageLive2dTool from './impl/manageLive2d';
@@ -107,6 +108,7 @@ const registry = new ToolRegistry()
   .register(writeFileTool)
   .register(discordSendFileTool)
   .register(wechatSendFileTool)
+  .register(feishuSendFileTool)
   .register(manageTTSTool)
   .register(manageHearingTool)
   .register(manageLive2dTool)

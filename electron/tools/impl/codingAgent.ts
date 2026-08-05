@@ -46,6 +46,14 @@ function resultText(text: string): string {
   return `结果：\n${text}`;
 }
 
+function formatSessionChoice(session: Awaited<ReturnType<CodexSessionDiscovery>>[number], index: number): string {
+  return [
+    `${index + 1}. ${session.title || session.id}`,
+    `   id: ${session.id}`,
+    session.cwd ? `   cwd: ${session.cwd}` : undefined,
+  ].filter(Boolean).join('\n');
+}
+
 export async function resolveSendSessionDecision(
   params: CodingAgentParams,
   discover: CodexSessionDiscovery = listCodexSessionCandidates
@@ -60,19 +68,17 @@ export async function resolveSendSessionDecision(
   if (candidates.length === 1) {
     return {
       resumeSessionId: candidates[0].id,
-      resumedNotice: `已自动恢复该目录最近的 Codex 会话：${candidates[0].id}`,
+      resumedNotice: `已自动恢复该目录最近的 Codex 任务：${candidates[0].title || candidates[0].id}`,
     };
   }
 
   return {
     userMessage: toolResult('需要用户选择', '询问用户', suggestedReply([
-      `找到多个可恢复的 Codex 会话（目录：${params.cwd}）。`,
-      '请选择要继续哪一个，或选择新建会话：',
+      `找到多个可恢复的 Codex 任务（目录：${params.cwd}）。`,
+      '请选择要继续哪一个，或选择新建任务：',
       '',
-      ...candidates.map((session, index) => (
-        `${index + 1}. ${session.id}${session.cwd ? `\n   cwd: ${session.cwd}` : ''}`
-      )),
-      `${candidates.length + 1}. 新建会话`,
+      ...candidates.map(formatSessionChoice),
+      `${candidates.length + 1}. 新建任务`,
     ].join('\n'))),
   };
 }
@@ -96,7 +102,7 @@ const codingAgentTool: ToolDefinition<CodingAgentParams> = {
             type: 'string',
             enum: ['send', 'status', 'sessions', 'stop'],
             description:
-              'send submits a task asynchronously; status checks progress on explicit user request; sessions lists resumable Codex sessions; stop releases the selected project binding.',
+              'send submits a task asynchronously; status checks progress on explicit user request; sessions lists resumable Codex tasks; stop releases the selected project binding.',
           },
           agent: {
             type: 'string',
@@ -112,7 +118,7 @@ const codingAgentTool: ToolDefinition<CodingAgentParams> = {
           },
           resume_session_id: {
             type: 'string',
-            description: 'Optional Codex/agent session or thread id selected by the user.',
+            description: 'Optional Codex task/thread id selected by the user.',
           },
           model: {
             type: 'string',
@@ -183,15 +189,13 @@ const codingAgentTool: ToolDefinition<CodingAgentParams> = {
       const candidates = await listCodexSessionCandidates({ cwd: params.cwd, limit: 5 });
       if (!candidates.length) {
         const message = params.cwd
-          ? `没有找到目录 ${params.cwd} 对应的可恢复 Codex 会话。`
-          : '没有找到可恢复 Codex 会话。';
+          ? `没有找到目录 ${params.cwd} 对应的可恢复 Codex 任务。`
+          : '没有找到可恢复 Codex 任务。';
         return toolResult('已查询', '回复用户', resultText(message));
       }
       return toolResult('已查询', '回复用户', resultText([
-        params.cwd ? `最近可恢复的 Codex 会话（目录：${params.cwd}）：` : '最近可恢复的 Codex 会话：',
-        ...candidates.map((session, index) => (
-          `${index + 1}. ${session.id}${session.cwd ? `\n   cwd: ${session.cwd}` : ''}`
-        )),
+        params.cwd ? `最近可恢复的 Codex 任务（目录：${params.cwd}）：` : '最近可恢复的 Codex 任务：',
+        ...candidates.map(formatSessionChoice),
       ].join('\n')));
     }
 
