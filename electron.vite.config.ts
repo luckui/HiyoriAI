@@ -7,7 +7,8 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: {
-          index: resolve('electron/main.ts')
+          index: resolve('electron/main.ts'),
+          minecraftWorker: resolve('electron/minecraft/workerEntry.ts')
         }
       }
     }
