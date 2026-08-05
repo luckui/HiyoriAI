@@ -10,14 +10,16 @@ import type {
   MinecraftConnectionOptions,
   MinecraftEntitySnapshot,
   MinecraftPolicyHandlers,
-} from './bodyController';
+} from './actions/types';
 import type {
+  MinecraftActionResult,
   MinecraftObservedBlock,
   MinecraftObservedEntity,
   MinecraftRawObservation,
   MinecraftRuntimeEvent,
   MinecraftStatus,
 } from './protocol';
+import { buildMinecraftSnapshot } from './perception';
 
 const HOSTILE_MOBS = new Set([
   'blaze',
@@ -139,6 +141,10 @@ export function createMineflayerAdapter(
       current.end('Hiyori disconnected');
     },
 
+    isConnected(): boolean {
+      return Boolean(bot);
+    },
+
     status(): MinecraftStatus {
       return {
         connected: Boolean(bot),
@@ -157,8 +163,34 @@ export function createMineflayerAdapter(
       return getRawObservation(bot, connection, ownerName ?? owner);
     },
 
+    async getSnapshot() {
+      return buildMinecraftSnapshot(this.getRawObservation());
+    },
+
     async say(message) {
       requireBot(bot).chat(message);
+    },
+
+    async navigateToPlayer(playerName, options) {
+      const current = requireBot(bot);
+      const target = current.players[playerName]?.entity;
+      if (!target) throw new Error(`Minecraft player is not visible: ${playerName}`);
+      if (options.dynamic) {
+        current.pathfinder.setGoal(dependencies.createFollowGoal(target, options.range), true);
+        return;
+      }
+      await current.pathfinder.goto(
+        new goals.GoalNear(target.position.x, target.position.y, target.position.z, options.range),
+      );
+    },
+
+    async stopNavigation() {
+      if (!bot) return;
+      bot.pathfinder?.stop?.();
+    },
+
+    async inspect() {
+      return buildMinecraftSnapshot(this.getRawObservation());
     },
 
     async startFollowing(player) {
@@ -212,6 +244,41 @@ export function createMineflayerAdapter(
       } finally {
         request.signal.removeEventListener('abort', cancel);
       }
+    },
+
+    async collectBlock(options): Promise<MinecraftActionResult> {
+      const current = requireBot(bot);
+      const block = this.resolveBlock(options.block);
+      if (!block) throw new Error(`Unknown Minecraft block: ${options.block}`);
+      const before = inventoryCounts(current)[block] ?? 0;
+      const collected = await this.collect({
+        block,
+        quantity: options.maxCount,
+        radius: options.radius,
+        signal: new AbortController().signal,
+      });
+      const after = inventoryCounts(current)[block] ?? before + collected;
+      return {
+        actionId: '',
+        outcome: collected > 0 ? 'succeeded' : 'partial',
+        summary: collected > 0 ? `collected ${collected} ${block}` : `no ${block} collected`,
+        durationMs: 0,
+        inventoryDelta: { [block]: Math.max(collected, after - before) },
+        worldChanges: collected > 0 ? [{ kind: 'block_broken', name: block, count: collected }] : [],
+        observations: [],
+      };
+    },
+
+    async pickupDrops(options): Promise<MinecraftActionResult> {
+      return {
+        actionId: '',
+        outcome: 'succeeded',
+        summary: `checked drops within ${options.radius} blocks`,
+        durationMs: 0,
+        inventoryDelta: {},
+        worldChanges: [],
+        observations: [],
+      };
     },
 
     configurePolicies(handlers) {

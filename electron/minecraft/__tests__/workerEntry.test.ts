@@ -7,7 +7,10 @@ function createController(): WorkerController {
     connect: vi.fn(async (payload) => ({ connected: true, ...payload })),
     disconnect: vi.fn(async () => undefined),
     status: vi.fn(() => ({ connected: true })),
+    snapshot: vi.fn(async () => ({ connection: { connected: true } })),
     say: vi.fn(async () => undefined),
+    executeAction: vi.fn(async (instruction) => ({ actionId: instruction.id, outcome: 'succeeded' })),
+    cancelAction: vi.fn(async () => true),
     follow: vi.fn(async (payload) => ({ state: 'following', ...payload })),
     collect: vi.fn(async () => ({ state: 'running', jobId: 'job-1' })),
     stop: vi.fn(async () => undefined),
@@ -60,6 +63,27 @@ describe('Minecraft worker dispatcher', () => {
         error: 'not connected',
       },
     ]);
+  });
+
+  it('routes runtime action commands to the controller', async () => {
+    const sent: MinecraftWorkerMessage[] = [];
+    const controller = createController();
+    const dispatch = createWorkerDispatcher(controller, (message) => sent.push(message));
+
+    await dispatch({
+      type: 'command',
+      id: 'request-3',
+      action: 'execute-action',
+      payload: { id: 'act-1', name: 'inspect', args: { radius: 12 } },
+    });
+
+    expect(controller.executeAction).toHaveBeenCalledWith({ id: 'act-1', name: 'inspect', args: { radius: 12 } });
+    expect(sent[0]).toMatchObject({
+      type: 'response',
+      id: 'request-3',
+      ok: true,
+      data: { actionId: 'act-1', outcome: 'succeeded' },
+    });
   });
 
   it('disconnects cleanly when the parent IPC channel closes', async () => {
