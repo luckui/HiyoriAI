@@ -22,6 +22,14 @@ export interface LanDiscoveryOptions {
   probe?: (host: string, port: number) => Promise<boolean>;
 }
 
+export function decodeLanAnnouncement(buffer: Uint8Array): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+  } catch {
+    return new TextDecoder('gb18030').decode(buffer);
+  }
+}
+
 export function parseLanAnnouncement(
   message: string,
   sourceAddress: string,
@@ -92,7 +100,7 @@ async function listenForLanAnnouncements(
     socket.on('error', finish);
     socket.on('message', (buffer, remote) => {
       announcements.push({
-        message: buffer.toString('utf8'),
+        message: decodeLanAnnouncement(buffer),
         sourceAddress: remote.address,
       });
     });
@@ -123,4 +131,3 @@ async function probeTcpEndpoint(host: string, port: number): Promise<boolean> {
     socket.once('error', () => finish(false));
   });
 }
-

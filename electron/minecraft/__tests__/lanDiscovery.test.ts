@@ -1,11 +1,24 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   discoverLanRooms,
+  decodeLanAnnouncement,
   parseLanAnnouncement,
   type LanAnnouncement,
 } from '../lanDiscovery';
 
 describe('parseLanAnnouncement', () => {
+  it('decodes Java LAN announcements from UTF-8 or Windows Chinese encoding', () => {
+    const gbkMessage = Buffer.concat([
+      Buffer.from('[MOTD]GeoLingua - ', 'ascii'),
+      Buffer.from([0xb2, 0xe2, 0xca, 0xd4]),
+      Buffer.from('[/MOTD][AD]60131[/AD]', 'ascii'),
+    ]);
+
+    expect(decodeLanAnnouncement(gbkMessage)).toBe(
+      '[MOTD]GeoLingua - 测试[/MOTD][AD]60131[/AD]',
+    );
+  });
+
   it('parses a valid Minecraft LAN announcement', () => {
     expect(
       parseLanAnnouncement(
