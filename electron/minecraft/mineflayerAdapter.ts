@@ -67,6 +67,7 @@ export function createMineflayerAdapter(
     shouldDefendAgainst: (entity) => entity.kind === 'hostile',
   };
   let lastHealth = 20;
+  let intentionalDisconnect = false;
 
   return {
     async connect(options) {
@@ -76,6 +77,7 @@ export function createMineflayerAdapter(
       }
       owner = options.owner;
       connection = options;
+      intentionalDisconnect = false;
       bot = dependencies.createBot({
         host: options.host,
         port: options.port,
@@ -97,7 +99,10 @@ export function createMineflayerAdapter(
         lastHealth = bot.health;
       });
       bot.on('end', (reason: string) => {
-        emit({ kind: 'disconnected', reason: reason || 'Minecraft connection ended' });
+        if (!intentionalDisconnect) {
+          emit({ kind: 'disconnected', reason: reason || 'Minecraft connection ended' });
+        }
+        intentionalDisconnect = false;
         bot = undefined;
       });
       bot.on('kicked', (reason: unknown) => {
@@ -118,6 +123,7 @@ export function createMineflayerAdapter(
     async disconnect() {
       if (!bot) return;
       const current = bot;
+      intentionalDisconnect = true;
       bot = undefined;
       current.autoEat?.disableAuto?.();
       await current.pvp?.stop?.();

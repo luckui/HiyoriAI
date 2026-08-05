@@ -117,4 +117,22 @@ describe('createMineflayerAdapter', () => {
     expect(createBot).toHaveBeenCalledTimes(1);
     expect(adapter.status().owner).toBe('GeoLingua');
   });
+
+  it('does not report an intentional disconnect as an unexpected connection loss', async () => {
+    const events: MinecraftRuntimeEvent[] = [];
+    const bot = createFakeBot();
+    const adapter = createMineflayerAdapter((event) => events.push(event), {
+      createBot: () => bot,
+      plugins: [vi.fn(), vi.fn(), vi.fn(), vi.fn()],
+      createFollowGoal: vi.fn(),
+    });
+    const connected = adapter.connect({ host: '127.0.0.1', port: 1, username: 'Hiyori' });
+    bot.emit('spawn');
+    await connected;
+
+    await adapter.disconnect();
+    bot.emit('end', 'Hiyori disconnected');
+
+    expect(events).not.toContainEqual(expect.objectContaining({ kind: 'disconnected' }));
+  });
 });
