@@ -127,4 +127,16 @@ describe('async bridge delivery', () => {
     expect(delivered).toBe('pending');
     expect(consumePendingBridgeMessages('wechat', 'wx-user-2')).toEqual(['Final answer']);
   });
+
+  it('delivers final replies to the supplied Minecraft player', async () => {
+    const sendMinecraft = vi.fn(async () => {});
+
+    const delivered = await deliverReplyToTarget({ sendMinecraft }, {
+      kind: 'minecraft',
+      player: 'GeoLingua',
+    }, 'Final answer');
+
+    expect(delivered).toBe('sent');
+    expect(sendMinecraft).toHaveBeenCalledWith('GeoLingua', 'Final answer');
+  });
 });

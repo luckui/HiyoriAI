@@ -1,4 +1,4 @@
-export type BridgePlatform = 'discord' | 'wechat' | 'feishu';
+export type BridgePlatform = 'discord' | 'wechat' | 'feishu' | 'minecraft';
 
 export interface BridgeRoute {
   conversationId: string;
@@ -11,11 +11,13 @@ export type ReplyTarget =
   | { kind: 'desktop' }
   | { kind: 'discord'; channelId: string; userId?: string }
   | { kind: 'feishu'; chatId: string; userId?: string }
-  | { kind: 'wechat'; userId: string; delivery: 'pending' };
+  | { kind: 'wechat'; userId: string; delivery: 'pending' }
+  | { kind: 'minecraft'; player: string };
 
 export interface BridgeDeliveryAdapter {
   sendDiscord?: (channelId: string, text: string) => Promise<void>;
   sendFeishu?: (chatId: string, text: string) => Promise<void>;
+  sendMinecraft?: (player: string, text: string) => Promise<void>;
 }
 
 type RouteResult = 'sent' | 'pending' | 'none' | 'failed';
@@ -42,6 +44,9 @@ export function getReplyTargetForConversation(conversationId: string): ReplyTarg
   }
   if (route.platform === 'feishu' && route.channelId) {
     return { kind: 'feishu', chatId: route.channelId, userId: route.userId };
+  }
+  if (route.platform === 'minecraft' && route.userId) {
+    return { kind: 'minecraft', player: route.userId };
   }
   return undefined;
 }
@@ -89,6 +94,16 @@ export async function routeAsyncBridgeMessage(
     }
   }
 
+  if (route.platform === 'minecraft' && route.userId && adapter.sendMinecraft) {
+    try {
+      await adapter.sendMinecraft(route.userId, text);
+      return 'sent';
+    } catch (error) {
+      console.warn('[BridgeDelivery] Minecraft async delivery failed:', (error as Error).message);
+      return 'failed';
+    }
+  }
+
   return 'none';
 }
 
@@ -117,6 +132,17 @@ export async function deliverReplyToTarget(
       return 'sent';
     } catch (error) {
       console.warn('[BridgeDelivery] Feishu reply delivery failed:', (error as Error).message);
+      return 'failed';
+    }
+  }
+
+  if (target.kind === 'minecraft') {
+    if (!adapter.sendMinecraft) return 'none';
+    try {
+      await adapter.sendMinecraft(target.player, text);
+      return 'sent';
+    } catch (error) {
+      console.warn('[BridgeDelivery] Minecraft reply delivery failed:', (error as Error).message);
       return 'failed';
     }
   }

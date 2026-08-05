@@ -349,9 +349,14 @@ async function _callWithToolLoopInternal(
  * - 若 toolRegistry 注册了工具，自动启用 Function Calling 并处理多轮工具循环
  * - 第一轮对话自动以用户首句命名对话
  */
+export interface ChatRequestContext {
+  sourceContext?: string;
+}
+
 export async function sendChatMessage(
   conversationId: string,
-  userContent: string
+  userContent: string,
+  requestContext: ChatRequestContext = {},
 ): Promise<{ content: string; created_at: number }> {
   const provider = aiConfig.providers[aiConfig.activeProvider];
   if (!provider) throw new Error(`未找到 provider: ${aiConfig.activeProvider}`);
@@ -386,7 +391,10 @@ export async function sendChatMessage(
       : globalMemoryManager.buildGlobalMemoryAppend()
   );
 
-  const systemContent = basePrompt + skillTopics + memoryAppend;
+  const sourceAppend = requestContext.sourceContext?.trim()
+    ? `\n\n【当前消息来源】\n${requestContext.sourceContext.trim()}`
+    : '';
+  const systemContent = basePrompt + skillTopics + memoryAppend + sourceAppend;
 
   const messages: ChatMessage[] = [
     ...(systemContent ? [{ role: 'system' as const, content: systemContent }] : []),
