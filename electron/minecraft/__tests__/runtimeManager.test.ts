@@ -94,6 +94,34 @@ describe('MinecraftRuntimeManager', () => {
     );
   });
 
+  it('stores action origins by goal instead of collection-only state', async () => {
+    const manager = new MinecraftRuntimeManager();
+
+    await manager.startGoal({
+      id: 'goal-1',
+      title: 'collect nearby sugar cane',
+      origin: { source: 'minecraft', conversationId: 'conversation-1' },
+    });
+
+    expect(manager.getGoal('goal-1')?.origin.source).toBe('minecraft');
+    expect(manager.getGoal('goal-1')?.status).toBe('running');
+  });
+
+  it('dedupes significant terminal events before notifying main integration', () => {
+    const notify = vi.fn();
+    const manager = new MinecraftRuntimeManager({ notify });
+
+    manager.startGoal({
+      id: 'goal-1',
+      title: 'collect nearby sugar cane',
+      origin: { source: 'desktop', conversationId: 'conversation-1' },
+    });
+    manager.recordSignificantEvent('goal-1', { kind: 'completed', text: 'done' });
+    manager.recordSignificantEvent('goal-1', { kind: 'completed', text: 'done' });
+
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
   it('shuts down the worker cleanly', async () => {
     const child = new FakeChild();
     const manager = new MinecraftRuntimeManager({ spawnWorker: () => child as any });

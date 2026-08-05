@@ -4,7 +4,9 @@ import { join } from 'node:path';
 import type { ReplyTarget } from '../bridges/asyncDelivery';
 import type {
   MinecraftAction,
+  MinecraftActionResult,
   MinecraftCommand,
+  MinecraftEnvironmentSnapshot,
   MinecraftRuntimeEvent,
   MinecraftTerminalEvent,
   MinecraftWorkerMessage,
@@ -19,6 +21,26 @@ interface PendingRequest {
 export interface MinecraftCommandOrigin {
   conversationId: string;
   replyTarget?: ReplyTarget;
+}
+
+export interface MinecraftGoalOrigin {
+  conversationId?: string;
+  source: 'desktop' | 'discord' | 'wechat' | 'feishu' | 'minecraft';
+  replyTarget?: ReplyTarget;
+}
+
+export interface MinecraftGoalState {
+  id: string;
+  title: string;
+  origin: MinecraftGoalOrigin;
+  status: 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';
+  lastSnapshot?: MinecraftEnvironmentSnapshot;
+  lastResult?: MinecraftActionResult;
+}
+
+export interface MinecraftSignificantEvent {
+  kind: string;
+  text: string;
 }
 
 export interface AcceptedCollection {
@@ -36,11 +58,14 @@ export type MinecraftNotifier = (
 
 export interface MinecraftRuntimeManagerOptions {
   spawnWorker?: () => ChildProcess;
+  notify?: (goal: MinecraftGoalState, event: MinecraftSignificantEvent) => void | Promise<void>;
 }
 
 export class MinecraftRuntimeManager {
   private child?: ChildProcess;
   private readonly pending = new Map<string, PendingRequest>();
+  private readonly goals = new Map<string, MinecraftGoalState>();
+  private readonly significantEventKeys = new Set<string>();
   private readonly collectionOrigins = new Map<string, MinecraftCommandOrigin>();
   private readonly listeners = new Set<(event: MinecraftRuntimeEvent) => void>();
   private notifier?: MinecraftNotifier;
@@ -64,6 +89,35 @@ export class MinecraftRuntimeManager {
   onEvent(listener: (event: MinecraftRuntimeEvent) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  async startGoal(input: {
+    id: string;
+    title: string;
+    origin: MinecraftGoalOrigin;
+  }): Promise<MinecraftGoalState> {
+    const goal: MinecraftGoalState = {
+      id: input.id,
+      title: input.title,
+      origin: input.origin,
+      status: 'running',
+    };
+    this.goals.set(goal.id, goal);
+    return goal;
+  }
+
+  getGoal(id: string): MinecraftGoalState | undefined {
+    return this.goals.get(id);
+  }
+
+  recordSignificantEvent(goalId: string, event: MinecraftSignificantEvent): void {
+    const goal = this.goals.get(goalId);
+    if (!goal) return;
+    const key = `${goalId}:${event.kind}:${event.text}`;
+    if (this.significantEventKeys.has(key)) return;
+    this.significantEventKeys.add(key);
+    goal.status = statusForEvent(event.kind, goal.status);
+    void this.options.notify?.(goal, event);
   }
 
   async command<T = unknown>(
@@ -200,4 +254,15 @@ function spawnMinecraftWorker(): ChildProcess {
 
 export function describeMinecraftTerminalEvent(event: MinecraftTerminalEvent): string {
   return `${event.block}: ${event.collected}/${event.requested} (${event.outcome})`;
+}
+
+function statusForEvent(
+  kind: string,
+  current: MinecraftGoalState['status'],
+): MinecraftGoalState['status'] {
+  if (kind === 'completed') return 'completed';
+  if (kind === 'failed') return 'failed';
+  if (kind === 'cancelled') return 'cancelled';
+  if (kind === 'waiting') return 'waiting';
+  return current;
 }
