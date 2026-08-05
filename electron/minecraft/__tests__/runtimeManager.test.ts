@@ -31,7 +31,9 @@ describe('MinecraftRuntimeManager', () => {
     const child = new FakeChild();
     const manager = new MinecraftRuntimeManager({ spawnWorker: () => child as any });
 
+    expect(manager.hasActiveWorker()).toBe(false);
     const pending = manager.command('status', {});
+    expect(manager.hasActiveWorker()).toBe(true);
     child.reply(0, { connected: true });
 
     await expect(pending).resolves.toEqual({ connected: true });

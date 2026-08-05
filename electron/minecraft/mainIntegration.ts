@@ -1,8 +1,10 @@
 import type { ChatRequestContext } from '../aiService';
 import type { ReplyTarget } from '../bridges/asyncDelivery';
+import { formatMinecraftRuntimeContext, registerRuntimeContextProvider } from '../runtimeContext';
 import { MinecraftChatChannel, type MinecraftExternalTurn } from './chatChannel';
 import type {
   MinecraftAction,
+  MinecraftEnvironmentSnapshot,
   MinecraftRuntimeEvent,
   MinecraftStatus,
 } from './protocol';
@@ -14,6 +16,7 @@ import type {
 interface MinecraftMainRuntime {
   onEvent(listener: (event: MinecraftRuntimeEvent) => void): () => void;
   command<T = unknown>(action: MinecraftAction, payload: unknown): Promise<T>;
+  hasActiveWorker?(): boolean;
   setNotifier(notifier: MinecraftNotifier): void;
   currentOrigin(): MinecraftCommandOrigin | undefined;
   shutdown(): Promise<void>;
@@ -52,6 +55,12 @@ export function configureMinecraftMainIntegration(
   });
   channel.start();
 
+  const unregisterRuntimeContext = registerRuntimeContextProvider('minecraft', async () => {
+    if (dependencies.runtime.hasActiveWorker?.() === false) return null;
+    const snapshot = await dependencies.runtime.command<MinecraftEnvironmentSnapshot>('snapshot', {});
+    return formatMinecraftRuntimeContext(snapshot);
+  });
+
   dependencies.runtime.setNotifier((origin, event) => {
     dependencies.sendWakeup(
       origin.conversationId,
@@ -63,6 +72,7 @@ export function configureMinecraftMainIntegration(
   return {
     whenIdle: () => channel.whenIdle(),
     async shutdown(): Promise<void> {
+      unregisterRuntimeContext();
       channel.stop();
       await dependencies.runtime.shutdown();
     },

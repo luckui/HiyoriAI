@@ -14,6 +14,7 @@ import { buildAgentPrompt } from './prompts/agent';
 import { buildDeveloperPrompt } from './prompts/developer';
 import { buildStreamerPrompt } from './prompts/streamer';
 import { browserSession } from './tools/impl/browserSession';
+import { buildRuntimeContext } from './runtimeContext';
 
 // ── 工具调用调试事件 ─────────────────────────────────────
 /** 单次工具调用的调试记录（推送给渲染层展示） */
@@ -394,7 +395,11 @@ export async function sendChatMessage(
   const sourceAppend = requestContext.sourceContext?.trim()
     ? `\n\n【当前消息来源】\n${requestContext.sourceContext.trim()}`
     : '';
-  const systemContent = basePrompt + skillTopics + memoryAppend + sourceAppend;
+  const runtimeContext = await buildRuntimeContext();
+  const runtimeAppend = runtimeContext.trim()
+    ? `\n\n[Runtime Context]\n${runtimeContext.trim()}`
+    : '';
+  const systemContent = basePrompt + skillTopics + memoryAppend + sourceAppend + runtimeAppend;
 
   const messages: ChatMessage[] = [
     ...(systemContent ? [{ role: 'system' as const, content: systemContent }] : []),

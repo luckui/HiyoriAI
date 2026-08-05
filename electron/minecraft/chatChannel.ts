@@ -103,15 +103,8 @@ export function shouldAcceptChat(
 }
 
 function buildSourceContext(status: MinecraftStatus, player: string): string {
-  const behavior =
-    status.behavior.kind === 'idle'
-      ? 'idle'
-      : status.behavior.kind === 'follow'
-        ? `follow ${status.behavior.player}`
-        : `collect ${status.behavior.block}`;
   return [
     `当前消息来自 Minecraft 玩家 ${player}。`,
-    'Hiyori 已作为游戏角色连接；直接自然回复玩家，不需要打开网页或另找发送渠道。',
-    `当前动作：${behavior}；生命：${status.health ?? 'unknown'}；饥饿：${status.food ?? 'unknown'}。`,
+    `Hiyori 已作为游戏角色 ${status.username ?? 'unknown'} 连接；直接自然回复玩家，不需要打开网页或另找发送渠道。`,
   ].join('\n');
 }

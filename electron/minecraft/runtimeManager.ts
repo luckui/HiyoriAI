@@ -164,6 +164,10 @@ export class MinecraftRuntimeManager {
     return this.pending.size;
   }
 
+  hasActiveWorker(): boolean {
+    return Boolean(this.child);
+  }
+
   async shutdown(): Promise<void> {
     if (this.shuttingDown) return;
     this.shuttingDown = true;
