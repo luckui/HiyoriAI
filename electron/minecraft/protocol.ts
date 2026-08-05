@@ -4,9 +4,27 @@ export type MinecraftAction =
   | 'disconnect'
   | 'status'
   | 'say'
+  | 'snapshot'
+  | 'execute-action'
+  | 'cancel-action'
   | 'follow'
   | 'collect'
   | 'stop';
+
+export type {
+  MinecraftActionErrorCode,
+  MinecraftActionInstruction,
+  MinecraftActionName,
+  MinecraftActionResult,
+  MinecraftEnvironmentSnapshot,
+  MinecraftFact,
+  MinecraftFollowPhase,
+  MinecraftObservedBlock,
+  MinecraftObservedEntity,
+  MinecraftPlannerDecision,
+  MinecraftWorkerCommand,
+  MinecraftWorldChange,
+} from './contracts';
 
 export interface MinecraftCommand<T = unknown> {
   type: 'command';
@@ -74,4 +92,3 @@ export type MinecraftWorkerMessage =
   | { type: 'response'; id: string; ok: true; data: unknown }
   | { type: 'response'; id: string; ok: false; error: string }
   | { type: 'event'; event: MinecraftRuntimeEvent };
-
