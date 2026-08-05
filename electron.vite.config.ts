@@ -1,11 +1,22 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import { resolve } from 'path';
 
+const minecraftWorkerExternalDeps = [
+  'mineflayer',
+  'mineflayer-auto-eat',
+  'mineflayer-collectblock',
+  'mineflayer-pathfinder',
+  'mineflayer-pvp',
+  'mineflayer-tool',
+  'protodef',
+];
+
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
+        external: minecraftWorkerExternalDeps,
         input: {
           index: resolve('electron/main.ts'),
           minecraftWorker: resolve('electron/minecraft/workerEntry.ts')
