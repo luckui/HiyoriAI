@@ -40,6 +40,21 @@ contextBridge.exposeInMainWorld('chatAPI', {
     ipcRenderer.on('chat:agent-wakeup', handler);
     return () => { ipcRenderer.removeListener('chat:agent-wakeup', handler); };
   },
+  onExternalTurn: (cb: (payload: {
+    conversationId: string;
+    user: string;
+    assistant: string;
+    createdAt: number;
+  }) => void) => {
+    const handler = (_e: unknown, payload: {
+      conversationId: string;
+      user: string;
+      assistant: string;
+      createdAt: number;
+    }) => cb(payload);
+    ipcRenderer.on('chat:external-turn', handler);
+    return () => { ipcRenderer.removeListener('chat:external-turn', handler); };
+  },
 });
 
 contextBridge.exposeInMainWorld('settingsAPI', {

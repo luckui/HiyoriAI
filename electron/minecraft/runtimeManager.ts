@@ -57,6 +57,10 @@ export class MinecraftRuntimeManager {
     this.lastOrigin = origin;
   }
 
+  currentOrigin(): MinecraftCommandOrigin | undefined {
+    return this.lastOrigin;
+  }
+
   onEvent(listener: (event: MinecraftRuntimeEvent) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -197,4 +201,3 @@ function spawnMinecraftWorker(): ChildProcess {
 export function describeMinecraftTerminalEvent(event: MinecraftTerminalEvent): string {
   return `${event.block}: ${event.collected}/${event.requested} (${event.outcome})`;
 }
-

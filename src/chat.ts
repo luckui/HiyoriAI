@@ -47,6 +47,12 @@ declare global {
       onAgentMessage?(cb: (payload: { conversationId: string; content: string }) => void): () => void;
       /** 监听 background/batch 任务完成后的主对话 AI 唤醒（触发新轮工作流） */
       onWakeup?(cb: (payload: { conversationId: string; text: string; replyTarget?: unknown }) => void): () => void;
+      onExternalTurn?(cb: (payload: {
+        conversationId: string;
+        user: string;
+        assistant: string;
+        createdAt: number;
+      }) => void): () => void;
     };
     appLifecycleAPI?: {
       onQuitting(cb: () => void): void;
@@ -1496,6 +1502,16 @@ export async function initChat(): Promise<void> {
     if (!_chatExpanded) {
       showTypewriterBubble(payload.content, payload.content.length * 60);
     }
+  });
+
+  window.chatAPI?.onExternalTurn?.((payload) => {
+    if (payload.conversationId !== currentConversationId) return;
+    addMessage('user', payload.user, true, payload.createdAt);
+    addMessage('ai', payload.assistant, true, payload.createdAt);
+    if (!_chatExpanded) {
+      showTypewriterBubble(payload.assistant, payload.assistant.length * 60);
+    }
+    void refreshConvTitle(payload.conversationId);
   });
 
   // ── background/batch 异步任务完成 → 唤醒主对话 AI 继续工作流 ──────

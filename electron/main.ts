@@ -123,6 +123,8 @@ import { hearingManager } from './hearingManager';
 import { taskManager } from './taskManager';
 import { setScheduleReminderNotifier, taskScheduler } from './taskScheduler';
 import { initLive2DBridge } from './live2dBridge';
+import { minecraftRuntime } from './minecraft';
+import { configureMinecraftMainIntegration } from './minecraft/mainIntegration';
 import type { AvatarConfig } from './avatar/avatarConfig';
 import { DEFAULT_AVATAR_CONFIG } from './avatar/avatarConfig';
 import {
@@ -429,6 +431,7 @@ function parseReplyTargetFromMetadata(metadata: string | null): ReplyTarget | un
     if (target.kind === 'desktop') return target;
     if (target.kind === 'discord' && typeof target.channelId === 'string') return target;
     if (target.kind === 'feishu' && typeof target.chatId === 'string') return target;
+    if (target.kind === 'minecraft' && typeof target.player === 'string') return target;
     if (target.kind === 'wechat' && typeof target.userId === 'string') {
       return { kind: 'wechat', userId: target.userId, delivery: 'pending' };
     }
@@ -453,6 +456,9 @@ async function deliverReplyTarget(replyTarget: ReplyTarget | undefined, text: st
         throw new Error('Feishu adapter is not online.');
       }
       await adapter.sendReply(chatId, content);
+    },
+    sendMinecraft: async (_player, content) => {
+      await minecraftRuntime.command('say', { message: content });
     },
   }, replyTarget, text);
 }
@@ -490,6 +496,7 @@ let activeConversationId: string | null = null;
 
 /** 全局窗口引用，用于向渲染层推送退出状态 */
 let mainWin: BrowserWindow | null = null;
+let minecraftIntegration: ReturnType<typeof configureMinecraftMainIntegration> | undefined;
 
 function createWindow(): void {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
@@ -1299,6 +1306,18 @@ app.whenReady().then(() => {
   const defaultConvId = existingConvs.length > 0
     ? existingConvs[0].id
     : createConversation().id;
+  minecraftIntegration = configureMinecraftMainIntegration({
+    runtime: minecraftRuntime,
+    sendChatMessage,
+    playTTS: playTTSAudio,
+    sendWakeup: sendAgentWakeup,
+    getFallbackConversationId: () => activeConversationId ?? defaultConvId,
+    mirror: (turn) => {
+      if (!mainWin || mainWin.isDestroyed() || mainWin.webContents.isDestroyed()) return;
+      mainWin.webContents.send('chat:external-turn', turn);
+    },
+    onError: (error) => console.error('[Minecraft Chat] turn failed:', error.message),
+  });
   startBridges(defaultConvId, bridgeConfig).catch((e) =>
     console.error('[Bridges] 启动失败:', (e as Error).message)
   );
@@ -1322,6 +1341,7 @@ app.whenReady().then(() => {
 let isQuitting = false;
 
 app.on('before-quit', (event) => {
+  void minecraftIntegration?.shutdown();
   // 停止定时任务调度器
   taskScheduler.stop();
 
