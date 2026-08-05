@@ -25,8 +25,8 @@ Phase 1 supports:
 - Collecting a named block in a bounded radius and bounded quantity.
 - Automatically eating available food when needed.
 - Basic reactive defense against nearby hostile mobs without attacking players.
-- Asynchronously notifying the originating Hiyori conversation when a bounded
-  collection command finishes or fails.
+- Notifying the originating Hiyori conversation when a bounded collection
+  command finishes or fails.
 
 Phase 1 does not include a settings UI, building blueprints, image-to-block
 construction, farming workflows, automatic game completion, public-server
@@ -66,6 +66,32 @@ collection command. Completion and failure use the existing agent wake-up route,
 so desktop, Discord, WeChat claim flow, and Feishu retain their existing delivery
 semantics. Following is continuous and does not generate completion wake-ups.
 
+### Minecraft chat channel
+
+Minecraft chat is a first-class Hiyori message channel at the same boundary as
+Discord, WeChat, and Feishu. A player chat event enters the existing Hiyori
+conversation with Minecraft source metadata and a compact current game-state
+snapshot. Hiyori performs the normal single LLM turn; its final text is routed
+back through Mineflayer chat and mirrored in the desktop conversation history.
+There is no second Minecraft personality, prompt stack, or memory store.
+
+When the room contains only the owner and Hiyori, all owner chat is accepted.
+When another human player joins, ordinary messages are accepted only from the
+bound owner; other players must explicitly mention Hiyori. This prevents every
+public room message from creating an LLM turn while retaining natural two-player
+conversation.
+
+### Voice routing
+
+Minecraft replies use Hiyori's existing TTS lifecycle and selected voice. Phase
+1 plays speech through the computer's normal Hiyori audio output while also
+sending the text to Minecraft. The Minecraft runtime never owns a TTS provider.
+
+The channel boundary reserves an optional native Minecraft voice sink for a
+future Simple Voice Chat adapter. That adapter will consume audio synthesized by
+Hiyori and deliver it through the game's voice protocol; it will not introduce a
+second TTS configuration or synthesis pipeline.
+
 ### Hiyori tool
 
 Hiyori receives one high-level tool named `minecraft_companion`. It exposes only
@@ -74,9 +100,10 @@ follow, and collection. It does not expose Mineflayer, pathfinder goals, packet
 ids, child-process ids, or runtime-provider terminology.
 
 Successful connection waits until the bot has spawned. Collection returns as
-soon as the bounded job has been accepted; Hiyori should then reply to the user
-and stop the current turn. The final result arrives through wake-up instead of
-polling. `status` is for an explicit user request, not a required workflow step.
+soon as the runtime has entered the requested collection state; Hiyori should
+then reply to the user and stop the current turn. The final result arrives as a
+completion event through wake-up instead of polling. `status` is for an explicit
+user request, not a required workflow step.
 
 ## Connection Discovery
 
@@ -110,10 +137,14 @@ cancelled, or failed result. It never performs unbounded exploration.
 ### Survival policy
 
 Auto-eating and defense are runtime policies active only while connected.
-Auto-eating uses food already present in inventory. Defense reacts only to nearby
-hostile mobs, never players or neutral entities. It yields back to the foreground
-behavior after the immediate threat ends. Low health favors disengagement over
-continued combat.
+Auto-eating uses food already present in inventory. If hunger is low and no food
+is available, the runtime emits one deduplicated resource-shortage event for that
+hunger episode. Hiyori may ask the owner to provide food. Automatically hunting,
+harvesting crops, or taking food from containers requires a later explicit
+foraging behavior and is not silently attempted in Phase 1. Defense reacts only
+to nearby hostile mobs, never players or neutral entities. It yields back to the
+foreground behavior after the immediate threat ends. Low health favors
+disengagement over continued combat.
 
 ## Errors And Lifecycle
 
@@ -121,6 +152,11 @@ continued combat.
   concise reason suitable for Hiyori to explain.
 - Unexpected disconnects clear the active behavior and wake the originating
   conversation once. There is no automatic reconnect loop in Phase 1.
+- Collection emits exactly one terminal event: completed, partial, cancelled, or
+  failed. The event includes requested and collected quantities and is routed to
+  the channel that initiated the command.
+- Low-food notifications are edge-triggered and deduplicated; they are not sent
+  on every health or physics tick.
 - `stop` is idempotent and leaves the bot connected.
 - `disconnect` is idempotent and shuts down the child-owned bot cleanly.
 - Application shutdown terminates the child process without delaying Electron
@@ -149,8 +185,10 @@ Automated tests cover:
   child process.
 - LAN discovery parsing and zero/one/multiple-room decisions.
 - Tool schema, parameter bounds, state transitions, and user-facing results.
-- Async completion and disconnect wake-ups preserving the originating
+- Completion and disconnect wake-ups preserving the originating
   conversation.
+- Minecraft chat routing, owner filtering after another human joins, desktop
+  history mirroring, and use of the existing TTS output.
 - Worker command dispatch using a fake Mineflayer adapter, including behavior
   replacement and idempotent stop/disconnect.
 
@@ -170,7 +208,8 @@ A manual smoke test uses the verified HMCL Java world:
 - A user can say natural-language equivalents of “join my world”, “follow me”,
   “collect ten oak logs”, “stop”, and “leave the world” without knowing a port or
   Mineflayer terminology.
-- Long collection work does not keep the Hiyori tool loop polling.
+- Long collection work does not keep the Hiyori tool loop polling and does not
+  prevent new chat turns.
 - No Microsoft or HMCL credential is read or stored.
 - Existing coding-agent, scheduling, bridge, TTS, and terminal behavior remains
   unchanged.
