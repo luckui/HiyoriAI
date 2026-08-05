@@ -134,6 +134,96 @@ describe('createMineflayerAdapter', () => {
     ]);
   });
 
+  it('observes arbitrary nearby loaded blocks instead of a hand-written resource whitelist', async () => {
+    const bot = createFakeBot();
+    bot.findBlocks = undefined;
+    bot.entity.position = {
+      x: 0,
+      y: 64,
+      z: 0,
+      offset(dx: number, dy: number, dz: number) {
+        return { x: dx, y: 64 + dy, z: dz };
+      },
+    };
+    bot.blockAt = vi.fn((position: any) => {
+      if (position.x === 1 && position.y === 64 && position.z === 0) {
+        return { position, name: 'white_wool', displayName: 'White Wool', type: 35 };
+      }
+      if (position.x === 0 && position.y === 63 && position.z === 0) {
+        return { position, name: 'grass_block', displayName: 'Grass Block', type: 2 };
+      }
+      if (position.x === 2 && position.y === 64 && position.z === 0) {
+        return { position, name: 'diamond_ore', displayName: 'Diamond Ore', type: 56 };
+      }
+      return { position, name: 'air', type: 0 };
+    });
+
+    const adapter = createMineflayerAdapter(vi.fn(), {
+      createBot: () => bot,
+      plugins: [vi.fn(), vi.fn(), vi.fn(), vi.fn()],
+      createFollowGoal: vi.fn(),
+    });
+    const connected = adapter.connect({ host: '127.0.0.1', port: 1, username: 'Hiyori' });
+    bot.emit('spawn');
+    await connected;
+
+    const snapshot = await adapter.getSnapshot();
+    const names = snapshot.nearby.blocks.map((block) => block.name);
+
+    expect(names).toContain('white_wool');
+    expect(names).toContain('grass_block');
+    expect(names).toContain('diamond_ore');
+    expect(names).not.toContain('air');
+  });
+
+  it('observes nearby passive mobs, hostile mobs, and item drops', async () => {
+    const bot = createFakeBot();
+    bot.entities = {
+      sheep: {
+        id: 21,
+        type: 'mob',
+        name: 'sheep',
+        mobType: 'Sheep',
+        position: { x: 2, y: 64, z: 0 },
+      },
+      creeper: {
+        id: 22,
+        type: 'mob',
+        name: 'creeper',
+        mobType: 'Creeper',
+        position: { x: 4, y: 64, z: 0 },
+      },
+      woolDrop: {
+        id: 23,
+        type: 'object',
+        name: 'item',
+        objectType: 'Item',
+        displayName: 'White Wool',
+        item: { name: 'white_wool', count: 1 },
+        position: { x: 1, y: 64, z: 0 },
+      },
+    };
+
+    const adapter = createMineflayerAdapter(vi.fn(), {
+      createBot: () => bot,
+      plugins: [vi.fn(), vi.fn(), vi.fn(), vi.fn()],
+      createFollowGoal: vi.fn(),
+    });
+    const connected = adapter.connect({ host: '127.0.0.1', port: 1, username: 'Hiyori' });
+    bot.emit('spawn');
+    await connected;
+
+    const snapshot = await adapter.getSnapshot();
+
+    expect(snapshot.nearby.entities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'sheep', hostile: false }),
+        expect.objectContaining({ name: 'creeper', hostile: true }),
+        expect.objectContaining({ name: 'white_wool', type: 'item', hostile: false }),
+      ]),
+    );
+  });
+
   it('harvests reachable whole sugar cane plants without pathing to empty collision boxes', async () => {
     const bot = createFakeBot();
     bot.registry.blocksByName.reeds = { id: 83 };

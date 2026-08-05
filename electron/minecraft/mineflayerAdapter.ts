@@ -52,6 +52,11 @@ const HOSTILE_MOBS = new Set([
   'zombie_villager',
 ]);
 
+const OBSERVATION_RADIUS = 12;
+const OBSERVATION_VERTICAL_RADIUS = 6;
+const MAX_OBSERVED_BLOCKS = 256;
+const AIR_BLOCK_NAMES = new Set(['air', 'cave_air', 'void_air']);
+
 const LOG_BLOCK_NAMES = [
   'oak_log',
   'spruce_log',
@@ -397,36 +402,30 @@ function inventoryCounts(bot: any): Record<string, number> {
 }
 
 function visibleBlocks(bot: any): MinecraftObservedBlock[] {
-  const blocksByName = bot.registry?.blocksByName ?? {};
-  const names = [
-    'sugar_cane',
-    'reeds',
-    ...LOG_BLOCK_NAMES,
-    ...LEAF_BLOCK_NAMES,
-    'stone',
-    'iron_ore',
-    'deepslate_iron_ore',
-    'coal_ore',
-    'deepslate_coal_ore',
-  ];
   const seen = new Map<string, MinecraftObservedBlock>();
-  for (const name of names) {
-    const block = blocksByName[name];
-    if (!block || typeof bot.findBlocks !== 'function') continue;
-    const positions = bot.findBlocks({ matching: block.id, maxDistance: 16, count: 16 }) ?? [];
-    for (const position of positions) {
-      const liveBlock = typeof bot.blockAt === 'function' ? bot.blockAt(position) : undefined;
-      const blockName = liveBlock?.name ?? name;
-      const observed: MinecraftObservedBlock = {
-        name: blockName,
-        displayName: liveBlock?.displayName,
-        position: vector(position),
-        distance: distanceToBot(bot, position),
-      };
-      seen.set(`${observed.name}:${observed.position.x}:${observed.position.y}:${observed.position.z}`, observed);
+  const own = bot.entity?.position;
+  if (!own || typeof bot.blockAt !== 'function') return [];
+
+  for (let dx = -OBSERVATION_RADIUS; dx <= OBSERVATION_RADIUS; dx++) {
+    for (let dy = -OBSERVATION_VERTICAL_RADIUS; dy <= OBSERVATION_VERTICAL_RADIUS; dy++) {
+      for (let dz = -OBSERVATION_RADIUS; dz <= OBSERVATION_RADIUS; dz++) {
+        if ((dx * dx) + (dz * dz) > OBSERVATION_RADIUS * OBSERVATION_RADIUS) continue;
+        const position = offset(own, dx, dy, dz);
+        const block = bot.blockAt(position);
+        if (!isObservableBlock(block)) continue;
+        const observed: MinecraftObservedBlock = {
+          name: block.name ?? String(block.type),
+          displayName: block.displayName,
+          position: vector(block.position ?? position),
+          distance: distanceToBot(bot, block.position ?? position),
+        };
+        seen.set(`${observed.name}:${observed.position.x}:${observed.position.y}:${observed.position.z}`, observed);
+      }
     }
   }
-  return [...seen.values()];
+  return [...seen.values()]
+    .sort((left, right) => left.distance - right.distance || left.name.localeCompare(right.name))
+    .slice(0, MAX_OBSERVED_BLOCKS);
 }
 
 function resolveCollectBlock(bot: any, name: string, radius: number): string | null {
@@ -462,15 +461,41 @@ function visibleEntities(bot: any): MinecraftObservedEntity[] {
   return Object.values(bot.entities ?? {})
     .filter((entity: any) => entity !== bot.entity && entity?.position)
     .map((entity: any) => {
-      const name = entity.username ?? entity.name ?? entity.mobType ?? entity.type ?? 'unknown';
+      const entityName = observedEntityName(entity);
+      const type = observedEntityType(entity);
       return {
-        name,
-        type: entity.type ?? 'unknown',
+        name: entityName,
+        type,
         position: vector(entity.position),
         distance: distanceToBot(bot, entity.position),
-        hostile: HOSTILE_MOBS.has(entity.name ?? entity.mobType ?? ''),
+        hostile: HOSTILE_MOBS.has(normalizeEntityName(entity.name ?? entity.mobType ?? entityName)),
       };
     });
+}
+
+function isObservableBlock(block: any): boolean {
+  if (!block) return false;
+  const name = block.name ?? '';
+  if (AIR_BLOCK_NAMES.has(name)) return false;
+  if (typeof block.type === 'number' && block.type === 0) return false;
+  return Boolean(name || block.displayName || block.type);
+}
+
+function observedEntityName(entity: any): string {
+  if (entity.item?.name) return entity.item.name;
+  if (entity.metadata?.item?.name) return entity.metadata.item.name;
+  if (entity.displayName && entity.name === 'item') return entity.displayName;
+  return entity.username ?? normalizeEntityName(entity.name ?? entity.mobType) ?? entity.type ?? 'unknown';
+}
+
+function observedEntityType(entity: any): string {
+  if (entity.item || entity.metadata?.item || entity.name === 'item' || entity.objectType === 'Item') return 'item';
+  return entity.type ?? 'unknown';
+}
+
+function normalizeEntityName(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  return value.trim().toLowerCase().replace(/[\s-]+/g, '_');
 }
 
 function vector(position: any): { x: number; y: number; z: number } {
