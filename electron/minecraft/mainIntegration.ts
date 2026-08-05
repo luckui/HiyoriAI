@@ -2,6 +2,7 @@ import type { ChatRequestContext } from '../aiService';
 import type { ReplyTarget } from '../bridges/asyncDelivery';
 import { formatMinecraftRuntimeContext, registerRuntimeContextProvider } from '../runtimeContext';
 import { MinecraftChatChannel, type MinecraftExternalTurn } from './chatChannel';
+import type { MinecraftGoalRequest } from './cognitionCoordinator';
 import type {
   MinecraftAction,
   MinecraftEnvironmentSnapshot,
@@ -34,6 +35,10 @@ interface MinecraftMainIntegrationDependencies {
   getFallbackConversationId(): string | undefined;
   mirror?(turn: MinecraftExternalTurn): void;
   onError?(error: Error): void;
+  coordinator?: {
+    startGoal(request: MinecraftGoalRequest): Promise<void>;
+    stopGoal(goalId: string): Promise<boolean>;
+  };
 }
 
 export function configureMinecraftMainIntegration(
@@ -71,6 +76,15 @@ export function configureMinecraftMainIntegration(
 
   return {
     whenIdle: () => channel.whenIdle(),
+    async startGoal(request: MinecraftGoalRequest): Promise<void> {
+      if (!dependencies.coordinator) {
+        throw new Error('Minecraft cognition coordinator is not configured');
+      }
+      await dependencies.coordinator.startGoal(request);
+    },
+    async stopGoal(goalId: string): Promise<boolean> {
+      return dependencies.coordinator?.stopGoal(goalId) ?? false;
+    },
     async shutdown(): Promise<void> {
       unregisterRuntimeContext();
       channel.stop();

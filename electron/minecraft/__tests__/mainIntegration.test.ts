@@ -156,6 +156,38 @@ describe('Minecraft main integration', () => {
     expect(await buildRuntimeContext()).toBe('');
   });
 
+  it('exposes optional minecraft goal dispatch through the coordinator', async () => {
+    const fake = createRuntime();
+    const coordinator = {
+      startGoal: vi.fn(async () => undefined),
+      stopGoal: vi.fn(async () => true),
+    };
+    const integration = configureMinecraftMainIntegration({
+      runtime: fake.runtime as any,
+      sendChatMessage: vi.fn(),
+      playTTS: vi.fn(),
+      sendWakeup: vi.fn(),
+      getFallbackConversationId: () => 'fallback',
+      coordinator,
+    });
+
+    await integration.startGoal({
+      id: 'goal-1',
+      title: 'collect cane',
+      instruction: '帮我采甘蔗',
+      origin: { source: 'desktop' },
+    });
+
+    expect(coordinator.startGoal).toHaveBeenCalledWith({
+      id: 'goal-1',
+      title: 'collect cane',
+      instruction: '帮我采甘蔗',
+      origin: { source: 'desktop' },
+    });
+
+    await integration.shutdown();
+  });
+
   it('does not request minecraft snapshots while the worker is inactive', async () => {
     const fake = createRuntime();
     (fake.runtime as any).hasActiveWorker = vi.fn(() => false);
