@@ -1,0 +1,21 @@
+diff --git a/node_modules/mineflayer-tool/lib/Tool.js b/node_modules/mineflayer-tool/lib/Tool.js
+index a51b67f..189d089 100644
+--- a/node_modules/mineflayer-tool/lib/Tool.js
++++ b/node_modules/mineflayer-tool/lib/Tool.js
+@@ -124,6 +124,16 @@ class Tool {
+                             toolCostFilter: (item) => this.getDigTime(block, item),
+                             maxTools: options.maxTools
+                         });
++                        // When chestLocations is empty (or no chest yielded a tool), retrieveTools
++                        // resolves normally. Re-check the inventory here and fail cleanly instead
++                        // of recursing forever, which starves the event loop and OOMs the worker.
++                        const afterItems = this.bot.inventory.items().filter(item => block.canHarvest(item.type));
++                        if (afterItems.length === 0) {
++                            const noToolErr = error('NoItem', 'Bot does not have a harvestable tool!');
++                            if (cb != null)
++                                cb(noToolErr);
++                            throw noToolErr;
++                        }
+                         yield this.equipForBlock(block, options);
+                     }
+                     catch (err) {
