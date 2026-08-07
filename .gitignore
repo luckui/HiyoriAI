@@ -32,7 +32,9 @@ Thumbs.db
 *.tsbuildinfo
 
 devtools/
+# 本地开发文档、设计方案、第三方溯源记录：不提交 GitHub 远端（用户要求）
 docs/
+THIRD_PARTY_NOTICES.md
 .worktrees/
 .tmp-*/
 
