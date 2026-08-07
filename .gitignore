@@ -35,6 +35,11 @@ devtools/
 # 本地开发文档、设计方案、第三方溯源记录：不提交 GitHub 远端（用户要求）
 docs/
 THIRD_PARTY_NOTICES.md
+
+# 测试文件：不提交 GitHub 远端（用户要求：内部开发细节）
+**/__tests__/
+**/*.test.ts
+**/*.spec.ts
 .worktrees/
 .tmp-*/
 
