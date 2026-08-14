@@ -270,7 +270,7 @@ export const minecraftActionTool: ToolDefinition<MinecraftCompanionParams> = {
               'drop_item',
             ],
             description:
-              'One finite Minecraft action. attack_entity auto-guides to the nearest matching entity, attacks, and picks up drops; collect_item auto-locates the source blocks for the goal item and keeps searching/collecting within one call until the requested quantity is reached or no source blocks remain nearby（无需调用 search_block）; craft_item auto-plans and crafts the item (including intermediate materials, a crafting table and furnace smelting when needed); smelt_item smelts furnace products (e.g. iron_ore -> iron_ingot) in a furnace with fuel; place_block places an inventory block on the ground nearby or at an explicit position. Every action returns one factual terminal result.',
+              'One finite Minecraft action. attack_entity auto-guides to the nearest matching entity, attacks, and picks up drops; collect_item auto-locates source blocks, expands its loaded-area search radius when needed, and keeps collecting until the requested NEW item quantity is reached or no source blocks remain（无需调用 search_block）; craft_item auto-plans and crafts the item (including intermediate materials, a crafting table and furnace smelting when needed); smelt_item smelts furnace products (e.g. iron_ore -> iron_ingot) in a furnace with fuel; place_block places an inventory block on the ground nearby or at an explicit position. Every action returns one factual terminal result.',
           },
           block: {
             type: 'string',

@@ -17,6 +17,7 @@ import {
 import { gatherWood } from './gatherWood';
 import { placeBlockAt as airiPlaceBlockAt, breakBlockAt, isReplaceableForPlacement, type PlaceFace } from './placeBlock';
 import { Vec3 } from 'vec3';
+import { runAdaptiveCollection } from './collectionStrategy';
 import type {
   CollectionRequest,
   MinecraftBotAdapter,
@@ -134,6 +135,7 @@ const AIR_BLOCK_NAMES = new Set(['air', 'cave_air', 'void_air']);
 // 可被放置替换的方块判定统一走 placeBlock.isReplaceableForPlacement（按碰撞盒判断）
 const MAX_SCAN_BLOCK_POSITIONS = 1536;
 const MAX_TARGET_ITEM_SWEEPS = 12;
+const MAX_COLLECTION_SEARCH_RADIUS = 128;
 const COMBAT_CHASE_RADIUS = 64;
 const OXYGEN_EMERGENCY_LEVEL = 10;
 const OXYGEN_RECOVERED_LEVEL = 18;
@@ -905,32 +907,47 @@ export function createMineflayerAdapter(
     const brokenByName: Record<string, number> = {};
     let skippedTotal = 0;
     let missingToolTotal = 0;
-    let reached = false;
-    for (let sweep = 1; sweep <= MAX_TARGET_ITEM_SWEEPS && !reached; sweep += 1) {
-      throwIfAborted(options.signal);
-      const swept = await collectBlocks({
-        blocks: sourceBlocks,
-        quantity: options.maxCount,
-        radius: options.radius,
-        signal: options.signal,
-      });
-      brokenTotal += swept.total;
-      skippedTotal += swept.skipped ?? 0;
-      missingToolTotal += swept.missingTool ?? 0;
-      for (const [name, count] of Object.entries(swept.byName)) {
-        brokenByName[name] = (brokenByName[name] ?? 0) + count;
-      }
-      await collectItemDrops(options.radius, options.signal);
-      const after = inventoryCounts(current);
-      const gainedNow = Math.max(0, (after[targetItem] ?? 0) - (before[targetItem] ?? 0));
-      reached = gainedNow >= options.maxCount;
-      emit({
-        kind: 'log',
-        level: 'info',
-        message: `[${options.actionId}] collect_item sweep=${sweep} broken=${brokenTotal} ${targetItem}=${gainedNow}/${options.maxCount}`,
-      });
-      if (swept.total === 0 && !reached) break;
-    }
+    let observedTargetCount = before[targetItem] ?? 0;
+    let sweepNumber = 0;
+    const collection = await runAdaptiveCollection({
+      targetCount: options.maxCount,
+      initialRadius: options.radius,
+      maxRadius: MAX_COLLECTION_SEARCH_RADIUS,
+      maxSweeps: MAX_TARGET_ITEM_SWEEPS,
+      collect: async ({ radius, quantity }) => {
+        throwIfAborted(options.signal);
+        sweepNumber += 1;
+        const swept = await collectBlocks({
+          blocks: sourceBlocks,
+          quantity,
+          radius,
+          signal: options.signal,
+        });
+        brokenTotal += swept.total;
+        skippedTotal += swept.skipped ?? 0;
+        missingToolTotal += swept.missingTool ?? 0;
+        for (const [name, count] of Object.entries(swept.byName)) {
+          brokenByName[name] = (brokenByName[name] ?? 0) + count;
+        }
+        await collectItemDrops(radius, options.signal);
+        const afterSweep = inventoryCounts(current);
+        const currentTargetCount = afterSweep[targetItem] ?? 0;
+        const gainedThisSweep = Math.max(0, currentTargetCount - observedTargetCount);
+        observedTargetCount = currentTargetCount;
+        const gainedTotal = Math.max(0, currentTargetCount - (before[targetItem] ?? 0));
+        emit({
+          kind: 'log',
+          level: 'info',
+          message: `[${options.actionId}] collect_item sweep=${sweepNumber} radius=${radius} requested=${quantity} broken=${brokenTotal} ${targetItem}=${gainedTotal}/${options.maxCount}`,
+        });
+        return {
+          collectedBlocks: swept.total,
+          gainedItems: gainedThisSweep,
+          stop: (swept.missingTool ?? 0) > 0,
+        };
+      },
+    });
+    const reached = collection.reached;
 
     const after = inventoryCounts(current);
     const gained = Math.max(0, (after[targetItem] ?? 0) - (before[targetItem] ?? 0));
@@ -949,8 +966,8 @@ export function createMineflayerAdapter(
       at: Date.now(),
       severity: 'warning',
       kind: 'collect.exhausted',
-      text: `No more ${sourceText} within ${options.radius} blocks${skippedText}${missingToolText}.`,
-      data: { sourceBlocks, radius: options.radius, skipped: skippedTotal, missingTool: missingToolTotal },
+      text: `No more ${sourceText} within ${collection.finalRadius} blocks${skippedText}${missingToolText}.`,
+      data: { sourceBlocks, radius: collection.finalRadius, skipped: skippedTotal, missingTool: missingToolTotal },
     }];
     if (missingToolTotal > 0) {
       observations.push({

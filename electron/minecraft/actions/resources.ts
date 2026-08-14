@@ -5,7 +5,7 @@ export function createResourceActions(): MinecraftActionHandler[] {
     {
       name: 'collect_item',
       async run(instruction, context) {
-        const radius = numberArg(instruction.args.radius, 16, 1, 64);
+        const radius = numberArg(instruction.args.radius, 16, 1, 128);
         const maxCount = numberArg(instruction.args.maxCount ?? instruction.args.quantity, 8, 1, 64);
         const result = await context.adapter.collectItem({
           actionId: instruction.id,
