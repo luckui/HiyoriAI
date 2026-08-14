@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "chcp 65001 > nul && electron-vite dev",
     "build": "chcp 65001 > nul && electron-vite build",
-    "postinstall": "patch-package",
+    "postinstall": "patch-package && electron-rebuild -f -w better-sqlite3",
     "preview": "electron-vite preview",
     "start": "electron-vite preview",
     "test": "vitest run",
@@ -104,6 +104,7 @@
     "nativeRebuilder": "sequential"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.3",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.5.0",
     "electron": "^41.0.2",
