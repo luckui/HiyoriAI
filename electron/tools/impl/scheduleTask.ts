@@ -144,6 +144,13 @@ const scheduleTaskTool: ToolDefinition<ScheduleTaskParams> = {
         } else if (params.instruction?.trim()) {
           return '❌ kind="agent_task" 不使用 instruction；请把后台执行指令放到 prompt';
         }
+        if (params.kind === 'agent_task' && params.toolsets?.includes('minecraft')) {
+          return [
+            '【工具结果】',
+            '状态：unsupported_domain',
+            'Minecraft 游戏目标由 minecraft_goal 管理。当前版本不通过通用定时任务创建 Minecraft 游戏目标。',
+          ].join('\n');
+        }
         if (!params.schedule?.trim()) return '❌ 缺少 schedule 参数';
 
         try {

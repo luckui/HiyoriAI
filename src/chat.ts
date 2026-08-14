@@ -3,6 +3,10 @@
 // =====================================================
 
 import { playTTS } from './ttsPlayer';
+import {
+  createTypewriterPlaybackCallback,
+  shouldShowEstimatedTypewriter,
+} from './typewriterPlayback';
 import { startCapture, stopCapture, onTranscription } from './hearing';
 import { initLive2DController, extractEmotionTag, triggerEmotion, notifyInteraction } from './live2dController';
 import { LAppDelegate } from './lappdelegate';
@@ -41,12 +45,12 @@ declare global {
       loadConversation(id: string): Promise<ChatMessage[]>;
       deleteConversation(id: string): Promise<void>;
       renameConversation(id: string, title: string): Promise<void>;
-      send(conversationId: string, content: string, replyTarget?: unknown): Promise<{ content: string; created_at: number }>;
+      send(conversationId: string, content: string, replyTarget?: unknown, requestContext?: unknown): Promise<{ content: string; created_at: number; turnId?: string }>;
       stopAI?(): Promise<void>;
       /** 监听主进程注入的 AI 主动消息（来自后台任务完成通知） */
       onAgentMessage?(cb: (payload: { conversationId: string; content: string }) => void): () => void;
       /** 监听 background/batch 任务完成后的主对话 AI 唤醒（触发新轮工作流） */
-      onWakeup?(cb: (payload: { conversationId: string; text: string; replyTarget?: unknown }) => void): () => void;
+      onWakeup?(cb: (payload: { conversationId: string; text: string; replyTarget?: unknown; trigger?: unknown }) => void): () => void;
       onExternalTurn?(cb: (payload: {
         conversationId: string;
         user: string;
@@ -84,7 +88,7 @@ let isAvatarStudioOpen = false;
 let avatarStudioSavedWidth = 0;
 let avatarStudioSavedHeight = 0;
 let isSending = false;
-const pendingWakeups: Array<{ conversationId: string; text: string; replyTarget?: unknown }> = [];
+const pendingWakeups: Array<{ conversationId: string; text: string; replyTarget?: unknown; trigger?: unknown }> = [];
 
 /** 聊天面板展开状态（模块级，供打字机气泡判断） */
 let _chatExpanded = false;
@@ -136,6 +140,25 @@ export function showTypewriterBubble(text: string, durationMs: number): void {
     }
   };
   _twTimer = setTimeout(tick, 0);
+}
+
+function typewriterPlayback(text: string): (actualMs: number, sentenceText?: string) => void {
+  return createTypewriterPlaybackCallback(
+    text,
+    shouldShowTypewriterBubble,
+    showTypewriterBubble,
+  );
+}
+
+export function shouldShowTypewriterBubble(): boolean {
+  return !_chatExpanded;
+}
+
+async function showEstimatedTypewriterWhenTTSDisabled(text: string): Promise<void> {
+  const ttsEnabled = await window.ttsAPI?.isEnabled().catch(() => false) ?? false;
+  if (shouldShowEstimatedTypewriter(_chatExpanded, ttsEnabled)) {
+    showTypewriterBubble(text, text.length * 60);
+  }
 }
 
 function dismissTypewriterBubble(): void {
@@ -687,21 +710,9 @@ async function autoSendMessage(text: string, type: 'dictation' | 'summary'): Pro
 
     addMessage('ai', displayText, true, result.created_at);
     // 折叠时显示打字机气泡（TTS 开启时等真实时长，避免二次重播）
-    if (!_chatExpanded) {
-      const ttsEnabled = await window.ttsAPI?.isEnabled().catch(() => false) ?? false;
-      if (!ttsEnabled) showTypewriterBubble(displayText, displayText.length * 60);
-    }
-    playTTS(displayText, (actualMs, sentenceText) => {
-      if (!_chatExpanded) {
-        if (actualMs > 0) {
-          // 每句播放前调用：显示当句文本+当句音频时长
-          showTypewriterBubble(sentenceText ?? displayText, Math.max(300, actualMs * 0.92));
-        } else {
-          // TTS 服务不可达：回退到全文估算速度
-          showTypewriterBubble(displayText, displayText.length * 60);
-        }
-      }
-    }).catch((e) => console.error('[TTS] playTTS error:', e));
+    await showEstimatedTypewriterWhenTTSDisabled(displayText);
+    playTTS(displayText, typewriterPlayback(displayText))
+      .catch((e) => console.error('[TTS] playTTS error:', e));
     await refreshConvTitle(currentConversationId);
   } catch (e) {
     typing?.remove();
@@ -790,21 +801,11 @@ async function sendMessage(): Promise<void> {
 
     addMessage('ai', sendDisplayText, true, result.created_at);
     // 折叠时显示打字机气泡（TTS 开启时等真实时长，避免二次重播）
-    if (!_chatExpanded) {
-      const ttsEnabled = await window.ttsAPI?.isEnabled().catch(() => false) ?? false;
-      if (!ttsEnabled) showTypewriterBubble(sendDisplayText, sendDisplayText.length * 60);
-    }
+    await showEstimatedTypewriterWhenTTSDisabled(sendDisplayText);
     // TTS 播放（未启用时静默跳过）
     console.log('[Chat] 准备调用 playTTS, 文本长度:', sendDisplayText.length);
-    playTTS(sendDisplayText, (actualMs, sentenceText) => {
-      if (!_chatExpanded) {
-        if (actualMs > 0) {
-          showTypewriterBubble(sentenceText ?? sendDisplayText, Math.max(300, actualMs * 0.92));
-        } else {
-          showTypewriterBubble(sendDisplayText, sendDisplayText.length * 60);
-        }
-      }
-    }).catch((e) => console.error('[TTS] playTTS 抛出异常:', e));
+    playTTS(sendDisplayText, typewriterPlayback(sendDisplayText))
+      .catch((e) => console.error('[TTS] playTTS 抛出异常:', e));
     // 首轮发送后 AI 服务会自动重命名对话，刷新 header 标题
     await refreshConvTitle(currentConversationId);
   } catch (e) {
@@ -1193,16 +1194,19 @@ async function drainWakeups(): Promise<void> {
   const typing = addTypingIndicator();
 
   try {
-    const result = await window.chatAPI!.send(payload.conversationId, payload.text, payload.replyTarget);
+    const result = await window.chatAPI!.send(
+      payload.conversationId,
+      payload.text,
+      payload.replyTarget,
+      { trigger: payload.trigger },
+    );
     typing?.remove();
     const { emotion, cleaned } = extractEmotionTag(result.content);
     if (emotion) triggerEmotion(emotion);
     addMessage('ai', cleaned, true, result.created_at);
-    playTTS(cleaned, (actualMs, sentenceText) => {
-      if (!_chatExpanded) {
-        showTypewriterBubble(sentenceText ?? cleaned, actualMs > 0 ? Math.max(300, actualMs * 0.92) : cleaned.length * 60);
-      }
-    }).catch((e) => console.error('[TTS] wakeup playTTS error:', e));
+    void showEstimatedTypewriterWhenTTSDisabled(cleaned);
+    playTTS(cleaned, typewriterPlayback(cleaned))
+      .catch((e) => console.error('[TTS] wakeup playTTS error:', e));
     void refreshConvTitle(payload.conversationId);
   } catch (e) {
     typing?.remove();
@@ -1285,7 +1289,7 @@ export async function initChat(): Promise<void> {
   
   // 更新 UI 的通用函数
   function updateAgentModeUI(mode: string) {
-    const isAgent = mode === 'agent' || mode === 'agent-debug' || mode === 'developer';
+    const isAgent = mode === 'agent' || mode === 'agent-debug' || mode === 'developer' || mode === 'minecraft';
     isAgentMode = isAgent;
     
     if (agentModeText) {
@@ -1293,6 +1297,8 @@ export async function initChat(): Promise<void> {
         agentModeText.textContent = 'Debug';
       } else if (mode === 'developer') {
         agentModeText.textContent = 'Dev';
+      } else if (mode === 'minecraft') {
+        agentModeText.textContent = 'MC';
       } else {
         agentModeText.textContent = isAgent ? 'Agent' : 'Chat';
       }
@@ -1307,13 +1313,14 @@ export async function initChat(): Promise<void> {
     }
   }
   
-  // 初始化显示为 Agent 模式
-  updateAgentModeUI('agent');
+  // 以主进程的真实模式初始化，避免渲染器重载后显示错误状态。
+  const currentMode = await (window as any).agentAPI?.getMode() ?? 'agent';
+  updateAgentModeUI(currentMode);
 
   // 用户点击按钮切换
   agentModeBtn?.addEventListener('click', async (e) => {
     e.stopPropagation();
-    // 循环切换：chat -> agent -> agent-debug -> developer -> chat
+    // 循环切换：chat -> agent -> agent-debug -> developer -> minecraft -> chat
     let newMode = 'agent';
     if (agentModeText?.textContent === 'Chat') {
       newMode = 'agent';
@@ -1322,6 +1329,8 @@ export async function initChat(): Promise<void> {
     } else if (agentModeText?.textContent === 'Debug') {
       newMode = 'developer';
     } else if (agentModeText?.textContent === 'Dev') {
+      newMode = 'minecraft';
+    } else if (agentModeText?.textContent === 'MC') {
       newMode = 'chat';
     }
     
@@ -1498,19 +1507,15 @@ export async function initChat(): Promise<void> {
     if (payload.conversationId !== currentConversationId) return;
     console.log('[Chat] 收到 AI 主动消息:', payload.content.slice(0, 60));
     addMessage('ai', payload.content, true, Date.now());
-    // TTS 由 injectAgentMessage 在主进程侧独立触发，渲染层只负责显示气泡
-    if (!_chatExpanded) {
-      showTypewriterBubble(payload.content, payload.content.length * 60);
-    }
+    // TTS 开启时由 tts:play 的逐句回调驱动气泡；关闭时才显示整段估算气泡。
+    void showEstimatedTypewriterWhenTTSDisabled(payload.content);
   });
 
   window.chatAPI?.onExternalTurn?.((payload) => {
     if (payload.conversationId !== currentConversationId) return;
     addMessage('user', payload.user, true, payload.createdAt);
     addMessage('ai', payload.assistant, true, payload.createdAt);
-    if (!_chatExpanded) {
-      showTypewriterBubble(payload.assistant, payload.assistant.length * 60);
-    }
+    void showEstimatedTypewriterWhenTTSDisabled(payload.assistant);
     void refreshConvTitle(payload.conversationId);
   });
 
@@ -1532,17 +1537,20 @@ export async function initChat(): Promise<void> {
     }
     const typing = addTypingIndicator();
 
-    window.chatAPI!.send(payload.conversationId, payload.text, payload.replyTarget)
+    window.chatAPI!.send(
+      payload.conversationId,
+      payload.text,
+      payload.replyTarget,
+      { trigger: payload.trigger },
+    )
       .then((result) => {
         typing?.remove();
         const { emotion, cleaned } = extractEmotionTag(result.content);
         if (emotion) triggerEmotion(emotion);
         addMessage('ai', cleaned, true, result.created_at);
-        playTTS(cleaned, (actualMs, sentenceText) => {
-          if (!_chatExpanded) {
-            showTypewriterBubble(sentenceText ?? cleaned, actualMs > 0 ? Math.max(300, actualMs * 0.92) : cleaned.length * 60);
-          }
-        }).catch((e) => console.error('[TTS] wakeup playTTS error:', e));
+        void showEstimatedTypewriterWhenTTSDisabled(cleaned);
+        playTTS(cleaned, typewriterPlayback(cleaned))
+          .catch((e) => console.error('[TTS] wakeup playTTS error:', e));
         void refreshConvTitle(payload.conversationId);
       })
       .catch((e) => {

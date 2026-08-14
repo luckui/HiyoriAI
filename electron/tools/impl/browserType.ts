@@ -31,6 +31,7 @@
  */
 
 import type { ToolDefinition, ToolExecuteResult, ToolPauseResult, ToolContinuationResult } from '../types';
+import { browserExecution } from '../browserExecution';
 import { browserSession } from '../impl/browserSession';
 
 interface BrowserTypeSmartParams {
@@ -61,6 +62,7 @@ interface InputCandidate {
 }
 
 const browserTypeSmartSkill: ToolDefinition<BrowserTypeSmartParams> = {
+  execution: browserExecution('exclusive'),
   schema: {
     type: 'function',
     function: {

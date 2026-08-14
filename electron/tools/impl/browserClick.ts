@@ -22,6 +22,7 @@
  */
 
 import type { ToolDefinition, ToolExecuteResult, ToolPauseResult, ToolContinuationResult } from '../types';
+import { browserExecution } from '../browserExecution';
 import { browserSession } from '../impl/browserSession';
 import { readPageSummary } from '../impl/browser';
 
@@ -269,6 +270,7 @@ async function executeClickByIdx(
 // ── 主 Skill ──────────────────────────────────────────────────────
 
 const browserClickSmartSkill: ToolDefinition<BrowserClickSmartParams> = {
+  execution: browserExecution('exclusive'),
   schema: {
     type: 'function',
     function: {

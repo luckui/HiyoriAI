@@ -14,6 +14,7 @@
 
 import type { WeChatBridgeConfig } from '../bridge.config';
 import { sendChatMessage } from '../../aiService';
+import { traceReplyDelivery } from '../../turnTrace';
 import { consumePendingBridgeMessages, noteBridgeInboundMessage } from '../asyncDelivery';
 import { deliverWeChatVoiceReply, getReadyBridgeVoiceProvider, type WeChatVoiceFileMeta } from '../voiceReplies';
 import { formatWeChatCommandHelp, parseWeChatCommand } from '../wechatCommands';
@@ -693,7 +694,14 @@ export class WeChatAdapter {
 
       const platformTag = `[来源：WeChat | 用户：${fromUserId}]`;
       const taggedContent = `${platformTag}\n${text}`;
-      const result = await sendChatMessage(conversationId, taggedContent);
+      const result = await sendChatMessage(conversationId, taggedContent, {
+        trigger: {
+          actor: 'user',
+          source: 'wechat',
+          event: 'message',
+          sourceId: fromUserId,
+        },
+      });
 
       // 分片发送回复
       let voiceProvider: Awaited<ReturnType<typeof getReadyBridgeVoiceProvider>> = null;
@@ -713,6 +721,10 @@ export class WeChatAdapter {
         provider: voiceProvider,
         sendAudioFile: (userId, filePath, meta) => this.sendFile(userId, filePath, meta),
         sendText: (userId, text) => this.sendTextChunks(userId, text),
+      });
+      traceReplyDelivery(result.turnId, conversationId, 'wechat', {
+        userId: fromUserId,
+        reply: result.content,
       });
     } catch (err) {
       const errMsg = String(err);

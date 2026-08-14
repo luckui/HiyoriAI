@@ -1,8 +1,9 @@
 import type { ChatRequestContext } from '../aiService';
+import { MINECRAFT_MODE } from '../agentMode';
 import type { ReplyTarget } from '../bridges/asyncDelivery';
+import type { TurnTrigger } from '../turnTrace';
 import { formatMinecraftRuntimeContext, registerRuntimeContextProvider } from '../runtimeContext';
 import { MinecraftChatChannel, type MinecraftExternalTurn } from './chatChannel';
-import type { MinecraftGoalRequest } from './cognitionCoordinator';
 import type {
   MinecraftAction,
   MinecraftEnvironmentSnapshot,
@@ -13,6 +14,8 @@ import type {
   MinecraftCommandOrigin,
   MinecraftNotifier,
 } from './runtimeManager';
+import type { MinecraftGoalPublicState } from './goalController';
+import { formatMovementBlockedWakeup } from './movementBlockedMessage';
 
 interface MinecraftMainRuntime {
   onEvent(listener: (event: MinecraftRuntimeEvent) => void): () => void;
@@ -31,14 +34,17 @@ interface MinecraftMainIntegrationDependencies {
     requestContext?: ChatRequestContext,
   ): Promise<{ content: string; created_at: number }>;
   playTTS(text: string): void | Promise<void>;
-  sendWakeup(conversationId: string, text: string, replyTarget?: ReplyTarget): void;
+  sendWakeup(
+    conversationId: string,
+    text: string,
+    replyTarget?: ReplyTarget,
+    trigger?: Omit<TurnTrigger, 'actor' | 'parentId'>,
+  ): void;
   getFallbackConversationId(): string | undefined;
+  getMinecraftGoalState?(): MinecraftGoalPublicState | null;
+  failMinecraftGoal?(reason: string): Promise<boolean>;
   mirror?(turn: MinecraftExternalTurn): void;
   onError?(error: Error): void;
-  coordinator?: {
-    startGoal(request: MinecraftGoalRequest): Promise<void>;
-    stopGoal(goalId: string): Promise<boolean>;
-  };
 }
 
 export function configureMinecraftMainIntegration(
@@ -50,41 +56,48 @@ export function configureMinecraftMainIntegration(
       status: () => dependencies.runtime.command<MinecraftStatus>('status', {}),
       say: (message) => dependencies.runtime.command('say', { message }),
     },
-    getConversationId: () =>
-      dependencies.runtime.currentOrigin()?.conversationId ??
-      dependencies.getFallbackConversationId(),
+    getConversationId: () => {
+      const origin = dependencies.runtime.currentOrigin();
+      const conversationId = origin && !origin.conversationId.startsWith('task-')
+        ? origin.conversationId
+        : dependencies.getFallbackConversationId();
+      return conversationId;
+    },
     sendChatMessage: dependencies.sendChatMessage,
     playTTS: dependencies.playTTS,
+    onRuntimeEvent: (event) => {
+      if (event.kind !== 'death') return;
+      const location = event.position
+        ? ` at ${event.position.x.toFixed(1)}, ${event.position.y.toFixed(1)}, ${event.position.z.toFixed(1)}`
+        : '';
+      void dependencies.failMinecraftGoal?.(`Hiyori died${location}.`);
+    },
     mirror: dependencies.mirror,
     onError: dependencies.onError,
   });
   channel.start();
 
-  const unregisterRuntimeContext = registerRuntimeContextProvider('minecraft', async () => {
-    if (dependencies.runtime.hasActiveWorker?.() === false) return null;
+  const unregisterRuntimeContext = registerRuntimeContextProvider('minecraft', async (scope) => {
+    if (scope.mode !== MINECRAFT_MODE) return null;
+    if (dependencies.runtime.hasActiveWorker?.() === false) {
+      return formatMinecraftRuntimeContext(null, dependencies.getMinecraftGoalState?.() ?? null);
+    }
     const snapshot = await dependencies.runtime.command<MinecraftEnvironmentSnapshot>('snapshot', {});
-    return formatMinecraftRuntimeContext(snapshot);
+    return formatMinecraftRuntimeContext(snapshot, dependencies.getMinecraftGoalState?.() ?? null);
   });
 
   dependencies.runtime.setNotifier((origin, event) => {
-    dependencies.sendWakeup(
-      origin.conversationId,
-      wakeupText(event),
-      origin.replyTarget,
-    );
+    if (event.kind === 'disconnected' && dependencies.failMinecraftGoal) {
+      void dependencies.failMinecraftGoal(`Minecraft disconnected: ${event.reason}`).then((handled) => {
+        if (!handled) sendRuntimeWakeup(dependencies, origin, event);
+      });
+      return;
+    }
+    sendRuntimeWakeup(dependencies, origin, event);
   });
 
   return {
     whenIdle: () => channel.whenIdle(),
-    async startGoal(request: MinecraftGoalRequest): Promise<void> {
-      if (!dependencies.coordinator) {
-        throw new Error('Minecraft cognition coordinator is not configured');
-      }
-      await dependencies.coordinator.startGoal(request);
-    },
-    async stopGoal(goalId: string): Promise<boolean> {
-      return dependencies.coordinator?.stopGoal(goalId) ?? false;
-    },
     async shutdown(): Promise<void> {
       unregisterRuntimeContext();
       channel.stop();
@@ -93,22 +106,23 @@ export function configureMinecraftMainIntegration(
   };
 }
 
+function sendRuntimeWakeup(
+  dependencies: MinecraftMainIntegrationDependencies,
+  origin: MinecraftCommandOrigin,
+  event: MinecraftRuntimeEvent,
+): void {
+    dependencies.sendWakeup(
+      origin.conversationId,
+      wakeupText(event),
+      origin.replyTarget,
+      {
+        source: 'minecraft',
+        event: event.kind,
+      },
+    );
+}
+
 function wakeupText(event: MinecraftRuntimeEvent): string {
-  if (event.kind === 'collection-terminal') {
-    return [
-      '【Minecraft 任务结果】',
-      '事件：collection-terminal',
-      `任务 ID：${event.jobId}`,
-      `方块：${event.block}`,
-      `结果：${event.outcome}`,
-      `数量：${event.collected}/${event.requested}`,
-      event.message ? `说明：${event.message}` : undefined,
-      '',
-      '请把结果自然告诉用户。任务已经结束，不需要查询状态或再次发起采集。',
-    ]
-      .filter((line) => line !== undefined)
-      .join('\n');
-  }
   if (event.kind === 'food-shortage') {
     return [
       '【Minecraft 生存提醒】',
@@ -123,6 +137,19 @@ function wakeupText(event: MinecraftRuntimeEvent): string {
       '事件：disconnected',
       `Hiyori 已离开 Minecraft：${event.reason}`,
       '请如实告诉用户连接已经中断。',
+    ].join('\n');
+  }
+  if (event.kind === 'movement-blocked') {
+    return formatMovementBlockedWakeup(event);
+  }
+  if (event.kind === 'oxygen-danger') {
+    return [
+      '【Minecraft 氧气危险】',
+      `当前位置：${event.position.x.toFixed(1)}, ${event.position.y.toFixed(1)}, ${event.position.z.toFixed(1)}`,
+      event.recovered
+        ? `Hiyori 已经浮出水面恢复呼吸（氧气 ${event.oxygen}），原移动状态已停止。`
+        : `Hiyori 未能确认浮出水面（氧气 ${event.oxygen}），需要用户协助。`,
+      '请直接向用户说明真实情况，不要声称仍在执行之前的移动。',
     ].join('\n');
   }
   return [

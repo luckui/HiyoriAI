@@ -91,6 +91,13 @@ import {
   addMessage as dbAddMessage,
 } from './db';
 import { sendChatMessage, setToolEventListener, stopCurrentAI } from './aiService';
+import {
+  configureTurnTrace,
+  createTurnId,
+  traceReplyDelivery,
+  traceTurnEvent,
+  type TurnTrigger,
+} from './turnTrace';
 import { fetchCompletion } from './llmClient';
 import { triggerConversationLeave, memoryManager, globalMemoryManager, runStartupCatchUp, startIdleScheduler } from './memory/index';
 import { exportMemoryToMarkdown, importMemoryFromMarkdown } from './memory/memoryExport';
@@ -122,12 +129,14 @@ import * as ttsServerManager from './ttsServerManager';
 import * as sttServerManager from './sttServerManager';
 import { hearingManager } from './hearingManager';
 import { taskManager } from './taskManager';
+import { buildTaskCompletedWakeup, buildTaskFailedWakeup, taskBelongsToSlot } from './taskWakeup';
 import { setScheduleReminderNotifier, taskScheduler } from './taskScheduler';
 import { initLive2DBridge } from './live2dBridge';
-import { minecraftRuntime, setMinecraftGoalCoordinator } from './minecraft';
-import { MinecraftCognitionCoordinator } from './minecraft/cognitionCoordinator';
+import { minecraftRuntime } from './minecraft';
 import { configureMinecraftMainIntegration } from './minecraft/mainIntegration';
-import { createMinecraftPlannerModel } from './minecraft/plannerModel';
+import { MinecraftGoalController } from './minecraft/goalController';
+import { setMinecraftGoalController } from './minecraft/goalContext';
+import { buildMinecraftGoalWakeup } from './minecraft/goalWakeup';
 import type { AvatarConfig } from './avatar/avatarConfig';
 import { DEFAULT_AVATAR_CONFIG } from './avatar/avatarConfig';
 import {
@@ -398,6 +407,15 @@ export async function injectAgentMessage(
   conversationId: string,
   content: string,
 ): Promise<void> {
+  const turnId = createTurnId();
+  traceTurnEvent({
+    type: 'agent-message-injected',
+    turnId,
+    conversationId,
+    trigger: { actor: 'system', source: 'runtime', event: 'direct-message' },
+    reply: content,
+    target: 'desktop',
+  });
   // 1. 持久化
   dbAddMessage({ conversation_id: conversationId, role: 'assistant', content });
 
@@ -419,9 +437,35 @@ export async function injectAgentMessage(
  *
  * 仅对 background/batch 任务使用。cron 任务由子智能体自己用 speak 通知用户。
  */
-export function sendAgentWakeup(conversationId: string, triggerText: string, replyTarget?: ReplyTarget): void {
+export function sendAgentWakeup(
+  conversationId: string,
+  triggerText: string,
+  replyTarget?: ReplyTarget,
+  trigger?: Omit<TurnTrigger, 'actor' | 'parentId'>,
+): void {
+  const wakeupId = createTurnId();
+  const turnTrigger: TurnTrigger = {
+    actor: 'system',
+    source: trigger?.source ?? 'runtime',
+    event: trigger?.event ?? 'wakeup',
+    sourceId: trigger?.sourceId,
+    parentId: wakeupId,
+  };
+  traceTurnEvent({
+    type: 'wakeup-issued',
+    turnId: wakeupId,
+    conversationId,
+    trigger: turnTrigger,
+    input: triggerText,
+    replyTarget,
+  });
   if (mainWin && !mainWin.isDestroyed() && !mainWin.webContents.isDestroyed()) {
-    mainWin.webContents.send('chat:agent-wakeup', { conversationId, text: triggerText, replyTarget });
+    mainWin.webContents.send('chat:agent-wakeup', {
+      conversationId,
+      text: triggerText,
+      replyTarget,
+      trigger: turnTrigger,
+    });
     console.log(`[Agent Wakeup] 唤醒对话 ${conversationId.slice(0, 8)}…: ${triggerText.slice(0, 80)}`);
   }
 }
@@ -500,6 +544,7 @@ let activeConversationId: string | null = null;
 /** 全局窗口引用，用于向渲染层推送退出状态 */
 let mainWin: BrowserWindow | null = null;
 let minecraftIntegration: ReturnType<typeof configureMinecraftMainIntegration> | undefined;
+let minecraftGoalController: MinecraftGoalController | undefined;
 
 function createWindow(): void {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
@@ -596,9 +641,21 @@ function createWindow(): void {
   );
 
   // ── AI 发送消息 ────────────────────────────────────────────
-  ipcMain.handle('chat:send', async (_e, conversationId: string, content: string, replyTarget?: ReplyTarget) => {
-    const result = await sendChatMessage(conversationId, content);
+  ipcMain.handle('chat:send', async (
+    _e,
+    conversationId: string,
+    content: string,
+    replyTarget?: ReplyTarget,
+    requestContext?: import('./aiService').ChatRequestContext,
+  ) => {
+    const result = await sendChatMessage(conversationId, content, requestContext);
     await deliverReplyTarget(replyTarget, result.content);
+    traceReplyDelivery(
+      result.turnId,
+      conversationId,
+      replyTarget?.kind ?? 'desktop',
+      { replyTarget, reply: result.content },
+    );
     return result;
   });
 
@@ -1172,7 +1229,7 @@ function createWindow(): void {
   });
 
   ipcMain.handle('task:cancel', (_e, taskId: string) => {
-    return taskManager.cancelTask(taskId);
+    return taskManager.cancelTask(taskId, 'user_cancelled');
   });
 
   // ── 异步任务事件推送到渲染层 ────────────────────────────────────
@@ -1197,7 +1254,7 @@ function createWindow(): void {
     }
     // background/batch/cron 异步任务：唤醒主对话 AI 继续工作流
     // 有 parent_task_id 的是批量子任务，不单独唤醒——等父任务完成后统一唤醒一次
-    if ((task.type === 'background' || task.type === 'batch' || task.type === 'cron') && task.conversation_id && !task.parent_task_id) {
+    if ((task.type === 'background' || task.type === 'batch' || task.type === 'cron') && task.conversation_id && !task.parent_task_id && !taskBelongsToSlot(task, 'minecraft')) {
       let wakeupText: string;
 
       if (task.type === 'batch') {
@@ -1214,28 +1271,35 @@ function createWindow(): void {
         ].filter(s => s !== null).join('\n');
       } else {
         // 普通后台任务：结果通常较短，直接附在 wakeup 里
-        const resultPreview = task.result && task.result.length > 1500
-          ? task.result.slice(0, 1500) + `\n…(共 ${task.result.length} 字，如需完整结果请调用 async_task result task_id="${task.id}")`
-          : task.result ?? '';
-        wakeupText = `【系统通知】后台任务「${task.title}」已完成。${resultPreview ? `\n\n结果：\n${resultPreview}` : ''}\n\n请检查结果并继续执行后续步骤。`;
+        wakeupText = buildTaskCompletedWakeup(task);
       }
 
       const replyTarget = parseReplyTargetFromMetadata(task.metadata)
         ?? getReplyTargetForConversation(task.conversation_id);
-      sendAgentWakeup(task.conversation_id, wakeupText, replyTarget);
+      sendAgentWakeup(task.conversation_id, wakeupText, replyTarget, {
+        source: 'background_task',
+        event: 'task-completed',
+        sourceId: task.id,
+      });
     }
   });
   taskManager.on('task:failed',    (task) => {
     pushTaskEvent('task:failed')(task);
     console.log(`[TaskManager] ❌ 任务失败: 「${task.title}」 (${task.id.slice(0, 8)}…) — ${task.error ?? '未知错误'}`);
-    if ((task.type === 'background' || task.type === 'batch') && task.conversation_id && !task.parent_task_id) {
-      const wakeupText = `【系统通知】后台任务「${task.title}」执行失败。\n错误信息：${task.error ?? '未知错误'}\n\n请处理错误或告知用户。`;
+    if ((task.type === 'background' || task.type === 'batch') && task.conversation_id && !task.parent_task_id && !taskBelongsToSlot(task, 'minecraft')) {
+      const wakeupText = buildTaskFailedWakeup(task);
       const replyTarget = parseReplyTargetFromMetadata(task.metadata)
         ?? getReplyTargetForConversation(task.conversation_id);
-      sendAgentWakeup(task.conversation_id, wakeupText, replyTarget);
+      sendAgentWakeup(task.conversation_id, wakeupText, replyTarget, {
+        source: 'background_task',
+        event: 'task-failed',
+        sourceId: task.id,
+      });
     }
   });
-  taskManager.on('task:cancelled', pushTaskEvent('task:cancelled'));
+  taskManager.on('task:cancelled', (task) => {
+    pushTaskEvent('task:cancelled')(task);
+  });
   taskManager.on('task:progress',  pushTaskEvent('task:progress'));
 }
 
@@ -1250,11 +1314,39 @@ function registerAvatarProtocol(): void {
 }
 
 app.whenReady().then(() => {
+  configureTurnTrace(join(app.getPath('userData'), 'logs', 'agent-turns.jsonl'));
   initDatabase();
+  taskManager.reconcileInterruptedSlotTasks('minecraft');
+  minecraftGoalController = new MinecraftGoalController({
+    taskManager,
+    runtime: minecraftRuntime,
+    onTerminal: (notice) => {
+      sendAgentWakeup(
+        notice.goal.conversationId,
+        buildMinecraftGoalWakeup(notice),
+        notice.goal.replyTarget ?? getReplyTargetForConversation(notice.goal.conversationId),
+        {
+          source: 'background_task',
+          event: 'minecraft-goal-terminal',
+          sourceId: notice.goal.title,
+        },
+      );
+    },
+    onTrace: (event) => traceTurnEvent({
+      ...event,
+      type: String(event.type ?? 'minecraft-slot-event'),
+      turnId: `minecraft-slot-${String(event.generation ?? '0')}`,
+      conversationId: minecraftRuntime.currentOrigin()?.conversationId ?? 'minecraft',
+    }),
+  });
+  setMinecraftGoalController(minecraftGoalController);
   registerAvatarProtocol();
   loadPersistedConfig();
   setCodingAgentNotifier((conversationId, content) => {
-    sendAgentWakeup(conversationId, content, getReplyTargetForConversation(conversationId));
+    sendAgentWakeup(conversationId, content, getReplyTargetForConversation(conversationId), {
+      source: 'coding_agent',
+      event: 'result',
+    });
   });
   setScheduleReminderNotifier(({ conversationId, title, instruction, replyTarget }) => {
     const text = [
@@ -1264,7 +1356,12 @@ app.whenReady().then(() => {
       '',
       '请直接向用户发出提醒或开启简短对话。除非提醒内容本身要求真实操作，否则不需要调用工具。',
     ].join('\n');
-    sendAgentWakeup(conversationId, text, replyTarget ?? getReplyTargetForConversation(conversationId));
+    sendAgentWakeup(
+      conversationId,
+      text,
+      replyTarget ?? getReplyTargetForConversation(conversationId),
+      { source: 'scheduler', event: 'reminder', sourceId: title },
+    );
   });
   setCodingAgentTerminalNotifier((event) => {
     if (!mainWin || mainWin.isDestroyed() || mainWin.webContents.isDestroyed()) return;
@@ -1309,46 +1406,14 @@ app.whenReady().then(() => {
   const defaultConvId = existingConvs.length > 0
     ? existingConvs[0].id
     : createConversation().id;
-  const minecraftCoordinator = new MinecraftCognitionCoordinator({
-    planner: createMinecraftPlannerModel({
-      complete: async (messages) => {
-        const provider = aiConfig.providers[aiConfig.activeProvider];
-        if (!provider) throw new Error(`未找到 provider: ${aiConfig.activeProvider}`);
-        const response = await fetchCompletion(provider, messages, undefined, undefined, {
-          maxTokens: 800,
-          temperature: 0.2,
-          disableThinking: true,
-        });
-        return response.choices[0]?.message.content?.trim() ?? '';
-      },
-    }),
-    runtime: minecraftRuntime,
-    notify: async (origin, message) => {
-      const conversationId = origin.conversationId ?? activeConversationId ?? defaultConvId;
-      sendAgentWakeup(
-        conversationId,
-        ['【Minecraft 目标通知】', message].join('\n'),
-        origin.replyTarget,
-      );
-    },
-    debug: (event) => {
-      if (!mainWin || mainWin.isDestroyed() || mainWin.webContents.isDestroyed()) return;
-      mainWin.webContents.send('hearing:terminal-block', {
-        blockId: `minecraft:${event.goalId}`,
-        title: event.title,
-        line: event.line,
-        status: event.status,
-      });
-    },
-  });
-  setMinecraftGoalCoordinator(minecraftCoordinator);
   minecraftIntegration = configureMinecraftMainIntegration({
     runtime: minecraftRuntime,
-    coordinator: minecraftCoordinator,
     sendChatMessage,
     playTTS: playTTSAudio,
     sendWakeup: sendAgentWakeup,
     getFallbackConversationId: () => activeConversationId ?? defaultConvId,
+    getMinecraftGoalState: () => minecraftGoalController?.status() ?? null,
+    failMinecraftGoal: (reason) => minecraftGoalController?.fail(reason) ?? Promise.resolve(false),
     mirror: (turn) => {
       if (!mainWin || mainWin.isDestroyed() || mainWin.webContents.isDestroyed()) return;
       mainWin.webContents.send('chat:external-turn', turn);
@@ -1378,23 +1443,23 @@ app.whenReady().then(() => {
 let isQuitting = false;
 
 app.on('before-quit', (event) => {
-  void minecraftIntegration?.shutdown();
-  setMinecraftGoalCoordinator(undefined);
   // 停止定时任务调度器
   taskScheduler.stop();
 
-  if (isQuitting || !activeConversationId) return;
+  if (isQuitting) return;
 
   // ── 快速判断是否真的有需要处理的内容 ──────────────────────
   const convId = activeConversationId;
   const batchSize = 6; // leaveMinRounds(3) * 2，与 DEFAULT_MEMORY_CONFIG 保持一致
-  const unsummarized = countNonSystemMessages(convId) - getMemoryCursor(convId);
-  const newFragments = getMemoryFragments(convId).length - getGlobalMemoryCursor(convId);
-  const hasWork = unsummarized >= batchSize || newFragments > 0;
+  const unsummarized = convId
+    ? countNonSystemMessages(convId) - getMemoryCursor(convId)
+    : 0;
+  const newFragments = convId
+    ? getMemoryFragments(convId).length - getGlobalMemoryCursor(convId)
+    : 0;
+  const hasWork = Boolean(convId) && (unsummarized >= batchSize || newFragments > 0);
 
-  if (!hasWork) return; // 无需处理，放行立即退出
-
-  // ── 有工作要做：拦截退出，显示遮罩，执行流水线 ─────────────
+  // ── 拦截退出：先释放目标槽、Minecraft worker 和桥接，再按需保存记忆 ──
   event.preventDefault();
   isQuitting = true;
 
@@ -1404,10 +1469,22 @@ app.on('before-quit', (event) => {
   }
 
   ;(async () => {
-    console.info('[Memory] 应用退出，执行记忆流水线...');
-    await memoryManager.forcePartialSummarize(convId);
-    await globalMemoryManager.refineAsync(convId);
-    console.info('[Memory] 记忆流水线完成，正常退出');
+    try {
+      await minecraftGoalController?.shutdown();
+    } catch (error) {
+      console.error('[Minecraft] failed to stop goal slot during shutdown:', (error as Error).message);
+    }
+    try {
+      await minecraftIntegration?.shutdown();
+    } catch (error) {
+      console.error('[Minecraft] failed to stop runtime during shutdown:', (error as Error).message);
+    }
+    if (hasWork && convId) {
+      console.info('[Memory] 应用退出，执行记忆流水线...');
+      await memoryManager.forcePartialSummarize(convId);
+      await globalMemoryManager.refineAsync(convId);
+      console.info('[Memory] 记忆流水线完成，正常退出');
+    }
   })()
     .catch((e) => console.error('[Memory] 退出时流水线异常:', (e as Error).message))
     .finally(() => {

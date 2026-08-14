@@ -11,8 +11,9 @@
 
 import { LAppDelegate } from './lappdelegate';
 import type { LAppModel } from './lappmodel';
-import { showTypewriterBubble } from './chat';
+import { shouldShowTypewriterBubble, showTypewriterBubble } from './chat';
 import { normalizeSpokenText, splitSpokenText } from '../shared/spokenText';
+import { createTypewriterPlaybackCallback } from './typewriterPlayback';
 
 // ── 获取当前 Live2D 模型实例 ───────────────────────────────────────
 
@@ -376,13 +377,10 @@ export function registerTTSPlayListener(): void {
   ttsAPI.onPlay((text: string) => {
     console.log('[TTS] 收到主进程推送的文本，调用 playTTS():', text.substring(0, 50));
     // 复用聊天框的 TTS 逻辑并显示打字机气泡（pause/resume hearing 已内置于 playTTS 内部）
-    playTTS(text, (actualMs) => {
-      if (actualMs > 0) {
-        showTypewriterBubble(text, Math.max(300, actualMs * 0.92));
-      } else {
-        showTypewriterBubble(text, text.length * 60);
-      }
-    }).catch((e) => console.error('[TTS] playTTS error:', e));
+    playTTS(
+      text,
+      createTypewriterPlaybackCallback(text, shouldShowTypewriterBubble, showTypewriterBubble),
+    ).catch((e) => console.error('[TTS] playTTS error:', e));
   });
 
   console.log('[TTS] tts:play 监听器已注册');

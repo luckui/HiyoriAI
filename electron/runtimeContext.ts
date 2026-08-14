@@ -1,6 +1,11 @@
 import type { MinecraftEnvironmentSnapshot } from './minecraft/contracts';
+import type { MinecraftGoalPublicState } from './minecraft/goalController';
 
-export type RuntimeContextProvider = () => Promise<string | null>;
+export interface RuntimeContextScope {
+  mode: string;
+}
+
+export type RuntimeContextProvider = (scope: RuntimeContextScope) => Promise<string | null>;
 
 const providers = new Map<string, RuntimeContextProvider>();
 
@@ -14,11 +19,11 @@ export function registerRuntimeContextProvider(
   };
 }
 
-export async function buildRuntimeContext(): Promise<string> {
+export async function buildRuntimeContext(scope: RuntimeContextScope): Promise<string> {
   const parts: string[] = [];
   for (const [id, provider] of providers) {
     try {
-      const text = (await provider())?.trim();
+      const text = (await provider(scope))?.trim();
       if (text) parts.push(`[${id}]\n${text}`);
     } catch (error) {
       parts.push(`[${id}]\nRuntime context unavailable: ${errorMessage(error)}`);
@@ -31,13 +36,25 @@ export function resetRuntimeContextProvidersForTest(): void {
   providers.clear();
 }
 
-export function formatMinecraftRuntimeContext(snapshot: MinecraftEnvironmentSnapshot): string {
-  if (!snapshot.connection.connected) {
-    return 'Minecraft is not connected.';
+export function formatMinecraftRuntimeContext(
+  snapshot: MinecraftEnvironmentSnapshot | null,
+  goal?: MinecraftGoalPublicState | null,
+): string {
+  if (!snapshot?.connection.connected) {
+    return [
+      'Minecraft connection: disconnected.',
+      'Hiyori 当前不在 Minecraft 游戏世界中。',
+      '玩家要求加入游戏时，调用 minecraft_companion(action="connect")。',
+      '连接成功前，不能声称当前位置、生命、饥饿、背包或游戏动作。',
+    ].join('\n');
   }
 
   const lines = [
+    'Minecraft connection: connected.',
     `Minecraft connected as ${snapshot.connection.username ?? 'unknown'} at ${snapshot.connection.host ?? 'unknown'}:${snapshot.connection.port ?? 'unknown'}.`,
+    goal?.title ? `Current Minecraft goal: ${goal.title}.` : undefined,
+    goal?.title ? `Goal state: ${goal.phase}. Objective: ${goal.instruction ?? goal.title}` : undefined,
+    goal?.checkpoint ? formatGoalCheckpoint(goal.checkpoint) : undefined,
     snapshot.world ? `World: ${snapshot.world.dimension}${snapshot.world.biome ? `, biome ${snapshot.world.biome}` : ''}.` : undefined,
     snapshot.body
       ? `Body: position ${formatPosition(snapshot.body.position)}, health ${snapshot.body.health}, food ${snapshot.body.food}, inventory ${formatInventory(snapshot.body.inventory)}.`
@@ -46,13 +63,22 @@ export function formatMinecraftRuntimeContext(snapshot: MinecraftEnvironmentSnap
       ? `Owner: ${snapshot.owner.name} ${snapshot.owner.visible ? `visible at ${formatNumber(snapshot.owner.distance)} blocks` : 'not visible'}${snapshot.owner.relativeDirection ? `, ${snapshot.owner.relativeDirection}` : ''}.`
       : undefined,
     `Follow: ${snapshot.follow.phase}${snapshot.follow.target ? ` ${snapshot.follow.target}` : ''}${typeof snapshot.follow.distance === 'number' ? ` at ${formatNumber(snapshot.follow.distance)} blocks` : ''}.`,
-    snapshot.action ? `Current action: ${snapshot.action.name} (${snapshot.action.state}).` : undefined,
+    snapshot.action
+      ? `Current action: ${snapshot.action.name} (${snapshot.action.state}), arguments ${JSON.stringify(snapshot.action.args)}.`
+      : 'Current action: none.',
     formatBlocks(snapshot),
     formatEntities(snapshot),
     formatEvents(snapshot),
   ];
 
   return lines.filter(Boolean).join('\n');
+}
+
+function formatGoalCheckpoint(checkpoint: NonNullable<MinecraftGoalPublicState['checkpoint']>): string {
+  const delta = Object.entries(checkpoint.inventoryDelta)
+    .map(([name, count]) => `${name} ${count > 0 ? '+' : ''}${count}`)
+    .join(', ');
+  return `Verified goal checkpoint: health ${checkpoint.health ?? 'unknown'}, food ${checkpoint.food ?? 'unknown'}, inventory changes ${delta || 'none'}.`;
 }
 
 function formatBlocks(snapshot: MinecraftEnvironmentSnapshot): string | undefined {

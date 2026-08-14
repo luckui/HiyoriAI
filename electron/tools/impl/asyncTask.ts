@@ -80,7 +80,7 @@ const asyncTaskTool: ToolDefinition<AsyncTaskParams> = {
           },
           toolsets: {
             type: 'array',
-            description: '【create 可选】子智能体可用的工具集（默认 ["agent"]）。需要文件操作/代码执行时用 ["agent-debug"]',
+            description: '【create 可选】任务执行所需的通用后台工具集。默认 ["agent"]。',
             items: { type: 'string' },
           },
           max_rounds: {
@@ -122,23 +122,35 @@ const asyncTaskTool: ToolDefinition<AsyncTaskParams> = {
         if (!params.title?.trim()) return '❌ 缺少 title 参数';
         if (!params.prompt?.trim()) return '❌ 缺少 prompt 参数（子智能体需要自包含的完整指令）';
 
+        const toolsets = params.toolsets?.length ? params.toolsets : ['agent'];
+        if (toolsets.includes('minecraft')) {
+          return [
+            '【工具结果】',
+            '状态：unsupported_domain',
+            'Minecraft 游戏目标由 minecraft_goal 管理。请使用 minecraft_goal(action="set") 设置或替换当前目标。',
+          ].join('\n');
+        }
+
         const task = taskManager.createAndStart({
           title: params.title.trim(),
           prompt: params.prompt.trim(),
           conversationId: context?.conversationId,
           type: 'background',
           metadata: {
-            toolsets: params.toolsets,
+            toolsets,
             maxRounds: params.max_rounds,
             replyTarget,
           },
         });
 
-        return `✅ 后台任务已创建并启动\n\n` +
-          `📋 ${task.title}\n` +
-          `🆔 ${task.id}\n\n` +
-          `任务正在后台执行，完成或失败后会自动向当前对话推送通知消息。\n` +
-          `你可以用 async_task status 查询进度；无需轮询等待，任务完成时系统会主动通知。`;
+        return [
+          '【工具结果】',
+          '状态：accepted',
+          `任务：${task.title}`,
+          `任务 ID：${task.id}`,
+          '结果可用性：none',
+          '该状态只确认任务所有权，不代表任何具体操作发生或取得进展。终态产生后，系统会把结果交回来源对话。',
+        ].join('\n');
       }
 
       case 'batch': {
@@ -149,6 +161,13 @@ const asyncTaskTool: ToolDefinition<AsyncTaskParams> = {
         }
         if (!params.prompt_template.includes('{{item}}')) {
           return '❌ prompt_template 必须包含 {{item}} 占位符';
+        }
+        if (params.toolsets?.includes('minecraft')) {
+          return [
+            '【工具结果】',
+            '状态：unsupported_domain',
+            'Minecraft 游戏目标由 minecraft_goal 管理。请使用 minecraft_goal(action="set") 设置或替换当前目标。',
+          ].join('\n');
         }
 
         const batchTask = taskManager.createAndStart({
@@ -193,16 +212,21 @@ const asyncTaskTool: ToolDefinition<AsyncTaskParams> = {
 
       case 'cancel': {
         if (!params.task_id) return '❌ 缺少 task_id 参数';
-        const ok = taskManager.cancelTask(params.task_id);
-        return ok ? `✅ 已取消任务: ${params.task_id}` : `❌ 无法取消（任务不存在或已结束）`;
+        return taskManager.cancelTask(params.task_id, 'user_cancelled').then((ok) => (
+          ok ? `✅ 已取消任务: ${params.task_id}` : `❌ 无法取消（任务不存在或已结束）`
+        ));
       }
 
       case 'result': {
         if (!params.task_id) return '❌ 缺少 task_id 参数';
         const task = taskManager.getTask(params.task_id);
         if (!task) return `❌ 未找到任务: ${params.task_id}`;
-        if (task.status === 'completed' && task.result) {
-          return `✅ 任务「${task.title}」已完成\n\n--- 结果 ---\n${task.result}`;
+        if (task.status === 'completed') {
+          const resultText = task.result?.trim();
+          if (resultText) {
+            return `✅ 任务「${task.title}」已完成\n\n--- 结果 ---\n${resultText}`;
+          }
+          return `✅ 任务「${task.title}」已完成，但未返回结果文本。\n请结合当前环境确认实际产出，或让用户决定是否重试。`;
         }
         if (task.status === 'failed') {
           return `❌ 任务「${task.title}」失败: ${task.error ?? '未知错误'}`;

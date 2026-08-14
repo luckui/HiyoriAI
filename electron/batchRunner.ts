@@ -136,11 +136,10 @@ export async function runBatch(
       if (settled) return;
       settled = true;
       cleanup();
-      // 取消所有还在运行/等待的子任务
-      for (const cid of childIds) {
-        taskManager.cancelTask(cid);
-      }
-      reject(new Error('批量任务已被取消'));
+      // 所有子任务实际退出后，父任务才算取消完成。
+      void Promise.all(childIds.map((cid) => taskManager.cancelTask(cid, 'parent_cancelled')))
+        .then(() => reject(new Error('批量任务已被取消')))
+        .catch(reject);
     };
     signal.addEventListener('abort', onAbort, { once: true });
 

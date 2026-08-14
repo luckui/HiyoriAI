@@ -1,0 +1,63 @@
+diff --git a/node_modules/mineflayer-collectblock/lib/CollectBlock.js b/node_modules/mineflayer-collectblock/lib/CollectBlock.js
+index 445df38..c359ba6 100644
+--- a/node_modules/mineflayer-collectblock/lib/CollectBlock.js
++++ b/node_modules/mineflayer-collectblock/lib/CollectBlock.js
+@@ -39,12 +39,16 @@ function collectAll(bot, options) {
+                         break;
+                     const tempEvents = new TemporarySubscriber_1.TemporarySubscriber(bot);
+                     const waitForPickup = new Promise(resolve => {
++                        const finish = () => {
++                            tempEvents.cleanup();
++                            resolve();
++                        };
+                         tempEvents.subscribeTo('entityGone', (entity) => {
+                             if (entity === closest) {
+-                                tempEvents.cleanup();
+-                                resolve();
++                                finish();
+                             }
+                         });
++                        tempEvents.subscribeTo('collectBlock_cancelled', finish);
+                     });
+                     yield bot.pathfinder.goto(new mineflayer_pathfinder_1.goals.GoalFollow(closest, 0));
+                     yield waitForPickup;
+@@ -87,13 +91,17 @@ function mineBlock(bot, block, options) {
+             // Waiting for items to drop
+             yield new Promise(resolve => {
+                 let remainingTicks = 10;
++                const finish = () => {
++                    tempEvents.cleanup();
++                    resolve();
++                };
+                 tempEvents.subscribeTo('physicsTick', () => {
+                     remainingTicks--;
+                     if (remainingTicks <= 0) {
+-                        tempEvents.cleanup();
+-                        resolve();
++                        finish();
+                     }
+                 });
++                tempEvents.subscribeTo('collectBlock_cancelled', finish);
+             });
+         }
+         finally {
+@@ -242,12 +250,18 @@ class CollectBlock {
+                     cb();
+                 return yield Promise.resolve();
+             }
++            const finished = (0, events_1.once)(this.bot, 'collectBlock_finished');
++            this.targets.clear();
++            this.bot.emit('collectBlock_cancelled');
+             this.bot.pathfinder.stop();
++            const stopDigging = this.bot.stopDigging == null ? undefined : this.bot.stopDigging();
++            if (stopDigging != null)
++                Promise.resolve(stopDigging).catch(() => undefined);
+             if (cb != null) {
+                 // @ts-expect-error
+                 this.bot.once('collectBlock_finished', cb);
+             }
+-            yield (0, events_1.once)(this.bot, 'collectBlock_finished');
++            yield finished;
+         });
+     }
+ }

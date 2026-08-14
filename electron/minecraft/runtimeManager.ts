@@ -1,54 +1,26 @@
 import { randomUUID } from 'node:crypto';
 import { fork, type ChildProcess } from 'node:child_process';
-import { join } from 'node:path';
+import { appendFileSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { ReplyTarget } from '../bridges/asyncDelivery';
 import type {
   MinecraftAction,
-  MinecraftActionResult,
   MinecraftCommand,
-  MinecraftEnvironmentSnapshot,
   MinecraftRuntimeEvent,
-  MinecraftTerminalEvent,
   MinecraftWorkerMessage,
 } from './protocol';
 
 interface PendingRequest {
+  action: MinecraftAction;
+  startedAt: number;
   resolve(value: unknown): void;
   reject(error: Error): void;
-  timer: NodeJS.Timeout;
+  timer?: NodeJS.Timeout;
 }
 
 export interface MinecraftCommandOrigin {
   conversationId: string;
   replyTarget?: ReplyTarget;
-}
-
-export interface MinecraftGoalOrigin {
-  conversationId?: string;
-  source: 'desktop' | 'discord' | 'wechat' | 'feishu' | 'minecraft';
-  replyTarget?: ReplyTarget;
-}
-
-export interface MinecraftGoalState {
-  id: string;
-  title: string;
-  origin: MinecraftGoalOrigin;
-  status: 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';
-  lastSnapshot?: MinecraftEnvironmentSnapshot;
-  lastResult?: MinecraftActionResult;
-}
-
-export interface MinecraftSignificantEvent {
-  kind: string;
-  text: string;
-}
-
-export interface AcceptedCollection {
-  state: 'running';
-  jobId: string;
-  block?: string;
-  quantity?: number;
-  radius?: number;
 }
 
 export type MinecraftNotifier = (
@@ -58,15 +30,13 @@ export type MinecraftNotifier = (
 
 export interface MinecraftRuntimeManagerOptions {
   spawnWorker?: () => ChildProcess;
-  notify?: (goal: MinecraftGoalState, event: MinecraftSignificantEvent) => void | Promise<void>;
+  debugLogPath?: string;
+  workerLogPath?: string;
 }
 
 export class MinecraftRuntimeManager {
   private child?: ChildProcess;
   private readonly pending = new Map<string, PendingRequest>();
-  private readonly goals = new Map<string, MinecraftGoalState>();
-  private readonly significantEventKeys = new Set<string>();
-  private readonly collectionOrigins = new Map<string, MinecraftCommandOrigin>();
   private readonly listeners = new Set<(event: MinecraftRuntimeEvent) => void>();
   private notifier?: MinecraftNotifier;
   private lastOrigin?: MinecraftCommandOrigin;
@@ -91,34 +61,6 @@ export class MinecraftRuntimeManager {
     return () => this.listeners.delete(listener);
   }
 
-  async startGoal(input: {
-    id: string;
-    title: string;
-    origin: MinecraftGoalOrigin;
-  }): Promise<MinecraftGoalState> {
-    const goal: MinecraftGoalState = {
-      id: input.id,
-      title: input.title,
-      origin: input.origin,
-      status: 'running',
-    };
-    this.goals.set(goal.id, goal);
-    return goal;
-  }
-
-  getGoal(id: string): MinecraftGoalState | undefined {
-    return this.goals.get(id);
-  }
-
-  recordSignificantEvent(goalId: string, event: MinecraftSignificantEvent): void {
-    const goal = this.goals.get(goalId);
-    if (!goal) return;
-    const key = `${goalId}:${event.kind}:${event.text}`;
-    if (this.significantEventKeys.has(key)) return;
-    this.significantEventKeys.add(key);
-    goal.status = statusForEvent(event.kind, goal.status);
-    void this.options.notify?.(goal, event);
-  }
 
   async command<T = unknown>(
     action: MinecraftAction,
@@ -128,13 +70,16 @@ export class MinecraftRuntimeManager {
     const child = this.ensureWorker();
     const id = randomUUID();
     const message: MinecraftCommand = { type: 'command', id, action, payload };
+    console.log(`[Minecraft Runtime] command sent: ${action} (${id})`);
+    this.trace({ type: 'command-sent', commandId: id, action, payload });
 
     return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`Minecraft command timed out: ${action}`));
-      }, timeoutMs);
+      const timer = timeoutMs > 0
+        ? setTimeout(() => this.handleCommandTimeout(id, action, child), timeoutMs)
+        : undefined;
       this.pending.set(id, {
+        action,
+        startedAt: Date.now(),
         resolve: (value) => resolve(value as T),
         reject,
         timer,
@@ -143,21 +88,11 @@ export class MinecraftRuntimeManager {
         if (!error) return;
         const pending = this.pending.get(id);
         if (!pending) return;
-        clearTimeout(pending.timer);
+        if (pending.timer) clearTimeout(pending.timer);
         this.pending.delete(id);
         pending.reject(error);
       });
     });
-  }
-
-  async startCollection(
-    payload: { block: string; quantity: number; radius?: number },
-    origin: MinecraftCommandOrigin,
-  ): Promise<AcceptedCollection> {
-    this.rememberOrigin(origin);
-    const accepted = await this.command<AcceptedCollection>('collect', payload);
-    this.collectionOrigins.set(accepted.jobId, origin);
-    return accepted;
   }
 
   pendingRequestCount(): number {
@@ -180,8 +115,19 @@ export class MinecraftRuntimeManager {
   private ensureWorker(): ChildProcess {
     if (this.child) return this.child;
     this.shuttingDown = false;
-    const child = this.options.spawnWorker?.() ?? spawnMinecraftWorker();
+    const child = this.options.spawnWorker?.() ?? spawnMinecraftWorker(this.options.debugLogPath);
     this.child = child;
+    console.log(`[Minecraft Runtime] worker spawned${child.pid ? ` pid=${child.pid}` : ''}`);
+    child.stdout?.on('data', (chunk) => {
+      const text = String(chunk).trim();
+      if (text) console.log(`[Minecraft Worker stdout] ${text}`);
+      appendWorkerLog(this.options.workerLogPath, `[stdout] ${text}`);
+    });
+    child.stderr?.on('data', (chunk) => {
+      const text = String(chunk).trim();
+      if (text) console.warn(`[Minecraft Worker stderr] ${text}`);
+      appendWorkerLog(this.options.workerLogPath, `[stderr] ${text}`);
+    });
     child.on('message', (message: MinecraftWorkerMessage) => this.handleMessage(message));
     child.once('error', (error) => this.handleWorkerExit(error));
     child.once('exit', (code, signal) => {
@@ -196,28 +142,67 @@ export class MinecraftRuntimeManager {
     if (message.type === 'response') {
       const pending = this.pending.get(message.id);
       if (!pending) return;
-      clearTimeout(pending.timer);
+      if (pending.timer) clearTimeout(pending.timer);
       this.pending.delete(message.id);
-      if (message.ok) pending.resolve(message.data);
-      else pending.reject(new Error(message.error));
+      const duration = Date.now() - pending.startedAt;
+      if (message.ok) {
+        console.log(`[Minecraft Runtime] command ok: ${pending.action} (${message.id}) ${duration}ms`);
+        this.trace({ type: 'command-response', commandId: message.id, action: pending.action, ok: true, durationMs: duration });
+        pending.resolve(message.data);
+      } else {
+        console.warn(`[Minecraft Runtime] command failed: ${pending.action} (${message.id}) ${duration}ms: ${message.error}`);
+        this.trace({ type: 'command-response', commandId: message.id, action: pending.action, ok: false, durationMs: duration, error: message.error });
+        pending.reject(new Error(message.error));
+      }
       return;
     }
 
+    this.trace({ type: 'runtime-event', event: message.event });
+    this.logRuntimeEvent(message.event);
     for (const listener of this.listeners) listener(message.event);
     this.handleNotification(message.event);
   }
 
-  private handleNotification(event: MinecraftRuntimeEvent): void {
-    if (event.kind === 'collection-terminal') {
-      const origin = this.collectionOrigins.get(event.jobId);
-      if (!origin) return;
-      this.collectionOrigins.delete(event.jobId);
-      void this.notifier?.(origin, event);
+  private logRuntimeEvent(event: MinecraftRuntimeEvent): void {
+    if (event.kind === 'log') {
+      const text = `[Minecraft Runtime Event] ${event.message}`;
+      if (event.level === 'info') console.log(text);
+      else console.warn(text);
       return;
     }
+    if (event.kind === 'disconnected') {
+      console.warn(`[Minecraft Runtime Event] disconnected: ${event.reason}`);
+      return;
+    }
+  }
+
+  private handleCommandTimeout(id: string, action: MinecraftAction, child: ChildProcess): void {
+    const pending = this.pending.get(id);
+    if (!pending) return;
+    if (pending.timer) clearTimeout(pending.timer);
+    this.pending.delete(id);
+    const error = new Error(`Minecraft command timed out: ${action}`);
+    const resetWorker = shouldResetWorkerOnTimeout(action);
+    console.warn(
+      `[Minecraft Runtime] ${error.message} (${id}); ${resetWorker ? 'resetting worker' : 'worker kept alive'}`,
+    );
+    this.trace({ type: 'command-timeout', commandId: id, action, resetWorker });
+    pending.reject(error);
+
+    if (!resetWorker || this.child !== child) return;
+    this.child = undefined;
+    this.rejectAll(new Error('Minecraft runtime reset after command timeout'));
+    if (child.connected) child.disconnect();
+    else child.kill?.();
+  }
+
+  private handleNotification(event: MinecraftRuntimeEvent): void {
     if (
       this.lastOrigin &&
-      (event.kind === 'food-shortage' || event.kind === 'disconnected')
+      (event.kind === 'food-shortage'
+        || event.kind === 'disconnected'
+        || event.kind === 'movement-blocked'
+        || event.kind === 'oxygen-danger')
     ) {
       void this.notifier?.(this.lastOrigin, event);
     }
@@ -225,6 +210,7 @@ export class MinecraftRuntimeManager {
 
   private handleWorkerExit(error: Error): void {
     if (!this.child) return;
+    console.warn(`[Minecraft Runtime] worker closed: ${error.message}`);
     this.child = undefined;
     this.rejectAll(error);
     if (!this.shuttingDown && this.lastOrigin) {
@@ -237,15 +223,43 @@ export class MinecraftRuntimeManager {
 
   private rejectAll(error: Error): void {
     for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
+      if (pending.timer) clearTimeout(pending.timer);
       pending.reject(error);
     }
     this.pending.clear();
   }
+
+  private trace(entry: Record<string, unknown>): void {
+    const path = this.options.debugLogPath;
+    if (!path) return;
+    try {
+      mkdirSync(dirname(path), { recursive: true });
+      appendFileSync(path, `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`, 'utf8');
+    } catch (error) {
+      console.warn(`[Minecraft Runtime] failed to write debug trace: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 }
 
-function spawnMinecraftWorker(): ChildProcess {
+function appendWorkerLog(path: string | undefined, text: string): void {
+  if (!path) return;
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    appendFileSync(path, `${new Date().toISOString()} ${text}\n`, 'utf8');
+  } catch (error) {
+    console.warn(`[Minecraft Runtime] failed to write worker log: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function spawnMinecraftWorker(debugLogPath?: string): ChildProcess {
+  const logDir = debugLogPath ? dirname(debugLogPath) : process.cwd();
   return fork(join(__dirname, 'minecraftWorker.js'), [], {
+    cwd: logDir,
+    execArgv: [
+      // 接近堆上限时自动写 heap snapshot（用于定位 OOM 时的分配来源），并限制堆上限避免拖垮系统
+      '--heapsnapshot-near-heap-limit=1',
+      '--max-old-space-size=2048',
+    ],
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: '1',
@@ -256,17 +270,6 @@ function spawnMinecraftWorker(): ChildProcess {
   });
 }
 
-export function describeMinecraftTerminalEvent(event: MinecraftTerminalEvent): string {
-  return `${event.block}: ${event.collected}/${event.requested} (${event.outcome})`;
-}
-
-function statusForEvent(
-  kind: string,
-  current: MinecraftGoalState['status'],
-): MinecraftGoalState['status'] {
-  if (kind === 'completed') return 'completed';
-  if (kind === 'failed') return 'failed';
-  if (kind === 'cancelled') return 'cancelled';
-  if (kind === 'waiting') return 'waiting';
-  return current;
+function shouldResetWorkerOnTimeout(action: MinecraftAction): boolean {
+  return action === 'connect';
 }

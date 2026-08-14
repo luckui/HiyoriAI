@@ -10,7 +10,11 @@ import type { MinecraftBodyAdapter } from './actions/types';
 export class MinecraftEmbodimentRuntime {
   private readonly registry = createMinecraftActionRegistry();
   private readonly now: () => number;
-  private active?: { id: string; abort: AbortController };
+  private active?: {
+    id: string;
+    abort: AbortController;
+    interruption?: MinecraftActionInterruption;
+  };
 
   constructor(private readonly options: { adapter: MinecraftBodyAdapter; now?: () => number }) {
     this.now = options.now ?? Date.now;
@@ -43,7 +47,21 @@ export class MinecraftEmbodimentRuntime {
         snapshot: () => this.snapshot(),
       });
     } catch (error) {
-      const cancelled = abort.signal.aborted;
+      const interruption = this.active?.id === instruction.id
+        ? this.active.interruption
+        : undefined;
+      const cancelled = abort.signal.aborted && !interruption;
+      if (interruption) {
+        return failure(
+          instruction.id,
+          instruction.name,
+          interruption.code,
+          interruption.recoverable ?? true,
+          started,
+          interruption.details,
+          interruption.summary,
+        );
+      }
       return failure(
         instruction.id,
         instruction.name,
@@ -57,12 +75,23 @@ export class MinecraftEmbodimentRuntime {
     }
   }
 
-  async cancel(actionId: string): Promise<boolean> {
+  async cancel(
+    actionId: string,
+    interruption?: MinecraftActionInterruption,
+  ): Promise<boolean> {
     if (!this.active || this.active.id !== actionId) return false;
+    this.active.interruption = interruption;
     this.active.abort.abort();
     await this.options.adapter.stopNavigation();
     return true;
   }
+}
+
+export interface MinecraftActionInterruption {
+  code: MinecraftActionErrorCode;
+  summary: string;
+  details: Record<string, unknown>;
+  recoverable?: boolean;
 }
 
 function failure(
@@ -72,11 +101,12 @@ function failure(
   recoverable: boolean,
   started: number,
   details: Record<string, unknown> = {},
+  summary?: string,
 ): MinecraftActionResult {
   return {
     actionId,
     outcome: 'failed',
-    summary: `${actionName} failed: ${code}`,
+    summary: summary ?? `${actionName} failed: ${code}`,
     durationMs: Math.max(0, Date.now() - started),
     inventoryDelta: {},
     worldChanges: [],

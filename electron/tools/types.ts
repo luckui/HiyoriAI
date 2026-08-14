@@ -152,6 +152,74 @@ export function isToolPauseResult(r: ToolExecuteResult): r is ToolPauseResult {
 export interface ToolContext {
   /** 当前会话 ID */
   conversationId?: string;
+  /** 当前 LLM 回合 ID，仅用于日志关联。 */
+  turnId?: string;
+  /** 触发当前回合的结构化来源，仅用于日志关联。 */
+  trigger?: import('../turnTrace').TurnTrigger;
+  /** 调用工具的 Agent 层级。主对话默认 main，后台子任务使用 child。 */
+  executor?: 'main' | 'child';
+  /** 子任务 ID，仅在 executor=child 时存在。 */
+  taskId?: string;
+  /** 子任务所属的用户对话。 */
+  parentConversationId?: string;
+  /** 取消当前 Agent 执行时同步取消其正在等待的工具。 */
+  signal?: AbortSignal;
+}
+
+/** A factual terminal condition that must end the current Agent task. */
+export class ToolTerminalError extends Error {
+  readonly terminal = true;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'ToolTerminalError';
+  }
+}
+
+export function isToolTerminalError(error: unknown): error is ToolTerminalError {
+  return error instanceof ToolTerminalError
+    || (error instanceof Error && error.name === 'ToolTerminalError');
+}
+
+export type ToolResourceAccess = 'shared' | 'exclusive';
+
+export interface ToolResourceClaim {
+  key: string;
+  access: ToolResourceAccess;
+}
+
+export interface ToolExecutionPolicy<TParams> {
+  resources?: (
+    params: TParams,
+    context?: ToolContext,
+  ) => readonly ToolResourceClaim[];
+}
+
+export interface ToolExecutionCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
+export interface ToolQueuedEvent {
+  call: ToolExecutionCall;
+  args: Record<string, unknown>;
+  claims: ToolResourceClaim[];
+}
+
+export interface ToolStartedEvent extends ToolQueuedEvent {
+  queueWaitMs: number;
+}
+
+export interface ToolBatchExecution extends ToolStartedEvent {
+  durationMs: number;
+  result: string | ToolImageResult;
+}
+
+export interface ToolBatchHooks {
+  queued?: (event: ToolQueuedEvent) => void;
+  started?: (event: ToolStartedEvent) => void;
+  completed?: (event: ToolBatchExecution) => void;
 }
 
 export interface ToolDefinition<TParams = Record<string, unknown>> {
@@ -164,6 +232,9 @@ export interface ToolDefinition<TParams = Record<string, unknown>> {
    * @returns 字符串结果或含图像的 ToolImageResult，aiService 会自动处理注入
    */
   execute: (params: TParams, context?: ToolContext) => Promise<ToolExecuteResult> | ToolExecuteResult;
+
+  /** Optional runtime resources used to coordinate conflicting tool calls. */
+  execution?: ToolExecutionPolicy<TParams>;
 
   /**
    * 运行时条件可用性检测（借鉴 hermes-agent）

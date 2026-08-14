@@ -15,6 +15,7 @@ import {
 import { ProxyAgent } from 'undici';
 import type { DiscordBridgeConfig } from '../bridge.config';
 import { sendChatMessage } from '../../aiService';
+import { traceReplyDelivery } from '../../turnTrace';
 import { listConversations } from '../../db';  // 🆕 导入对话列表，用于自动获取最新对话
 import { noteBridgeInboundMessage } from '../asyncDelivery';
 
@@ -130,8 +131,20 @@ export class DiscordAdapter {
           userId: msg.author.id,
         });
         const taggedContent = `${platformTag}\n${content}`;
-        const result = await sendChatMessage(conversationId, taggedContent);
+        const result = await sendChatMessage(conversationId, taggedContent, {
+          trigger: {
+            actor: 'user',
+            source: 'discord',
+            event: 'message',
+            sourceId: msg.id,
+          },
+        });
         for (const chunk of splitMessage(result.content)) await msg.reply(chunk);
+        traceReplyDelivery(result.turnId, conversationId, 'discord', {
+          channelId: msg.channelId,
+          messageId: msg.id,
+          reply: result.content,
+        });
       } catch (e) {
         const errMsg = (e as Error).message ?? String(e);
         console.error('[Discord] 消息处理失败:', errMsg);

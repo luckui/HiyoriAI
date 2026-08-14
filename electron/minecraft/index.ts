@@ -1,21 +1,12 @@
+import { app } from 'electron';
+import { join } from 'node:path';
 import { MinecraftRuntimeManager } from './runtimeManager';
-import type { MinecraftCognitionCoordinator } from './cognitionCoordinator';
 
-export const minecraftRuntime = new MinecraftRuntimeManager();
-
-let minecraftGoalCoordinator: MinecraftCognitionCoordinator | undefined;
-
-export function setMinecraftGoalCoordinator(
-  coordinator: MinecraftCognitionCoordinator | undefined,
-): void {
-  minecraftGoalCoordinator = coordinator;
-}
-
-export function getMinecraftGoalCoordinator(): MinecraftCognitionCoordinator | undefined {
-  return minecraftGoalCoordinator;
-}
+export const minecraftRuntime = new MinecraftRuntimeManager({
+  debugLogPath: join(app.getPath('userData'), 'logs', 'minecraft-runtime.jsonl'),
+  workerLogPath: join(app.getPath('userData'), 'logs', 'minecraft-worker.log'),
+});
 
 export * from './lanDiscovery';
 export * from './protocol';
 export * from './runtimeManager';
-export * from './cognitionCoordinator';

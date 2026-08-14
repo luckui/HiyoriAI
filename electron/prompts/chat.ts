@@ -10,6 +10,8 @@
  * Token 预算：~200 字（对比 agent ~500 字、developer ~2000 字）
  */
 
+import { HIYORI_VOICE_STYLE } from './base-rules';
+
 // ── Chat 人设 ──────────────────────────────────────────────
 
 const CHAT_PERSONALITY = `你是 Hiyori，活泼可爱的 Live2D 桌面宠物助手。
@@ -28,5 +30,5 @@ const CHAT_RULES = `
 // ── 组合 ───────────────────────────────────────────────────
 
 export function buildChatPrompt(): string {
-  return [CHAT_PERSONALITY, '', CHAT_RULES].join('\n');
+  return [CHAT_PERSONALITY, '', HIYORI_VOICE_STYLE, '', CHAT_RULES].join('\n');
 }

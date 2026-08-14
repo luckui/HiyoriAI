@@ -2,8 +2,8 @@
 import aiConfig, { LLMProviderConfig } from './ai.config';
 import { addMessage, getRecentContext, getMessages, renameConversation } from './db';
 import { toolRegistry } from './tools/index';
-import { getCurrentToolsets, getAgentMode } from './agentMode';
-import type { ChatMessage, ContentPart, ToolSchema } from './tools/types';
+import { getCurrentToolsets, getAgentMode, effectiveModeForTrigger, MINECRAFT_MODE } from './agentMode';
+import type { ChatMessage, ContentPart, ToolBatchHooks, ToolSchema } from './tools/types';
 import { isToolImageResult } from './tools/types';
 import { memoryManager, globalMemoryManager, recordMessageActivity } from './memory/index';
 import { stripThinkTags } from './utils/textUtils';
@@ -11,10 +11,19 @@ import { fetchCompletion } from './llmClient';
 import { getSkillTopicsForPrompt } from './tools/impl/skill';
 import { buildChatPrompt } from './prompts/chat';
 import { buildAgentPrompt } from './prompts/agent';
+import { buildMinecraftPrompt } from './prompts/minecraft';
 import { buildDeveloperPrompt } from './prompts/developer';
 import { buildStreamerPrompt } from './prompts/streamer';
 import { browserSession } from './tools/impl/browserSession';
 import { buildRuntimeContext } from './runtimeContext';
+import { ConversationTurnQueue } from './conversationTurnQueue';
+import {
+  createTurnId,
+  traceTurnEvent,
+  type TurnTrigger,
+} from './turnTrace';
+
+const conversationTurnQueue = new ConversationTurnQueue();
 
 // ── 工具调用调试事件 ─────────────────────────────────────
 /** 单次工具调用的调试记录（推送给渲染层展示） */
@@ -53,15 +62,39 @@ export function stopCurrentAI(): void {
 }
 
 /** 内部：执行工具并同时发射调试事件 */
-async function execAndEmit(name: string, argsJson: string, conversationId?: string) {
+async function execAndEmit(
+  name: string,
+  argsJson: string,
+  conversationId: string | undefined,
+  turnId: string,
+  trigger: TurnTrigger,
+) {
   const t0 = Date.now();
-  const context = conversationId ? { conversationId } : undefined;
+  let parsedArgs: Record<string, unknown> = {};
+  try { parsedArgs = JSON.parse(argsJson); } catch { /* reported by the registry */ }
+  traceTurnEvent({
+    type: 'tool-started',
+    turnId,
+    conversationId: conversationId ?? 'unknown',
+    trigger,
+    tool: name,
+    args: parsedArgs,
+  });
+  const context = conversationId ? { conversationId, turnId, trigger } : undefined;
   const result = await toolRegistry.execute(name, argsJson, context);
   const durationMs = Date.now() - t0;
+  const resultText = isToolImageResult(result) ? result.text : String(result);
+  traceTurnEvent({
+    type: 'tool-completed',
+    turnId,
+    conversationId: conversationId ?? 'unknown',
+    trigger,
+    tool: name,
+    args: parsedArgs,
+    result: resultText,
+    durationMs,
+  });
   if (_toolEventListener) {
-    const resultText = isToolImageResult(result) ? result.text : String(result);
-    let parsedArgs: Record<string, unknown> = {};
-    try { parsedArgs = JSON.parse(argsJson); } catch { /* ignore */ }
     _toolEventListener({
       name,
       args: parsedArgs,
@@ -72,6 +105,59 @@ async function execAndEmit(name: string, argsJson: string, conversationId?: stri
     });
   }
   return result;
+}
+
+function createMainToolBatchHooks(
+  conversationId: string | undefined,
+  turnId: string,
+  trigger: TurnTrigger,
+): ToolBatchHooks {
+  const traceBase = {
+    turnId,
+    conversationId: conversationId ?? 'unknown',
+    trigger,
+  };
+  return {
+    queued: ({ call, args, claims }) => traceTurnEvent({
+      ...traceBase,
+      type: 'tool-queued',
+      toolCallId: call.id,
+      tool: call.name,
+      args,
+      claims,
+    }),
+    started: ({ call, args, claims, queueWaitMs }) => traceTurnEvent({
+      ...traceBase,
+      type: 'tool-started',
+      toolCallId: call.id,
+      tool: call.name,
+      args,
+      claims,
+      queueWaitMs,
+    }),
+    completed: ({ call, args, claims, queueWaitMs, durationMs, result }) => {
+      const resultText = isToolImageResult(result) ? result.text : String(result);
+      traceTurnEvent({
+        ...traceBase,
+        type: 'tool-completed',
+        toolCallId: call.id,
+        tool: call.name,
+        args,
+        claims,
+        queueWaitMs,
+        durationMs,
+        result: resultText,
+      });
+      _toolEventListener?.({
+        name: call.name,
+        args,
+        result: resultText.slice(0, 300),
+        ok: !resultText.startsWith('❌') && !resultText.startsWith('[工具错误]'),
+        durationMs,
+        conversationId,
+      });
+    },
+  };
 }
 
 function getLatestRealUserText(messages: ChatMessage[]): string {
@@ -162,13 +248,23 @@ async function callWithToolLoop(
   messages: ChatMessage[],
   toolSchemas?: ToolSchema[],
   conversationId?: string,
+  turnId = createTurnId(),
+  trigger: TurnTrigger = { actor: 'user', source: 'unknown', event: 'message' },
 ): Promise<string> {
   // 🆕 创建 AbortController 用于中断请求
   currentAbortController = new AbortController();
   const signal = currentAbortController.signal;
 
   try {
-    return await _callWithToolLoopInternal(provider, messages, toolSchemas, conversationId, signal);
+    return await _callWithToolLoopInternal(
+      provider,
+      messages,
+      toolSchemas,
+      conversationId,
+      turnId,
+      trigger,
+      signal,
+    );
   } catch (e) {
     if ((e as Error).name === 'AbortError' || signal.aborted) {
       throw new Error('AI 回答已被用户中断');
@@ -184,12 +280,25 @@ async function _callWithToolLoopInternal(
   messages: ChatMessage[],
   toolSchemas?: ToolSchema[],
   conversationId?: string,
+  turnId = createTurnId(),
+  trigger: TurnTrigger = { actor: 'user', source: 'unknown', event: 'message' },
   signal?: AbortSignal
 ): Promise<string> {
   const withTools = !!toolSchemas?.length;
   // 在副本上操作，不污染调用方的数组
   const msgBuf: ChatMessage[] = [...messages];
   let antiHallucinationNudgeUsed = false;
+  const appendInternalInstruction = (reason: string, content: string): void => {
+    msgBuf.push({ role: 'user', content });
+    traceTurnEvent({
+      type: 'internal-instruction',
+      turnId,
+      conversationId: conversationId ?? 'unknown',
+      trigger,
+      reason,
+      content,
+    });
+  };
 
   // 模式感知的最大循环轮数：chat 轻量 / agent 标准 / developer 深度
   const currentMode = getAgentMode();
@@ -203,6 +312,20 @@ async function _callWithToolLoopInternal(
 
     const data = await fetchCompletion(provider, msgBuf, withTools ? toolSchemas : undefined, signal);
     const choice = data.choices[0];
+    traceTurnEvent({
+      type: 'llm-response',
+      turnId,
+      conversationId: conversationId ?? 'unknown',
+      trigger,
+      round: round + 1,
+      finishReason: choice.finish_reason,
+      visibleText: stripThinkTags(choice.message.content?.trim() ?? ''),
+      toolCalls: choice.message.tool_calls?.map((call) => ({
+        id: call.id,
+        name: call.function.name,
+        arguments: call.function.arguments,
+      })) ?? [],
+    });
 
     // ── 无工具调用 → 返回最终文本 ──
     if (choice.finish_reason !== 'tool_calls' || !choice.message.tool_calls?.length) {
@@ -218,12 +341,11 @@ async function _callWithToolLoopInternal(
             role: 'assistant',
             content: choice.message.content ?? finalText,
           });
-          msgBuf.push({
-            role: 'user',
-            content:
-              '【系统提示】用户请求涉及浏览器真实状态。请先用可用的浏览器工具获取事实，再回答用户；' +
+          appendInternalInstruction(
+            'browser-state-correction',
+            '【系统提示】用户请求涉及浏览器真实状态。请先用可用的浏览器工具获取事实，再回答用户；' +
               '如果无法继续或缺少信息，请向用户说明需要什么。不要口头声称页面已经打开、点击或搜索完成。',
-          });
+          );
           continue;
         }
 
@@ -235,12 +357,11 @@ async function _callWithToolLoopInternal(
             role: 'assistant',
             content: choice.message.content ?? finalText,
           });
-          msgBuf.push({
-            role: 'user',
-            content:
-              '【系统提示】用户请求涉及 DOM/HTML 原文。请优先使用可用的页面读取或元素工具获取真实内容；' +
+          appendInternalInstruction(
+            'dom-read-correction',
+            '【系统提示】用户请求涉及 DOM/HTML 原文。请优先使用可用的页面读取或元素工具获取真实内容；' +
               '如果当前工具确实不足，请说明限制并询问用户是否接受替代方案。',
-          });
+          );
           continue;
         }
       }
@@ -256,12 +377,21 @@ async function _callWithToolLoopInternal(
     });
 
     // ── 并行执行本轮所有工具 ──
-    const execResults = await Promise.all(
-      choice.message.tool_calls.map(async (tc) => ({
-        tc,
-        result: await execAndEmit(tc.function.name, tc.function.arguments, conversationId),
-      }))
+    const calls = choice.message.tool_calls.map((tc) => ({
+      id: tc.id,
+      name: tc.function.name,
+      arguments: tc.function.arguments,
+    }));
+    const batchResults = await toolRegistry.executeBatch(
+      calls,
+      { conversationId, turnId, trigger, signal },
+      createMainToolBatchHooks(conversationId, turnId, trigger),
     );
+    const toolCallsById = new Map(choice.message.tool_calls.map((tc) => [tc.id, tc]));
+    const execResults = batchResults.map(({ call, result }) => ({
+      tc: toolCallsById.get(call.id)!,
+      result,
+    }));
 
     // ── 回填结果：普通文本 → tool 消息；图像 → tool 消息 + user 多模态消息 ──
     for (const { tc, result } of execResults) {
@@ -300,39 +430,35 @@ async function _callWithToolLoopInternal(
     });
 
     if (hasToolContinuation) {
-      msgBuf.push({
-        role: 'user',
-        content:
-          '【工具结果处理】上面的工具给出了“建议下一步”。请先判断是否信息充足、是否仍符合用户目标：' +
+      appendInternalInstruction(
+        'tool-continuation-policy',
+        '【工具结果处理】上面的工具给出了“建议下一步”。请先判断是否信息充足、是否仍符合用户目标：' +
           '若需要用户选择或确认，就询问用户并结束本轮；若已经可以回答，就回复用户；只有确实应继续执行时，才调用下一步工具。',
-      });
+      );
     } else if (hasCommandFailure) {
-      msgBuf.push({
-        role: 'user',
-        content:
-          '【工具结果处理】run_command 执行失败。请基于错误信息判断下一步：' +
+      appendInternalInstruction(
+        'command-failure-policy',
+        '【工具结果处理】run_command 执行失败。请基于错误信息判断下一步：' +
           '能修正且仍符合用户目标时再重试；需要更多信息时询问用户；无法继续时如实说明失败原因。' +
           '不要编造命令已成功。',
-      });
+      );
     } else {
-      msgBuf.push({
-        role: 'user',
-        content:
-          '【工具结果处理】根据以上工具结果选择下一步：' +
+      appendInternalInstruction(
+        'tool-result-policy',
+        '【工具结果处理】根据以上工具结果选择下一步：' +
           '工具结果要求“回复用户”时，回复用户并结束本轮；要求“询问用户”时，提出问题并等待；' +
           '只有工具结果或用户目标明确需要继续操作时，才继续调用工具。不要重复已完成的同一工具调用。',
-      });
+      );
     }
     // 继续循环，带上工具结果再请求
   }
 
   // 超出轮数：追加系统提示，让 AI 用自然语言总结失败原因并回复用户
-  msgBuf.push({
-    role: 'user',
-    content:
-      '【系统提示】你已经连续调用了 ' + MAX_ROUNDS + ' 轮工具，操作仍未完成。' +
+  appendInternalInstruction(
+    'tool-round-limit',
+    '【系统提示】你已经连续调用了 ' + MAX_ROUNDS + ' 轮工具，操作仍未完成。' +
       '请停止继续调用工具，用自然语言向用户总结：① 你尝试了哪些步骤，② 哪一步卡住了，③ 可能的原因是什么。',
-  });
+  );
   try {
     const fallback = await fetchCompletion(provider, msgBuf); // 不带工具，强制输出文字
     return stripThinkTags(fallback.choices[0]?.message.content?.trim() ?? '（操作超出轮数，且无法生成总结）');
@@ -352,13 +478,49 @@ async function _callWithToolLoopInternal(
  */
 export interface ChatRequestContext {
   sourceContext?: string;
+  trigger?: TurnTrigger;
 }
 
-export async function sendChatMessage(
+export function sendChatMessage(
   conversationId: string,
   userContent: string,
   requestContext: ChatRequestContext = {},
-): Promise<{ content: string; created_at: number }> {
+): Promise<{ content: string; created_at: number; turnId: string }> {
+  const turnId = createTurnId();
+  const trigger = requestContext.trigger ?? {
+    actor: 'user',
+    source: 'desktop',
+    event: 'message',
+  };
+  traceTurnEvent({
+    type: 'turn-received',
+    turnId,
+    conversationId,
+    trigger,
+    input: userContent,
+  });
+  return conversationTurnQueue.run(
+    conversationId,
+    () => sendChatMessageUnlocked(
+      conversationId,
+      userContent,
+      { ...requestContext, trigger },
+      turnId,
+    ),
+  );
+}
+
+async function sendChatMessageUnlocked(
+  conversationId: string,
+  userContent: string,
+  requestContext: ChatRequestContext = {},
+  turnId = createTurnId(),
+): Promise<{ content: string; created_at: number; turnId: string }> {
+  const trigger = requestContext.trigger ?? {
+    actor: 'user' as const,
+    source: 'unknown' as const,
+    event: 'message',
+  };
   const provider = aiConfig.providers[aiConfig.activeProvider];
   if (!provider) throw new Error(`未找到 provider: ${aiConfig.activeProvider}`);
 
@@ -371,23 +533,28 @@ export async function sendChatMessage(
   // ── 模式感知的上下文工程 ─────────────────────────────────────
   // 提示词、记忆、Skills 按模式精细化注入，节省 token 但不缺功能
   const currentAgentMode = getAgentMode();
+  // MC 消息始终使用 Minecraft 模式；桌面消息使用当前用户选择的模式。
+  const effectiveMode = effectiveModeForTrigger(currentAgentMode, requestContext.trigger);
 
-  // 提示词：三档人格（chat=桌宠 / agent=助手 / developer=工程师）
+  // 提示词：按本轮生效模式分档（chat=桌宠 / agent=助手 / developer=工程师 / minecraft=MC 游玩）
   const basePrompt = (() => {
-    switch (currentAgentMode) {
+    switch (effectiveMode) {
       case 'chat':      return buildChatPrompt();
       case 'developer': return buildDeveloperPrompt();
       case 'streamer':  return buildStreamerPrompt();
+      case MINECRAFT_MODE: return buildMinecraftPrompt();
       default:          return buildAgentPrompt(); // agent, agent-debug
     }
   })();
 
-  // Skills 目录：chat 无 read_skill 工具，不注入
-  const skillTopics = currentAgentMode === 'chat' ? '' : getSkillTopicsForPrompt();
+  // Skills 目录：chat / minecraft 无 read_skill 工具，不注入
+  const skillTopics = effectiveMode === 'chat' || effectiveMode === MINECRAFT_MODE
+    ? ''
+    : getSkillTopicsForPrompt();
 
-  // 记忆：chat 仅注入用户画像，agent/developer 注入完整记忆（含环境配置）
+  // Chat/Minecraft 保留会话摘要和稳定用户画像，不注入全局环境配置与工具经验。
   const memoryAppend = memoryManager.buildMemoryAppend(conversationId) + (
-    currentAgentMode === 'chat'
+    effectiveMode === 'chat' || effectiveMode === MINECRAFT_MODE
       ? globalMemoryManager.buildUserProfileOnly()
       : globalMemoryManager.buildGlobalMemoryAppend()
   );
@@ -395,7 +562,7 @@ export async function sendChatMessage(
   const sourceAppend = requestContext.sourceContext?.trim()
     ? `\n\n【当前消息来源】\n${requestContext.sourceContext.trim()}`
     : '';
-  const runtimeContext = await buildRuntimeContext();
+  const runtimeContext = await buildRuntimeContext({ mode: effectiveMode });
   const runtimeAppend = runtimeContext.trim()
     ? `\n\n[Runtime Context]\n${runtimeContext.trim()}`
     : '';
@@ -405,37 +572,74 @@ export async function sendChatMessage(
     ...(systemContent ? [{ role: 'system' as const, content: systemContent }] : []),
     ...context.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
   ];
+  traceTurnEvent({
+    type: 'prompt-built',
+    turnId,
+    conversationId,
+    trigger,
+    mode: effectiveMode,
+    provider: aiConfig.activeProvider,
+    sourceContext: requestContext.sourceContext ?? '',
+    runtimeContext,
+    systemContent,
+    contextMessages: context.map((message) => ({ role: message.role, content: message.content })),
+  });
 
   // 3. 调用 AI（含工具调用循环）
   let replyContent: string;
   try {
     // ReAct 模式：工具调用循环，走一步看一步
-    // Toolset 系统（借鉴 hermes-agent）：使用全局 Agent 模式（chat/agent/agent-debug）
-    const enabledToolsets = getCurrentToolsets();  // ['chat'] 或 ['agent']
+    // Toolset 系统（借鉴 hermes-agent）：MC 消息使用专用 minecraft-chat 工具集；
+    // 其余消息沿用全局 Agent 模式工具集（chat/agent/agent-debug）
+    const enabledToolsets = effectiveMode === MINECRAFT_MODE
+      ? ['minecraft-chat']
+      : getCurrentToolsets();  // ['chat'] 或 ['agent']
 
     // 🆕 平台检测：根据消息来源动态注入平台附件工具
     // 例：[来源：Discord | ...] → 自动添加 discord_send_file
     const platform = detectPlatform(userContent);
-    if (platform) {
+    if (platform && effectiveMode !== MINECRAFT_MODE) {
       enabledToolsets.push(platform);  // ['chat', 'discord']
       console.log(`[平台检测] 检测到 ${platform} 来源，已注入平台工具`);
     }
 
     const tools = toolRegistry.isEmpty ? undefined : toolRegistry.getSchemasForToolset(enabledToolsets);
+    traceTurnEvent({
+      type: 'tools-exposed',
+      turnId,
+      conversationId,
+      trigger,
+      toolsets: enabledToolsets,
+      tools: tools?.map((tool) => tool.function.name) ?? [],
+    });
 
     // streamer 模式下：若本轮对话包含浏览器工具，需占用浏览器互斥锁，
     // 防止与 funded_request 工具循环（processFundedRequest）同时操控同一 Playwright page。
     // 普通模式/无浏览器工具时无需加锁，零开销。
-    const needBrowserLock = currentAgentMode === 'streamer' && hasBrowserTools(tools);
+    const needBrowserLock = effectiveMode === 'streamer' && hasBrowserTools(tools);
     const releaseBrowserLock = needBrowserLock
       ? await browserSession.mutex.acquire('chat')
       : null;
     try {
-      replyContent = await callWithToolLoop(provider, messages, tools, conversationId);
+      replyContent = await callWithToolLoop(
+        provider,
+        messages,
+        tools,
+        conversationId,
+        turnId,
+        trigger,
+      );
     } finally {
       releaseBrowserLock?.();
     }
   } catch (e) {
+    traceTurnEvent({
+      type: 'turn-error',
+      turnId,
+      conversationId,
+      trigger,
+      error: (e as Error).message,
+    });
     replyContent = `（请求失败：${(e as Error).message}）`;
   }
 
@@ -445,6 +649,14 @@ export async function sendChatMessage(
     role: 'assistant',
     content: replyContent,
   });
+  traceTurnEvent({
+    type: 'turn-completed',
+    turnId,
+    conversationId,
+    trigger,
+    reply: replyContent,
+    createdAt: saved.created_at,
+  });
 
   // 记录消息活跃时间（供空闲调度器判断何时触发后台总结，不再在热路径调用 LLM）
   recordMessageActivity();
@@ -452,7 +664,7 @@ export async function sendChatMessage(
   // streamer 模式：主播在聊天界面发送消息，AI 回复同样要经过 TTS 播报给直播间
   // 原则：AI 生成文字后自动送 TTS，不需要 AI 主动调用 speak 工具
   // 动态 import 避免 aiService ↔ streamerController ↔ main 静态循环依赖
-  if (currentAgentMode === 'streamer' && replyContent.trim() && !replyContent.startsWith('（请求失败：')) {
+  if (effectiveMode === 'streamer' && replyContent.trim() && !replyContent.startsWith('（请求失败：')) {
     void import('./streaming/streamerController').then(({ streamerController }) => {
       void streamerController.speak(replyContent);
     });
@@ -465,5 +677,5 @@ export async function sendChatMessage(
     renameConversation(conversationId, title);
   }
 
-  return { content: replyContent, created_at: saved.created_at };
+  return { content: replyContent, created_at: saved.created_at, turnId };
 }

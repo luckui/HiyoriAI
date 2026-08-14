@@ -60,6 +60,10 @@
 import { nativeImage } from 'electron';
 import { browserSession } from './browserSession';
 import type { ToolDefinition, ToolImageResult } from '../types';
+import { browserExecution } from '../browserExecution';
+
+const browserSharedExecution = browserExecution<any>('shared');
+const browserExclusiveExecution = browserExecution<any>('exclusive');
 
 /** 浏览器截图最大宽度，超出等比缩小 */
 const SCREENSHOT_MAX_WIDTH = 1280;
@@ -380,6 +384,7 @@ export async function readPageSummary(mode: 'brief' | 'full' = 'brief'): Promise
 interface OpenParams { query: string }
 
 const browserOpen: ToolDefinition<OpenParams> = {
+  execution: browserExclusiveExecution,
   schema: {
     type: 'function',
     function: {
@@ -452,6 +457,7 @@ interface SearchParams {
 }
 
 const browserSearch: ToolDefinition<SearchParams> = {
+  execution: browserExclusiveExecution,
   schema: {
     type: 'function',
     function: {
@@ -548,6 +554,7 @@ const browserSearch: ToolDefinition<SearchParams> = {
 interface ReadPageParams { detail?: 'brief' | 'full' }
 
 const browserReadPage: ToolDefinition<ReadPageParams> = {
+  execution: browserSharedExecution,
   schema: {
     type: 'function',
     function: {
@@ -625,6 +632,7 @@ const browserReadPage: ToolDefinition<ReadPageParams> = {
 // ── 2. browser_back ───────────────────────────────────────────────
 
 const browserBack: ToolDefinition<Record<string, never>> = {
+  execution: browserExclusiveExecution,
   schema: {
     type: 'function',
     function: {
@@ -645,6 +653,7 @@ const browserBack: ToolDefinition<Record<string, never>> = {
 // ── 3. browser_refresh ────────────────────────────────────────────
 
 const browserRefresh: ToolDefinition<Record<string, never>> = {
+  execution: browserExclusiveExecution,
   schema: {
     type: 'function',
     function: {
@@ -667,6 +676,7 @@ const browserRefresh: ToolDefinition<Record<string, never>> = {
 interface WaitParams { seconds: number }
 
 const browserWait: ToolDefinition<WaitParams> = {
+  execution: browserExclusiveExecution,
   schema: {
     type: 'function',
     function: {
@@ -699,6 +709,7 @@ const browserWait: ToolDefinition<WaitParams> = {
 interface ClickParams { selector: string; force?: boolean }
 
 const browserClick: ToolDefinition<ClickParams> = {
+  execution: browserExclusiveExecution,
   schema: {
     type: 'function',
     function: {
@@ -759,6 +770,7 @@ const browserClick: ToolDefinition<ClickParams> = {
 interface TypeParams { selector: string; text: string; submit?: boolean }
 
 const browserType: ToolDefinition<TypeParams> = {
+  execution: browserExclusiveExecution,
   schema: {
     type: 'function',
     function: {
@@ -816,6 +828,7 @@ interface ScrollParams {
 }
 
 const browserScroll: ToolDefinition<ScrollParams> = {
+  execution: browserExclusiveExecution,
   schema: {
     type: 'function',
     function: {
@@ -865,6 +878,7 @@ const browserScroll: ToolDefinition<ScrollParams> = {
 interface HoverParams { selector: string }
 
 const browserHover: ToolDefinition<HoverParams> = {
+  execution: browserExclusiveExecution,
   schema: {
     type: 'function',
     function: {
@@ -898,6 +912,7 @@ const browserHover: ToolDefinition<HoverParams> = {
 // ── 9. browser_screenshot ─────────────────────────────────────────
 
 const browserScreenshot: ToolDefinition<Record<string, never>> = {
+  execution: browserSharedExecution,
   schema: {
     type: 'function',
     function: {
@@ -946,6 +961,7 @@ const browserScreenshot: ToolDefinition<Record<string, never>> = {
 // ── 10. browser_list_tabs ────────────────────────────────────────
 
 const browserListTabs: ToolDefinition<Record<string, never>> = {
+  execution: browserSharedExecution,
   schema: {
     type: 'function',
     function: {
@@ -977,6 +993,7 @@ const browserListTabs: ToolDefinition<Record<string, never>> = {
 interface SwitchTabParams { index: number }
 
 const browserSwitchTab: ToolDefinition<SwitchTabParams> = {
+  execution: browserExclusiveExecution,
   schema: {
     type: 'function',
     function: {
@@ -1022,6 +1039,7 @@ const browserSwitchTab: ToolDefinition<SwitchTabParams> = {
 interface JsClickParams { selector: string }
 
 const browserJsClick: ToolDefinition<JsClickParams> = {
+  execution: browserExclusiveExecution,
   schema: {
     type: 'function',
     function: {
@@ -1123,6 +1141,7 @@ const browserJsClick: ToolDefinition<JsClickParams> = {
  * 避免因 selector 模糊而填错字段（如把密码写进用户名框）。
  */
 const browserGetInputs: ToolDefinition<Record<string, never>> = {
+  execution: browserSharedExecution,
   schema: {
     type: 'function',
     function: {
@@ -1260,6 +1279,7 @@ const browserGetInputs: ToolDefinition<Record<string, never>> = {
 interface TypeRichParams { selector: string; text: string; clear?: boolean }
 
 const browserTypeRich: ToolDefinition<TypeRichParams> = {
+  execution: browserExclusiveExecution,
   schema: {
     type: 'function',
     function: {
@@ -1336,6 +1356,7 @@ const browserTypeRich: ToolDefinition<TypeRichParams> = {
  *                        →（仍失败）browser_js_click(CSS sel)
  */
 const browserGetButtons: ToolDefinition<Record<string, never>> = {
+  execution: browserSharedExecution,
   schema: {
     type: 'function',
     function: {
@@ -1475,6 +1496,7 @@ interface FindParams {
 }
 
 const browserFind: ToolDefinition<FindParams> = {
+  execution: browserSharedExecution,
   schema: {
     type: 'function',
     function: {
@@ -1690,6 +1712,7 @@ const browserFind: ToolDefinition<FindParams> = {
  * AI 在执行任何操作前若不确定当前页面，主动调用此工具，而非盲目重新导航。
  */
 const browserGetState: ToolDefinition<Record<string, never>> = {
+  execution: browserSharedExecution,
   schema: {
     type: 'function',
     function: {
@@ -1730,6 +1753,7 @@ const browserGetState: ToolDefinition<Record<string, never>> = {
  * 用此工具拿到 href 直接调用 browser_open 跳转，无需点击。
  */
 const browserGetLinks: ToolDefinition<Record<string, never>> = {
+  execution: browserSharedExecution,
   schema: {
     type: 'function',
     function: {
@@ -1797,6 +1821,7 @@ interface GetElementsHtmlParams {
 }
 
 const browserGetElementsHtml: ToolDefinition<GetElementsHtmlParams> = {
+  execution: browserSharedExecution,
   schema: {
     type: 'function',
     function: {

@@ -11,11 +11,17 @@ export type MinecraftFollowPhase =
 export type MinecraftActionName =
   | 'navigate_to_player'
   | 'follow_player'
+  | 'search_entity'
+  | 'search_block'
+  | 'scan_blocks'
+  | 'approach_entity'
+  | 'attack_entity'
   | 'wait'
   | 'inspect'
-  | 'collect_block'
+  | 'collect_item'
   | 'pickup_drops'
   | 'craft_item'
+  | 'drop_item'
   | 'smelt_item'
   | 'use_container'
   | 'eat'
@@ -38,9 +44,14 @@ export type MinecraftActionErrorCode =
   | 'missing_tool'
   | 'missing_item'
   | 'inventory_full'
+  | 'unknown_item'
   | 'unsafe'
+  | 'died'
   | 'timeout'
   | 'cancelled'
+  | 'recipe_unavailable'
+  | 'inventory_desync'
+  | 'craft_rejected'
   | 'adapter_error';
 
 export interface MinecraftFact {
@@ -82,7 +93,12 @@ export interface MinecraftEnvironmentSnapshot {
   owner?: { name: string; visible: boolean; distance?: number; relativeDirection?: string };
   follow: { phase: MinecraftFollowPhase; target?: string; distance?: number };
   nearby: { blocks: MinecraftObservedBlock[]; entities: MinecraftObservedEntity[] };
-  action?: { id: string; name: MinecraftActionName; state: 'running' | 'paused' | 'cancelled' };
+  action?: {
+    id: string;
+    name: MinecraftActionName;
+    state: 'running' | 'paused' | 'cancelled';
+    args: Record<string, unknown>;
+  };
   recentEvents: MinecraftFact[];
 }
 
@@ -90,6 +106,8 @@ export interface MinecraftActionInstruction {
   id: string;
   name: MinecraftActionName;
   args: Record<string, unknown>;
+  /** 标记该动作由 Minecraft 子任务发起；子任务执行期间挂起默认跟随。 */
+  task?: boolean;
 }
 
 export interface MinecraftWorldChange {
@@ -110,13 +128,6 @@ export interface MinecraftActionResult {
   error?: { code: MinecraftActionErrorCode; recoverable: boolean; details: Record<string, unknown> };
 }
 
-export type MinecraftPlannerDecision =
-  | { kind: 'act'; action: MinecraftActionInstruction; rationale: string }
-  | { kind: 'complete'; result: string }
-  | { kind: 'ask-user'; question: string; reason: string }
-  | { kind: 'wait'; condition: { kind: 'action' | 'player' | 'time'; value: string } }
-  | { kind: 'revise-plan'; plan: Array<{ title: string; expected: string }> };
-
 export type MinecraftWorkerCommand =
   | { type: 'discover'; requestId: string }
   | { type: 'connect'; requestId: string; host: string; port: number; username?: string }
@@ -125,4 +136,5 @@ export type MinecraftWorkerCommand =
   | { type: 'say'; requestId: string; message: string }
   | { type: 'snapshot'; requestId: string }
   | { type: 'execute-action'; requestId: string; instruction: MinecraftActionInstruction }
-  | { type: 'cancel-action'; requestId: string; actionId: string };
+  | { type: 'cancel-action'; requestId: string; actionId: string }
+  | { type: 'task-release'; requestId: string };

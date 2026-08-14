@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import type { FeishuBridgeConfig } from '../bridge.config';
 import { sendChatMessage } from '../../aiService';
+import { traceReplyDelivery } from '../../turnTrace';
 import { listConversations } from '../../db';
 import { noteBridgeInboundMessage } from '../asyncDelivery';
 import { formatFeishuCommandHelp, parseFeishuCommand } from '../feishuCommands';
@@ -276,8 +277,21 @@ export class FeishuAdapter {
       const result = await sendChatMessage(
         conversationId,
         `[来源：Lark / Feishu | 聊天：${job.chatId} | 用户：${job.userId}]\n${job.text}`,
+        {
+          trigger: {
+            actor: 'user',
+            source: 'feishu',
+            event: 'message',
+            sourceId: job.dedupeKey,
+          },
+        },
       );
       await this.sendReply(job.chatId, result.content);
+      traceReplyDelivery(result.turnId, conversationId, 'feishu', {
+        chatId: job.chatId,
+        messageId: job.dedupeKey,
+        reply: result.content,
+      });
     } catch (error) {
       const message = (error as Error).message ?? String(error);
       console.error('[Feishu] message handling failed:', message);

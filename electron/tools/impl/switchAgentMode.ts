@@ -3,7 +3,7 @@ import { getAgentMode, setAgentMode } from '../../agentMode';
 import type { ToolDefinition } from '../types';
 
 interface SwitchAgentModeParams {
-  target_mode: 'chat' | 'agent' | 'agent-debug' | 'developer' | 'streamer';
+  target_mode: 'chat' | 'agent' | 'agent-debug' | 'developer' | 'streamer' | 'minecraft';
   reason: string;
 }
 
@@ -13,6 +13,7 @@ const modeNames: Record<SwitchAgentModeParams['target_mode'], string> = {
   'agent-debug': 'Agent-Debug mode',
   developer: 'Developer mode',
   streamer: 'Streamer mode (Bilibili live host)',
+  minecraft: 'Minecraft mode',
 };
 
 const switchAgentMode: ToolDefinition<SwitchAgentModeParams> = {
@@ -21,14 +22,14 @@ const switchAgentMode: ToolDefinition<SwitchAgentModeParams> = {
     function: {
       name: 'switch_agent_mode',
       description:
-        'Switch the current agent mode. Use streamer when the user asks to start or manage a live stream.',
+        'Switch the current agent mode. Use streamer for live streams and minecraft for Minecraft gameplay.',
       parameters: {
         type: 'object',
         properties: {
           target_mode: {
             type: 'string',
-            enum: ['chat', 'agent', 'agent-debug', 'developer', 'streamer'],
-            description: 'Target mode: chat | agent | agent-debug | developer | streamer.',
+            enum: ['chat', 'agent', 'agent-debug', 'developer', 'streamer', 'minecraft'],
+            description: 'Target mode: chat | agent | agent-debug | developer | streamer | minecraft.',
           },
           reason: {
             type: 'string',

@@ -1,5 +1,6 @@
 import { noteBridgeInboundMessage } from '../bridges/asyncDelivery';
 import type { ChatRequestContext } from '../aiService';
+import { traceReplyDelivery } from '../turnTrace';
 import type { MinecraftRuntimeEvent, MinecraftStatus } from './protocol';
 
 export interface MinecraftChatRuntime {
@@ -27,8 +28,9 @@ interface MinecraftChatChannelDependencies {
     conversationId: string,
     userContent: string,
     requestContext?: ChatRequestContext,
-  ): Promise<{ content: string; created_at: number }>;
+  ): Promise<{ content: string; created_at: number; turnId?: string }>;
   playTTS(text: string): void | Promise<void>;
+  onRuntimeEvent?(event: MinecraftRuntimeEvent): void;
   mirror?(turn: MinecraftExternalTurn): void;
   onError?(error: Error): void;
 }
@@ -42,9 +44,12 @@ export class MinecraftChatChannel {
   start(): void {
     if (this.unsubscribe) return;
     this.unsubscribe = this.dependencies.runtime.onEvent((event) => {
-      if (event.kind !== 'chat') return;
+      this.dependencies.onRuntimeEvent?.(event);
+      if (event.kind !== 'chat' && event.kind !== 'player-gaze') return;
       this.queue = this.queue
-        .then(() => this.handleChat(event.player, event.message))
+        .then(() => event.kind === 'chat'
+          ? this.handleChat(event.player, event.message)
+          : this.handleGaze(event.player, event.durationMs))
         .catch((error) => {
           this.dependencies.onError?.(
             error instanceof Error ? error : new Error(String(error)),
@@ -65,6 +70,29 @@ export class MinecraftChatChannel {
   private async handleChat(player: string, message: string): Promise<void> {
     const status = await this.dependencies.runtime.status();
     if (!shouldAcceptChat(status, player, message)) return;
+    await this.handleTurn(status, player, message, 'message', buildSourceContext(status, player));
+  }
+
+  private async handleGaze(player: string, durationMs: number): Promise<void> {
+    const status = await this.dependencies.runtime.status();
+    if (!shouldAcceptGaze(status, player)) return;
+    const action = `（${player} 持续注视着 Hiyori）`;
+    await this.handleTurn(
+      status,
+      player,
+      action,
+      'player-gaze',
+      buildGazeSourceContext(status, player, durationMs),
+    );
+  }
+
+  private async handleTurn(
+    _status: MinecraftStatus,
+    player: string,
+    userContent: string,
+    event: 'message' | 'player-gaze',
+    sourceContext: string,
+  ): Promise<void> {
     const conversationId = this.dependencies.getConversationId();
     if (!conversationId) return;
 
@@ -75,20 +103,52 @@ export class MinecraftChatChannel {
     });
     const reply = await this.dependencies.sendChatMessage(
       conversationId,
-      message,
-      { sourceContext: buildSourceContext(status, player) },
+      userContent,
+      {
+        sourceContext,
+        trigger: {
+          actor: 'user',
+          source: 'minecraft',
+          event,
+          sourceId: player,
+        },
+      },
     );
     if (!reply.content.trim()) return;
 
     await this.dependencies.runtime.say(reply.content);
+    if (reply.turnId) {
+      traceReplyDelivery(reply.turnId, conversationId, 'minecraft', {
+        player,
+        reply: reply.content,
+      });
+    }
     await this.dependencies.playTTS(reply.content);
     this.dependencies.mirror?.({
       conversationId,
-      user: message,
+      user: userContent,
       assistant: reply.content,
       createdAt: reply.created_at,
     });
   }
+}
+
+function shouldAcceptGaze(status: MinecraftStatus, player: string): boolean {
+  return Boolean(
+    status.connected
+    && status.owner
+    && status.owner.toLocaleLowerCase() === player.toLocaleLowerCase()
+    && status.username?.toLocaleLowerCase() !== player.toLocaleLowerCase(),
+  );
+}
+
+function buildGazeSourceContext(
+  _status: MinecraftStatus,
+  player: string,
+  durationMs: number,
+): string {
+  const seconds = Math.round(durationMs / 100) / 10;
+  return `当前轮次来自 Minecraft 中的非语言互动：玩家 ${player} 连续注视 Hiyori 约 ${seconds} 秒。请依据当前人格自然回应此刻的注视。`;
 }
 
 export function shouldAcceptChat(
@@ -102,9 +162,6 @@ export function shouldAcceptChat(
   return /\bhiyori\b/i.test(message);
 }
 
-function buildSourceContext(status: MinecraftStatus, player: string): string {
-  return [
-    `当前消息来自 Minecraft 玩家 ${player}。`,
-    `Hiyori 已作为游戏角色 ${status.username ?? 'unknown'} 连接；直接自然回复玩家，不需要打开网页或另找发送渠道。`,
-  ].join('\n');
+function buildSourceContext(_status: MinecraftStatus, player: string): string {
+  return `当前消息来自 Minecraft 游戏内聊天，发送者：${player}。`;
 }

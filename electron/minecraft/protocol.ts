@@ -7,8 +7,8 @@ export type MinecraftAction =
   | 'snapshot'
   | 'execute-action'
   | 'cancel-action'
+  | 'task-release'
   | 'follow'
-  | 'collect'
   | 'stop';
 
 export type {
@@ -25,7 +25,6 @@ export type {
   MinecraftFollowPhase,
   MinecraftObservedBlock,
   MinecraftObservedEntity,
-  MinecraftPlannerDecision,
   MinecraftWorkerCommand,
   MinecraftWorldChange,
 } from './contracts';
@@ -67,28 +66,15 @@ export interface MinecraftStatus {
   behavior: MinecraftBehavior;
 }
 
-export type MinecraftTerminalOutcome =
-  | 'completed'
-  | 'partial'
-  | 'cancelled'
-  | 'failed';
-
-export interface MinecraftTerminalEvent {
-  kind: 'collection-terminal';
-  jobId: string;
-  outcome: MinecraftTerminalOutcome;
-  block: string;
-  requested: number;
-  collected: number;
-  message?: string;
-}
-
 export type MinecraftRuntimeEvent =
-  | MinecraftTerminalEvent
   | { kind: 'chat'; player: string; message: string }
+  | { kind: 'player-gaze'; player: string; durationMs: number; distance: number }
   | { kind: 'players'; players: string[] }
   | { kind: 'food-shortage'; food: number }
   | { kind: 'food-recovered'; food: number }
+  | { kind: 'death'; position?: { x: number; y: number; z: number } }
+  | { kind: 'movement-blocked'; mode: 'follow'; player: string; position: { x: number; y: number; z: number }; distance: number }
+  | { kind: 'oxygen-danger'; recovered: boolean; oxygen: number; method: 'surface' | 'last-breathable-position' | 'failed'; position: { x: number; y: number; z: number } }
   | { kind: 'disconnected'; reason: string }
   | { kind: 'log'; level: 'info' | 'warn' | 'error'; message: string };
 

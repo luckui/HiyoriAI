@@ -17,6 +17,7 @@
  */
 
 import type { ToolDefinition } from '../types';
+import { browserExecution } from '../browserExecution';
 import { browserSession } from '../impl/browserSession';
 import { readPageSummary } from '../impl/browser';
 
@@ -31,6 +32,7 @@ async function waitSettle(ms = 2000): Promise<void> {
 }
 
 const browserOpenSkill: ToolDefinition<BrowserOpenParams> = {
+  execution: browserExecution('exclusive'),
   schema: {
     type: 'function',
     function: {

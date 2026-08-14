@@ -120,6 +120,23 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
     ],
   },
 
+  "minecraft": {
+    description: "Minecraft 子任务专用：环境感知、即时控制和有限动作",
+    tools: [
+      "minecraft_action",
+    ],
+  },
+
+  "minecraft-chat": {
+    description: "Minecraft 游玩模式：MC 即时控制 + 游戏目标 + 基础桌面工具",
+    tools: [
+      "minecraft_companion",     // MC 即时控制与感知
+      "minecraft_goal",          // 唯一当前 MC 游戏目标
+      "run_command",             // 基础命令执行
+      "take_screenshot",         // 截图
+    ],
+  },
+
   // ═════════════════════════════════════════════════════════════
   // 三级模式：Chat / Agent / Agent-Debug（扁平化，易读）
   // ═════════════════════════════════════════════════════════════
@@ -139,7 +156,9 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "manage_tts",              // 🆕 管理本地 TTS 语音合成服务
       "manage_hearing",          // 🆕 管理听觉系统（STT 语音识别）
       "manage_live2d",           // 🆕 控制 Live2D 角色情绪与动作
-      "minecraft_companion",
+
+      // 独立任务
+      "async_task",
 
       // 基础工具
       "take_screenshot",         // 截图（屏幕）
@@ -159,7 +178,6 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "switch_agent_mode",       // 🆕 切换 Agent 模式
       "codex_projects",
       "coding_agent",
-      "minecraft_companion",
       
       // 浏览器 - 完整工具集
       "browser_open",            // 打开网页（Skill）
@@ -207,7 +225,6 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "show_available_tools",
       "codex_projects",
       "coding_agent",
-      "minecraft_companion",
       
       // 🆕 打工人核心工具（文件操作）
       "read_file",               // 读取文件（支持行范围）

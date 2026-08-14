@@ -1,6 +1,14 @@
 ﻿import type { ToolDefinition, ToolSchema, ToolExecuteResult, ToolImageResult } from './types';
-import { isToolPauseResult, isToolContinuationResult } from './types';
+import { isToolPauseResult, isToolContinuationResult, isToolTerminalError } from './types';
 import { resolveToolset } from '../toolsets';
+import type {
+  ToolBatchExecution,
+  ToolBatchHooks,
+  ToolContext,
+  ToolExecutionCall,
+  ToolResourceClaim,
+} from './types';
+import { globalToolResourceScheduler, ToolResourceScheduler } from './resourceScheduler';
 
 /**
  * 工具注册中心
@@ -21,6 +29,10 @@ import { resolveToolset } from '../toolsets';
 export class ToolRegistry {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private readonly tools = new Map<string, ToolDefinition<any>>();
+
+  constructor(
+    private readonly scheduler: ToolResourceScheduler = globalToolResourceScheduler,
+  ) {}
 
   /** 注册一个工具，支持链式调用 */
   register<T>(tool: ToolDefinition<T>): this {
@@ -118,16 +130,76 @@ export class ToolRegistry {
    *                   ToolPauseResult 已在此处格式化为带 ⏸️ 标记的字符串，
    *                   调用方（aiService）无需感知暂停类型。
    */
-  async execute(name: string, argsJson: string, context?: import('./types').ToolContext): Promise<string | ToolImageResult> {
-    const tool = this.tools.get(name);
-    if (!tool) {
-      return `[工具错误] 未找到名为 "${name}" 的工具，已注册: ${[...this.tools.keys()].join(', ')}`;
-    }
-    try {
-      const args = JSON.parse(argsJson) as Record<string, unknown>;
-      const result = await tool.execute(args, context);
+  async execute(name: string, argsJson: string, context?: ToolContext): Promise<string | ToolImageResult> {
+    const [execution] = await this.executeBatch([
+      { id: `single:${name}`, name, arguments: argsJson },
+    ], context);
+    return execution.result;
+  }
 
-      // ── 工具暂停：格式化为带 ⏸️ 标记的字符串，AI 按工具结果规范处理 ──
+  async executeBatch(
+    calls: readonly ToolExecutionCall[],
+    context?: ToolContext,
+    hooks?: ToolBatchHooks,
+  ): Promise<ToolBatchExecution[]> {
+    return Promise.all(calls.map((call) => this.executeCall(call, context, hooks)));
+  }
+
+  private async executeCall(
+    call: ToolExecutionCall,
+    context?: ToolContext,
+    hooks?: ToolBatchHooks,
+  ): Promise<ToolBatchExecution> {
+    const tool = this.tools.get(call.name);
+    let args: Record<string, unknown> = {};
+    let preparationError: Error | undefined;
+    let claims: ToolResourceClaim[] = [];
+
+    try {
+      args = JSON.parse(call.arguments) as Record<string, unknown>;
+      if (tool) {
+        claims = [...(tool.execution?.resources?.(args, context) ?? [])];
+      }
+    } catch (error) {
+      preparationError = error as Error;
+    }
+
+    safeHook(hooks?.queued, { call, args, claims });
+    const scheduled = await this.scheduler.run(claims, async (queueWaitMs) => {
+      safeHook(hooks?.started, { call, args, claims, queueWaitMs });
+      const startedAt = Date.now();
+      const result = await this.executePrepared(call, tool, args, context, preparationError);
+      return { result, durationMs: Date.now() - startedAt };
+    }, context?.signal);
+
+    const execution: ToolBatchExecution = {
+      call,
+      args,
+      claims,
+      queueWaitMs: scheduled.queueWaitMs,
+      durationMs: scheduled.value.durationMs,
+      result: scheduled.value.result,
+    };
+    safeHook(hooks?.completed, execution);
+    return execution;
+  }
+
+  private async executePrepared(
+    call: ToolExecutionCall,
+    tool: ToolDefinition<any> | undefined,
+    args: Record<string, unknown>,
+    context?: ToolContext,
+    preparationError?: Error,
+  ): Promise<string | ToolImageResult> {
+    if (!tool) {
+      return `[工具错误] 未找到名为 "${call.name}" 的工具，已注册: ${[...this.tools.keys()].join(', ')}`;
+    }
+    if (preparationError) {
+      return `[工具错误] "${call.name}" 执行失败: ${preparationError.message}`;
+    }
+
+    try {
+      const result = await tool.execute(args, context);
       if (isToolPauseResult(result)) {
         const traceLines = result.trace.length
           ? result.trace.map(t => '  ' + t).join('\n')
@@ -140,7 +212,6 @@ export class ToolRegistry {
         );
       }
 
-      // ── 工具继续：格式化为带 🔄 标记的字符串，AI 按工具结果规范判断下一步 ──
       if (isToolContinuationResult(result)) {
         const traceLines = result.trace.length
           ? result.trace.map(t => '  ' + t).join('\n')
@@ -151,10 +222,18 @@ export class ToolRegistry {
           `【建议下一步】${result.instruction}`
         );
       }
-
       return result;
-    } catch (e) {
-      return `[工具错误] "${name}" 执行失败: ${(e as Error).message}`;
+    } catch (error) {
+      if (isToolTerminalError(error)) throw error;
+      return `[工具错误] "${call.name}" 执行失败: ${(error as Error).message}`;
     }
+  }
+}
+
+function safeHook<T>(hook: ((event: T) => void) | undefined, event: T): void {
+  try {
+    hook?.(event);
+  } catch {
+    // Diagnostic callbacks must never alter tool execution.
   }
 }

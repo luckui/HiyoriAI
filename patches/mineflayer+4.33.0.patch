@@ -1,11 +1,11 @@
 diff --git a/node_modules/mineflayer/lib/plugins/entities.js b/node_modules/mineflayer/lib/plugins/entities.js
-index 666b0b3..8b3bba1 100644
+index 666b0b3..cb97c54 100644
 --- a/node_modules/mineflayer/lib/plugins/entities.js
 +++ b/node_modules/mineflayer/lib/plugins/entities.js
 @@ -271,7 +271,11 @@ function inject (bot) {
      entity.pitch = conv.fromNotchianPitchByte(packet.pitch)
      entity.headPitch = conv.fromNotchianPitchByte(packet.headPitch)
- 
+
 -    const notchVel = new Vec3(packet.velocityX, packet.velocityY, packet.velocityZ)
 +    const notchVel = new Vec3(
 +      packet.velocityX ?? packet.velocity?.x,
@@ -14,7 +14,7 @@ index 666b0b3..8b3bba1 100644
 +    )
      entity.velocity.update(conv.fromNotchVelocity(notchVel))
      entity.metadata = parseMetadata(packet.metadata, entity.metadata)
- 
+
 @@ -281,7 +285,11 @@ function inject (bot) {
    bot._client.on('entity_velocity', (packet) => {
      // entity velocity
@@ -27,4 +27,13 @@ index 666b0b3..8b3bba1 100644
 +    )
      entity.velocity.update(conv.fromNotchVelocity(notchVel))
    })
- 
+
+@@ -491,7 +499,7 @@ function inject (bot) {
+       }
+
+       // Breathing (formerly in breath.js)
+-      if (metas.air_supply != null) {
++      if (entity.id === bot.entity?.id && metas.air_supply != null) {
+         bot.oxygenLevel = Math.round(metas.air_supply / 15)
+         bot.emit('breath')
+       }

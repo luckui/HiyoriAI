@@ -12,7 +12,7 @@
  * Token 预算：~500 字（对比 chat ~200 字、developer ~2000 字）
  */
 
-import { TOOL_INTERACTION_RULE } from './base-rules';
+import { HIYORI_VOICE_STYLE, TOOL_INTERACTION_RULE } from './base-rules';
 
 // ── Agent 人设 ─────────────────────────────────────────────
 
@@ -69,7 +69,7 @@ const CODING_AGENT_GUIDANCE = `
 const TOOL_RESULT_GUIDANCE = `
 【工具结果规范】
 工具返回内容如果包含“下一步”，优先按它处理：
-• 下一步：回复用户 —— 基于“建议回复”或“结果”直接回复用户，然后结束本轮。
+• 下一步：回复用户 —— 基于工具返回的状态、结果或提示自行组织回复，然后结束本轮。
 • 下一步：询问用户 —— 把选项或问题说清楚，然后等待用户选择；不要自行选择，也不要继续调用工具。
 • 下一步：继续执行 —— 只有工具结果明确要求继续、且信息充足时，才继续调用合适工具。
 没有“下一步”字段时，按普通工具结果判断：能回答就回答，缺信息就问用户，确需真实操作才继续调用工具。
@@ -92,6 +92,8 @@ Coding-agent session rules:
 export function buildAgentPrompt(): string {
   return [
     AGENT_PERSONALITY,
+    '',
+    HIYORI_VOICE_STYLE,
     '',
     AGENT_CORE_RULES,
     '',

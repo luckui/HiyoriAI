@@ -23,6 +23,7 @@ import {
   type TaskStatus,
   type TaskType,
 } from './db';
+import { traceTurnEvent } from './turnTrace';
 
 // ── 类型 ──────────────────────────────────────────────────
 
@@ -40,6 +41,20 @@ export interface CreateTaskOptions {
 
 const MAX_CONCURRENT = 3;
 
+interface TaskTerminationRequest {
+  status: 'cancelled' | 'failed';
+  reason?: string;
+  error?: string;
+}
+
+interface TaskExecution {
+  abort: AbortController;
+  started: boolean;
+  termination?: TaskTerminationRequest;
+  settled: Promise<DBTask | null>;
+  resolveSettled(task: DBTask | null): void;
+}
+
 // ── 子智能体禁止工具 ─────────────────────────────────────
 
 export const CHILD_BLOCKED_TOOLS = new Set([
@@ -51,13 +66,13 @@ export const CHILD_BLOCKED_TOOLS = new Set([
 
 // ── TaskManager 单例 ─────────────────────────────────────
 
-class TaskManager extends EventEmitter {
-  /** 正在运行的任务 AbortController 映射 */
-  private runningAborts = new Map<string, AbortController>();
+export class TaskManager extends EventEmitter {
+  /** 已排队或正在运行的执行记录；终态持久化后才移除。 */
+  private executions = new Map<string, TaskExecution>();
 
   /** 当前并行运行数 */
   get runningCount(): number {
-    return this.runningAborts.size;
+    return [...this.executions.values()].filter((execution) => execution.started).length;
   }
 
   // ── 创建并启动 ──────────────────────────────────────────
@@ -74,8 +89,17 @@ class TaskManager extends EventEmitter {
       metadata: opts.metadata ? JSON.stringify(opts.metadata) : null,
     });
 
+    let resolveSettled!: (task: DBTask | null) => void;
+    const execution: TaskExecution = {
+      abort: new AbortController(),
+      started: false,
+      settled: new Promise((resolve) => { resolveSettled = resolve; }),
+      resolveSettled,
+    };
+    this.executions.set(task.id, execution);
+
     // 异步启动，不阻塞
-    this._startAsync(task);
+    void this._startAsync(task, execution);
     return task;
   }
 
@@ -91,22 +115,31 @@ class TaskManager extends EventEmitter {
 
   // ── 取消 ────────────────────────────────────────────────
 
-  cancelTask(taskId: string): boolean {
-    const ctrl = this.runningAborts.get(taskId);
-    if (ctrl) {
-      ctrl.abort();
-      this.runningAborts.delete(taskId);
-      dbUpdateTask(taskId, { status: 'cancelled', completed_at: Date.now() });
-      this.emit('task:cancelled', dbGetTask(taskId));
-      return true;
-    }
-    // 如果还在 pending 但未运行
+  async cancelTask(taskId: string, reason?: string): Promise<boolean> {
     const task = dbGetTask(taskId);
-    if (task && task.status === 'pending') {
-      dbUpdateTask(taskId, { status: 'cancelled', completed_at: Date.now() });
-      return true;
-    }
-    return false;
+    if (!task || (task.status !== 'pending' && task.status !== 'running')) return false;
+    const execution = this.executions.get(taskId);
+    if (!execution) return false;
+    execution.termination ??= { status: 'cancelled', reason };
+    execution.abort.abort();
+    await execution.settled;
+    return true;
+  }
+
+  async failTask(taskId: string, error: string): Promise<boolean> {
+    const task = dbGetTask(taskId);
+    if (!task || (task.status !== 'pending' && task.status !== 'running')) return false;
+    const execution = this.executions.get(taskId);
+    if (!execution) return false;
+    execution.termination = { status: 'failed', error };
+    execution.abort.abort();
+    await execution.settled;
+    return true;
+  }
+
+  async waitForTerminal(taskId: string): Promise<DBTask | null> {
+    const execution = this.executions.get(taskId);
+    return execution ? execution.settled : dbGetTask(taskId);
   }
 
   // ── 更新进度（供 AgentRunner 内部调用） ─────────────────
@@ -122,22 +155,22 @@ class TaskManager extends EventEmitter {
 
   // ── 内部：异步启动任务 ──────────────────────────────────
 
-  private async _startAsync(task: DBTask): Promise<void> {
+  private async _startAsync(task: DBTask, execution: TaskExecution): Promise<void> {
     // 并发控制：等待空位
     if (this.runningCount >= MAX_CONCURRENT) {
       console.log(`[TaskManager] 并发已满 (${MAX_CONCURRENT})，任务 ${task.id} 等待中`);
-      await this._waitForSlot();
+      await this._waitForSlot(execution.abort.signal);
     }
 
     // 等待期间可能已被取消
     const freshTask = dbGetTask(task.id);
-    if (!freshTask || freshTask.status === 'cancelled') {
+    if (!freshTask || execution.termination || execution.abort.signal.aborted) {
       console.log(`[TaskManager] 任务 ${task.id} 在等待队列中被取消`);
+      this.finalizeExecution(task.id, execution, execution.termination ?? { status: 'cancelled' });
       return;
     }
 
-    const abort = new AbortController();
-    this.runningAborts.set(task.id, abort);
+    execution.started = true;
 
     // 标记 running
     dbUpdateTask(task.id, { status: 'running', started_at: Date.now() });
@@ -149,18 +182,21 @@ class TaskManager extends EventEmitter {
       if (task.type === 'batch') {
         // 批量任务：拆分 → 并行子任务 → 聚合结果
         const { runBatch } = await import('./batchRunner');
-        result = await runBatch(task, abort.signal, (progress, text) => {
+        result = await runBatch(task, execution.abort.signal, (progress, text) => {
           this.updateProgress(task.id, progress, text);
         });
       } else {
         // 通用子智能体：多轮 ReAct 循环
         const { runChildAgent } = await import('./agentRunner');
-        result = await runChildAgent(task, abort.signal, (progress, text) => {
+        result = await runChildAgent(task, execution.abort.signal, (progress, text) => {
           this.updateProgress(task.id, progress, text);
         });
       }
 
-      if (abort.signal.aborted) return; // 已取消，不覆盖状态
+      if (execution.termination || execution.abort.signal.aborted) {
+        this.finalizeExecution(task.id, execution, execution.termination ?? { status: 'cancelled' });
+        return;
+      }
 
       dbUpdateTask(task.id, {
         status: 'completed',
@@ -170,10 +206,14 @@ class TaskManager extends EventEmitter {
         completed_at: Date.now(),
       });
       const completedTask = dbGetTask(task.id)!;
+      this.settleExecution(task.id, execution, completedTask);
       this.emit('task:completed', completedTask);
       console.log(`[TaskManager] 任务完成: ${task.title} (${task.id})`);
     } catch (err) {
-      if (abort.signal.aborted) return;
+      if (execution.termination || execution.abort.signal.aborted) {
+        this.finalizeExecution(task.id, execution, execution.termination ?? { status: 'cancelled' });
+        return;
+      }
       const errorMsg = err instanceof Error ? err.message : String(err);
       dbUpdateTask(task.id, {
         status: 'failed',
@@ -181,32 +221,91 @@ class TaskManager extends EventEmitter {
         completed_at: Date.now(),
       });
       const failedTask = dbGetTask(task.id)!;
+      this.settleExecution(task.id, execution, failedTask);
+      traceTaskTerminal(failedTask, 'child-task-error', errorMsg);
       this.emit('task:failed', failedTask);
       console.error(`[TaskManager] 任务失败: ${task.title} — ${errorMsg}`);
-    } finally {
-      this.runningAborts.delete(task.id);
     }
   }
 
+  reconcileInterruptedSlotTasks(slotKey: string): number {
+    let count = 0;
+    for (const task of dbListTasks()) {
+      if (task.status !== 'pending' && task.status !== 'running') continue;
+      if (!taskMetadataMatches(task, 'slotKey', slotKey)) continue;
+      dbUpdateTask(task.id, {
+        status: 'failed',
+        error: 'Interrupted by application restart',
+        completed_at: Date.now(),
+      });
+      const failedTask = dbGetTask(task.id);
+      if (failedTask) traceTaskTerminal(failedTask, 'child-task-error', failedTask.error ?? undefined);
+      count += 1;
+    }
+    return count;
+  }
+
+  private finalizeExecution(
+    taskId: string,
+    execution: TaskExecution,
+    termination: TaskTerminationRequest,
+  ): void {
+    const completedAt = Date.now();
+    if (termination.status === 'failed') {
+      const error = termination.error ?? 'Task failed';
+      dbUpdateTask(taskId, { status: 'failed', error, completed_at: completedAt });
+      const failedTask = dbGetTask(taskId);
+      if (failedTask) {
+        this.settleExecution(taskId, execution, failedTask);
+        traceTaskTerminal(failedTask, 'child-task-error', error);
+        this.emit('task:failed', failedTask);
+      } else {
+        this.settleExecution(taskId, execution, null);
+      }
+      return;
+    }
+
+    dbUpdateTask(taskId, {
+      status: 'cancelled',
+      progress_text: termination.reason ?? null,
+      completed_at: completedAt,
+    });
+    const cancelledTask = dbGetTask(taskId);
+    if (cancelledTask) {
+      this.settleExecution(taskId, execution, cancelledTask);
+      traceTaskTerminal(cancelledTask, 'child-task-cancelled');
+      this.emit('task:cancelled', cancelledTask);
+    } else {
+      this.settleExecution(taskId, execution, null);
+    }
+  }
+
+  private settleExecution(taskId: string, execution: TaskExecution, task: DBTask | null): void {
+    execution.started = false;
+    if (this.executions.get(taskId) === execution) this.executions.delete(taskId);
+    execution.resolveSettled(task);
+  }
+
   /** 等待并发槽位释放 */
-  private _waitForSlot(): Promise<void> {
+  private _waitForSlot(signal: AbortSignal): Promise<void> {
     return new Promise((resolve) => {
-      const check = () => {
-        if (this.runningCount < MAX_CONCURRENT) {
-          resolve();
-        } else {
-          // 监听一次完成/失败/取消事件后重试
-          const handler = () => {
-            this.removeListener('task:completed', handler);
-            this.removeListener('task:failed', handler);
-            this.removeListener('task:cancelled', handler);
-            check();
-          };
-          this.once('task:completed', handler);
-          this.once('task:failed', handler);
-          this.once('task:cancelled', handler);
-        }
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        this.removeListener('task:completed', check);
+        this.removeListener('task:failed', check);
+        this.removeListener('task:cancelled', check);
+        signal.removeEventListener('abort', finish);
+        resolve();
       };
+      const check = () => {
+        if (signal.aborted || this.runningCount < MAX_CONCURRENT) finish();
+      };
+      this.on('task:completed', check);
+      this.on('task:failed', check);
+      this.on('task:cancelled', check);
+      signal.addEventListener('abort', finish, { once: true });
       check();
     });
   }
@@ -214,4 +313,28 @@ class TaskManager extends EventEmitter {
 
 // ── 单例导出 ──────────────────────────────────────────────
 
+function traceTaskTerminal(
+  task: DBTask,
+  type: 'child-task-cancelled' | 'child-task-error',
+  error?: string,
+): void {
+  traceTurnEvent({
+    type,
+    turnId: task.id,
+    taskId: task.id,
+    conversationId: task.conversation_id ?? `task-${task.id}`,
+    title: task.title,
+    ...(error ? { error } : {}),
+  });
+}
+
 export const taskManager = new TaskManager();
+
+function taskMetadataMatches(task: DBTask, key: string, value: unknown): boolean {
+  if (!task.metadata) return false;
+  try {
+    return JSON.parse(task.metadata)[key] === value;
+  } catch {
+    return false;
+  }
+}

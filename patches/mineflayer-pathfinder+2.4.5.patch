@@ -1,5 +1,5 @@
 diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflayer-pathfinder/index.js
-index b38bd30..cd0d053 100644
+index b38bd30..51ea2d3 100644
 --- a/node_modules/mineflayer-pathfinder/index.js
 +++ b/node_modules/mineflayer-pathfinder/index.js
 @@ -14,6 +14,7 @@ const interactableBlocks = require('./lib/interactable.json')
@@ -94,18 +94,34 @@ index b38bd30..cd0d053 100644
        // arrived at next point
        lastNodeTime = performance.now()
        if (stopPathing) {
-@@ -611,6 +638,9 @@ function inject (bot) {
+@@ -611,26 +638,36 @@ function inject (bot) {
      if (bot.entity.isInWater) {
        bot.setControlState('jump', true)
        bot.setControlState('sprint', false)
+-    } else if (stateMovements.allowSprinting && physics.canStraightLine(path, true)) {
+-      bot.setControlState('jump', false)
+-      bot.setControlState('sprint', true)
+-    } else if (stateMovements.allowSprinting && physics.canSprintJump(path)) {
+-      bot.setControlState('jump', true)
+-      bot.setControlState('sprint', true)
+-    } else if (physics.canStraightLine(path)) {
+-      bot.setControlState('jump', false)
+-      bot.setControlState('sprint', false)
+-    } else if (physics.canWalkJump(path)) {
 +    } else if (bot.entity.isInLava) {
-+      bot.setControlState('jump', true)
-+      bot.setControlState('sprint', false)
-     } else if (stateMovements.allowSprinting && physics.canStraightLine(path, true)) {
-       bot.setControlState('jump', false)
-       bot.setControlState('sprint', true)
-@@ -628,9 +658,22 @@ function inject (bot) {
+       bot.setControlState('jump', true)
        bot.setControlState('sprint', false)
+     } else {
+-      bot.setControlState('forward', false)
+-      bot.setControlState('sprint', false)
++      const movementControl = physics.getMovementControl(path, stateMovements.allowSprinting)
++      if (movementControl) {
++        bot.setControlState('jump', movementControl.jump)
++        bot.setControlState('sprint', movementControl.sprint)
++      } else {
++        bot.setControlState('forward', false)
++        bot.setControlState('sprint', false)
++      }
      }
  
 -    // check for futility
@@ -130,7 +146,7 @@ index b38bd30..cd0d053 100644
      }
    }
 diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/mineflayer-pathfinder/lib/movements.js
-index a7e3505..84a0841 100644
+index a7e3505..739b58b 100644
 --- a/node_modules/mineflayer-pathfinder/lib/movements.js
 +++ b/node_modules/mineflayer-pathfinder/lib/movements.js
 @@ -50,7 +50,12 @@ class Movements {
@@ -226,6 +242,23 @@ index a7e3505..84a0841 100644
        toPlace.push({ x: node.x + dir.x, y: node.y, z: node.z + dir.z, dx: 0, dy: 0, dz: 0, useOne: true }) // Indicate that a block should be used on this block not placed
      } else {
        cost += this.safeOrBreak(blockC, toBreak)
+@@ -445,11 +475,11 @@ class Movements {
+ 
+     const blockD = this.getBlock(node, dir.x, -1, dir.z)
+     if (y === 1) { // Case jump up by 1
+-      if (blockC.height - block0.height > 1.2) return // Too high to jump
+-      cost += this.safeOrBreak(this.getBlock(node, 0, 2, 0), toBreak)
+-      if (cost > 100) return
+-      cost += 1
+-      neighbors.push(new Move(blockC.position.x, blockC.position.y + 1, blockC.position.z, node.remainingBlocks, cost, toBreak))
++      // The executor steers directly at a diagonal node. It cannot reliably
++      // realize a diagonal one-block ascent, even when A* finds side clearance,
++      // and repeatedly jumps into the raised corner. Cardinal step-ups remain
++      // available and produce physically executable routes.
++      return
+     } else if (blockD.physical || blockC.liquid) {
+       neighbors.push(new Move(blockC.position.x, blockC.position.y, blockC.position.z, node.remainingBlocks, cost, toBreak))
+     } else if (this.getBlock(node, dir.x, -2, dir.z).physical || blockD.liquid) {
 @@ -554,6 +584,54 @@ class Movements {
      neighbors.push(new Move(node.x, node.y + 1, node.z, node.remainingBlocks - toPlace.length, cost, toBreak, toPlace))
    }
@@ -309,3 +342,32 @@ index a7e3505..84a0841 100644
  }
  
  module.exports = Movements
+diff --git a/node_modules/mineflayer-pathfinder/lib/physics.js b/node_modules/mineflayer-pathfinder/lib/physics.js
+index ef9e389..7c11b86 100644
+--- a/node_modules/mineflayer-pathfinder/lib/physics.js
++++ b/node_modules/mineflayer-pathfinder/lib/physics.js
+@@ -100,6 +100,24 @@ class Physics {
+     return reached(state)
+   }
+ 
++  getMovementControl (path, allowSprinting) {
++    const steppingUp = path[0].y - this.bot.entity.position.y > 0.5
++
++    if (!steppingUp && allowSprinting && this.canStraightLine(path, true)) {
++      return { jump: false, sprint: true }
++    }
++    if (!steppingUp && allowSprinting && this.canSprintJump(path)) {
++      return { jump: true, sprint: true }
++    }
++    if (this.canStraightLine(path)) {
++      return { jump: false, sprint: false }
++    }
++    if (this.canWalkJump(path)) {
++      return { jump: true, sprint: false }
++    }
++    return null
++  }
++
+   getReached (path) {
+     return (state) => {
+       const delta = path[0].minus(state.pos)
