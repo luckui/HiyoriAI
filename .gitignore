@@ -59,3 +59,9 @@ tts-server*/.cache/
 electron/manual
 electron/skills/scientific
 electron/skills/cli-anything
+
+# 本机调试探针脚本与运行日志：不提交 GitHub 远端（内部开发痕迹）
+scripts/*-probe*.js
+scripts/registry-dump.js
+scripts/analyze-heapsnapshot.js
+*.log
