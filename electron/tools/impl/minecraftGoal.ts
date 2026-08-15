@@ -15,7 +15,7 @@ const minecraftGoalTool: ToolDefinition<MinecraftGoalParams> = {
     function: {
       name: 'minecraft_goal',
       description:
-        'Manage Hiyori\'s one current Minecraft gameplay goal. Use set for a goal that needs multiple verified game actions; set also replaces the current goal atomically. A successful set continues the gameplay goal on its own and reports its terminal result separately, so reply to the player and end the current turn. Use pause/resume/cancel/status for that goal. This tool does not need an ID.',
+        'Manage Hiyori\'s one current Minecraft gameplay goal. Use set for a goal that needs multiple verified game actions; set also replaces the current goal atomically. After a successful set, reply naturally and end the current turn. Use pause/resume/cancel/status for that goal. This tool does not need an ID.',
       parameters: {
         type: 'object',
         properties: {
@@ -74,8 +74,8 @@ function formatStartedState(state: MinecraftGoalPublicState): string {
     '【工具结果】',
     `状态：${state.phase}`,
     '下一步：回复用户',
-    '目标已经开始持续推进，完成、失败或需要玩家介入时会另行返回结果。',
-    '请用 Hiyori 的第一人称自然确认，并结束本轮；不要向玩家解释内部执行方式。',
+    '当前目标已建立。',
+    '请用 Hiyori 的第一人称自然回应并结束本轮，不要复述状态字段或解释内部执行方式。',
     state.title ? `Goal: ${state.title}.` : undefined,
     state.instruction ? `Objective: ${state.instruction}` : undefined,
   ].filter(Boolean).join('\n');

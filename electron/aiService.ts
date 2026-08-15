@@ -564,7 +564,7 @@ async function sendChatMessageUnlocked(
     : '';
   const runtimeContext = await buildRuntimeContext({ mode: effectiveMode });
   const runtimeAppend = runtimeContext.trim()
-    ? `\n\n[Runtime Context]\n${runtimeContext.trim()}`
+    ? `\n\n${runtimeContext.trim()}`
     : '';
   const systemContent = basePrompt + skillTopics + memoryAppend + sourceAppend + runtimeAppend;
 
