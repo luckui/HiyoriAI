@@ -39,6 +39,7 @@ import { protectMovementsFromFluid } from './fluidSafety';
 import { runAbortableOperation } from './abortableOperation';
 import { patchedGoto, type PathfindResult } from './patchedGoto';
 import { measurePlayerGaze, PlayerGazeTracker } from './playerGaze';
+import { hasFollowRecoveryMovement } from './followRecovery';
 
 const HOSTILE_MOBS = new Set([
   'blaze',
@@ -412,7 +413,11 @@ export function createMineflayerAdapter(
       const distance = distanceToBot(current, target.position);
       const moved = distanceBetween(previousPosition, position);
       const improved = previousDistance - distance;
-      const madeProgress = distance <= 2.5 || moved >= 1.5 || improved >= 0.75;
+      const madeProgress = hasFollowRecoveryMovement({
+        previousBotPosition: previousPosition,
+        currentBotPosition: position,
+        minimumBotMovement: 1.5,
+      });
       if (madeProgress && followSession?.bot === current && followSession.player === player) {
         followSession.pathStuckResets = 0;
       }
