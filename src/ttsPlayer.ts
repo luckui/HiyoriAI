@@ -14,6 +14,7 @@ import type { LAppModel } from './lappmodel';
 import { shouldShowTypewriterBubble, showTypewriterBubble } from './chat';
 import { normalizeSpokenText, splitSpokenText } from '../shared/spokenText';
 import { createTypewriterPlaybackCallback } from './typewriterPlayback';
+import { SerialPlaybackQueue } from './ttsPlaybackQueue';
 
 // ── 获取当前 Live2D 模型实例 ───────────────────────────────────────
 
@@ -122,9 +123,10 @@ function base64ToBuffer(b64: string): ArrayBuffer {
   return bytes.buffer;
 }
 
-// ── 播放世代：新调用时取消上一次未完成的队列 ──────────────────────
+// ── 全局播放通道：所有来源共用同一条串行队列 ─────────────────────
 
-let _playGeneration = 0;
+const _playbackQueue = new SerialPlaybackQueue();
+let _nextPlaybackId = 0;
 
 // ── 主入口 ───────────────────────────────────────────────────────
 
@@ -264,7 +266,24 @@ async function _fetchAndDecode(
   }
 }
 
-export async function playTTS(text: string, onDuration?: (ms: number, sentenceText?: string) => void): Promise<void> {
+export function playTTS(text: string, onDuration?: (ms: number, sentenceText?: string) => void): Promise<void> {
+  const playbackId = ++_nextPlaybackId;
+  const queuedAt = performance.now();
+  const queuedAhead = _playbackQueue.pendingCount;
+  console.log(`[TTS Queue] queued id=${playbackId} ahead=${queuedAhead} text=${JSON.stringify(text.slice(0, 50))}`);
+
+  return _playbackQueue.enqueue(async () => {
+    const startedAt = performance.now();
+    console.log(`[TTS Queue] start id=${playbackId} waited=${Math.round(startedAt - queuedAt)}ms`);
+    try {
+      await playTTSNow(text, onDuration);
+    } finally {
+      console.log(`[TTS Queue] end id=${playbackId} elapsed=${Math.round(performance.now() - startedAt)}ms`);
+    }
+  });
+}
+
+async function playTTSNow(text: string, onDuration?: (ms: number, sentenceText?: string) => void): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const ttsAPI = (window as any).ttsAPI as TtsAPI | undefined;
   if (!ttsAPI) {
@@ -282,11 +301,7 @@ export async function playTTS(text: string, onDuration?: (ms: number, sentenceTe
     return;
   }
 
-  // 递增世代，取消上一次未完成的播放队列；同时停止正在播放的音频
-  const gen = ++_playGeneration;
-  const isCurrentGen = () => gen === _playGeneration;
-
-  // 通知主进程取消所有挂起的 HTTP 请求，防止旧请求堆积在 CPU 推理服务器队列
+  // 串行队列保证上一轮已经结束；这里只清理服务端可能遗留的挂起请求。
   ttsAPI.abortSpeak?.().catch(() => {});
   const model = getLiveModel();
   model?._wavFileHandler.stop();
@@ -316,19 +331,16 @@ export async function playTTS(text: string, onDuration?: (ms: number, sentenceTe
   let prefetch: Promise<AudioBuffer | null> | null = null;
 
   for (let i = 0; i < sentences.length; i++) {
-    if (!isCurrentGen()) break;
-
     // 使用上一轮已预取的 Promise，或现在才发请求
     const fetchNow = prefetch ?? _fetchAndDecode(ttsAPI, sentences[i], audioCtx);
     prefetch = null;
 
     // 立即开始预取下一句（与当前句推理并行，降低感知延迟）
-    if (i + 1 < sentences.length && isCurrentGen()) {
+    if (i + 1 < sentences.length) {
       prefetch = _fetchAndDecode(ttsAPI, sentences[i + 1], audioCtx);
     }
 
     const audioBuffer = await fetchNow;
-    if (!isCurrentGen()) break;
 
     if (!audioBuffer) {
       console.warn(`[TTS] 第 ${i + 1} 句 buffer 为空，跳过`);
@@ -347,20 +359,16 @@ export async function playTTS(text: string, onDuration?: (ms: number, sentenceTe
       console.warn(`[TTS] 第 ${i + 1} 句 WebAudio 播放失败:`, e);
     }
 
-    if (!isCurrentGen()) break;
     console.log(`[TTS] 第 ${i + 1} 句播放完毕`);
   }
 
   stopLipSync();
   getLiveModel()?.setSpeaking(false);
 
-  // 只有当前世代才恢复听力：防止旧世代的清理撤销新世代的 pauseHearing
-  if (isCurrentGen()) {
-    ttsAPI.resumeHearing?.().catch(() => {});
-    // 所有句均为空（服务器不可达），通知调用方降级处理
-    if (onDuration && !anyPlayed) onDuration(0);
-    console.log('[TTS] 全部句子播放完成');
-  }
+  ttsAPI.resumeHearing?.().catch(() => {});
+  // 所有句均为空（服务器不可达），通知调用方降级处理
+  if (onDuration && !anyPlayed) onDuration(0);
+  console.log('[TTS] 全部句子播放完成');
 }
 
 /**
