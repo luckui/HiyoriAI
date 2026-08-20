@@ -32,25 +32,30 @@
 
 <table>
   <tr>
-    <td width="25%" align="center">
+    <td width="20%" align="center">
       <a href="https://www.bilibili.com/video/BV1f6dWBBEQA/?p=1"><img src=".github/assets/readme/demo-overview.jpg" alt="Hiyori Agent 总览" /></a><br />
       <strong>认识 Hiyori</strong><br />
       <sub>Live2D × Agent 总览</sub>
     </td>
-    <td width="25%" align="center">
+    <td width="20%" align="center">
       <a href="https://www.bilibili.com/video/BV1f6dWBBEQA/?p=2"><img src=".github/assets/readme/demo-ai-config.jpg" alt="AI 模型配置" /></a><br />
       <strong>接入 AI 模型</strong><br />
       <sub>OpenAI 兼容 API 配置</sub>
     </td>
-    <td width="25%" align="center">
+    <td width="20%" align="center">
       <a href="https://www.bilibili.com/video/BV1f6dWBBEQA/?p=3"><img src=".github/assets/readme/demo-voice.jpg" alt="Hiyori 语音配置" /></a><br />
       <strong>让她开口说话</strong><br />
       <sub>语音引擎与音色配置</sub>
     </td>
-    <td width="25%" align="center">
+    <td width="20%" align="center">
       <a href="https://www.bilibili.com/video/BV1f6dWBBEQA/?p=4"><img src=".github/assets/readme/demo-wechat.jpg" alt="微信远程使用 Hiyori" /></a><br />
       <strong>从微信找到她</strong><br />
       <sub>手机远程操作电脑</sub>
+    </td>
+    <td width="20%" align="center">
+      <a href="https://www.bilibili.com/video/BV1vCb26hEKn/"><img src=".github/assets/readme/demo-minecraft.jpg" alt="Hiyori 走进 Minecraft" /></a><br />
+      <strong>走进 Minecraft</strong><br />
+      <sub>游戏内跟随、聊天与合成</sub>
     </td>
   </tr>
 </table>
@@ -70,6 +75,7 @@ Hiyori 是一个运行在 Windows 上的 Live2D AI 助手。她拥有自己的�
 - 从 Discord、飞书或微信联系电脑上的 Hiyori，让她寻找文件、返回截图或处理轻量任务。
 - 让她每天早上叫你起床、定时来聊天，或者安排一个后台 Agent 在指定时间检查和处理事情。
 - 把大量相似工作拆成批量子任务并发执行，全部完成后得到一份汇总结果。
+- 打开一个对局域网开放的 Minecraft Java 世界，让 Hiyori 以角色身份走进来，陪你探索、聊天、收集与合成。
 
 ## 💫 她能做什么
 
@@ -104,6 +110,22 @@ Hiyori 是一个运行在 Windows 上的 Live2D AI 助手。她拥有自己的�
 - 在 Codex 完成、失败或需要继续时唤醒 Hiyori，再由她向用户说明结果。
 
 这让 Hiyori 成为电脑、手机与专业 Coding Agent 之间的自然交互入口。
+
+### 走进 Minecraft，成为你的游戏队友
+
+Hiyori 不再只住在屏幕里——把一个 Minecraft Java 世界开放为局域网，她就能以游戏角色的身份走进来，在方块世界里真实地跟随你、听你说话、替你干活。游戏里的身体就是她自己的手和脚，经历会留在对话里。
+
+- **自动发现局域网房间**：连接前自动扫描局域网里的 Minecraft 世界；找不到时也可以直接指定主机与端口。
+- **游戏内聊天互通**：在游戏里打字就能和 Hiyori 对话，她的回答会出现在游戏聊天栏并同步朗读；玩家持续注视她，也会触发回应。
+- **真实的感知与行动**：她能看到自己的位置、血量、饥饿、背包与附近的生物，也能按名称搜索方块和实体。
+- **跟得上你的脚步**：跟随或走向指定玩家，自动切换手持物品，把背包里的东西丢给你。
+- **多步目标一次说完**：用一句话设定目标，比如“收集 8 个橡木原木”或“合成一把石镐”，她会拆解步骤、持续执行，完成或卡住时再回来告诉你。
+- **生存意识**：饥饿时自动进食、氧气不足时自动浮出水面、被敌对生物攻击时本能防御，也会尽量绕开岩浆。
+
+游戏身体基于 mineflayer 生态搭建，并打了针对性补丁来修复寻路、卡死恢复、门与梯子等移动细节。Minecraft 模式复用了 Hiyori 的记忆、语音与任务系统，运行在独立的子进程中，不会拖慢主程序。
+
+> [!NOTE]
+> 目前支持局域网模式，使用离线认证连接：在 Minecraft Java 版的世界里选择“对局域网开放”即可。
 
 ### 一套声音，多种陪伴方式
 
@@ -142,6 +164,7 @@ flowchart LR
     Hiyori --> Child["后台子智能体"]
     Hiyori --> Batch["批量任务树"]
     Hiyori --> Codex["Codex SDK Runtime"]
+    Hiyori --> MC["Minecraft 化身"]
 
     Scheduler -->|提醒| Hiyori
     Scheduler -->|执行任务| Child
@@ -150,6 +173,7 @@ flowchart LR
     Tools --> Events["状态与完成事件"]
     Child --> Events
     Codex --> Events
+    MC --> Events
     Events --> Hiyori
     Hiyori --> Route["回复到消息来源"]
     Route --> User
@@ -161,6 +185,7 @@ flowchart LR
 - **事件驱动任务编排**：调度器、任务生命周期、父子任务、并发限制、取消、进度与完成唤醒。
 - **外部 Agent Runtime**：独立管理 Codex Provider、持续任务、事件流和 Hiyori 侧会话绑定。
 - **多端 Channel Adapter**：Discord、飞书、微信各自处理连接协议，共享回复目标与异步结果路由。
+- **Minecraft 化身运行时**：独立子进程承载 mineflayer 连接、游戏内动作与生存反射，主进程通过命令通道编排。
 - **角色与语音运行时**：Live2D 模型生命周期、动作映射、TTS 服务生命周期、音色转换与跨平台音频编码。
 - **本地状态管理**：SQLite 持久化会话、任务和摘要记忆；设置界面、配置文件与运行时保持同步。
 
@@ -172,6 +197,7 @@ flowchart LR
 | Character | Live2D Cubism SDK for Web, WebGL, Web Audio |
 | Agent | OpenAI-compatible Chat Completions, Tool Calling, custom Agent Harness |
 | Coding Agent | `@openai/codex-sdk`, managed thread/session runtime |
+| Minecraft | mineflayer, mineflayer-pathfinder, mineflayer-collectblock, mineflayer-tool, mineflayer-auto-eat, LAN discovery |
 | Automation | Playwright, PowerShell, Node.js, Windows OCR / desktop input |
 | Channels | Discord.js, Lark OpenAPI SDK, WeChat iLink Bot API |
 | Voice | Edge TTS, Genie TTS, GPT-SoVITS conversion, FFmpeg / Opus / Silk |
@@ -189,6 +215,7 @@ flowchart LR
 2. 按需开启语音播报；应用会准备并启动所选 TTS 引擎。
 3. 按需连接 Discord、飞书或微信。
 4. 使用 Codex 桥接前，先在这台电脑上完成 Codex 登录。
+5. （可选）在 Minecraft Java 版的世界里选择“对局域网开放”，即可让 Hiyori 走进游戏。
 
 > [!IMPORTANT]
 > Hiyori 可以执行命令和操作本机文件。启用移动平台后，请设置允许的频道或会话范围，并妥善保管 Bot Token、App Secret 和 API Key。
@@ -232,6 +259,7 @@ Hiyori 当前是一个 Windows 优先、持续开发中的开源项目。桌面 
 - [x] 飞书语音气泡与微信语音文件回复
 - [x] Codex SDK 项目发现、任务恢复与异步结果回传
 - [x] 定时提醒、后台子智能体与批量任务编排
+- [x] Minecraft 游戏化身、局域网连接与多步游戏目标
 - [ ] 完整的实时语音对话与移动端语音理解
 - [ ] 一键部署本地 LLM
 - [ ] 表情、情绪与角色行为系统
@@ -252,6 +280,7 @@ electron/
 ├── bridges/         # Discord / 飞书 / 微信平台适配器
 ├── codingAgents/    # Hiyori 与专业编程 Agent 的会话路由
 ├── memory/          # 会话摘要与全局精炼记忆
+├── minecraft/       # Minecraft 游戏化身运行时与动作
 ├── runtimes/        # Codex Provider、任务会话与事件流
 ├── streaming/       # B 站直播实验模块
 ├── tools/           # Agent 工具注册与实现
@@ -259,6 +288,7 @@ electron/
 ├── batchRunner.ts   # 批量父子任务与结果聚合
 ├── taskManager.ts   # 任务生命周期和并发控制
 └── taskScheduler.ts # 定时提醒与定时 Agent 任务
+patches/             # mineflayer 系列依赖的运行时补丁
 src/                 # Electron Renderer、聊天 UI 与 Live2D Runtime
 tts-server/          # Edge TTS 服务
 tts-server-genie/    # Genie TTS 与 GPT-SoVITS 音色转换
