@@ -8,6 +8,7 @@ import { listConversations } from '../../db';
 import { noteBridgeInboundMessage } from '../asyncDelivery';
 import { formatFeishuCommandHelp, parseFeishuCommand } from '../feishuCommands';
 import { deliverFeishuVoiceReply, getReadyBridgeVoiceProvider, type FeishuVoiceMeta } from '../voiceReplies';
+import { buildFeishuAudioUploadData, resolveFeishuVoiceRepliesEnabled } from '../feishuVoice';
 
 const FEISHU_MAX_LEN = 3900;
 const EVENT_DEDUPE_TTL_MS = 10 * 60 * 1000;
@@ -132,14 +133,8 @@ export class FeishuAdapter {
   }
 
   async sendAudio(chatId: string, opus: Buffer, fileName: string, meta?: FeishuVoiceMeta): Promise<void> {
-    const uploadData: { file_type: string; file_name: string; file: Buffer; duration?: number } = {
-      file_type: 'opus',
-      file_name: fileName,
-      file: opus,
-    };
-    if (meta?.durationMs && Number.isFinite(meta.durationMs)) {
-      uploadData.duration = Math.max(1, Math.round(meta.durationMs));
-    }
+    const uploadData = buildFeishuAudioUploadData(fileName, opus, meta?.durationMs);
+    console.log(`[Feishu] Upload audio: ${fileName}, bytes=${opus.length}, durationMs=${uploadData.duration ?? 'unknown'}`);
 
     const uploaded = await this.client.im.v1.file.create({
       data: uploadData,
@@ -188,7 +183,10 @@ export class FeishuAdapter {
   }
 
   async sendReply(chatId: string, text: string): Promise<void> {
-    const provider = this.cfg.voiceRepliesEnabled
+    const voiceEnabled = resolveFeishuVoiceRepliesEnabled(this.cfg.voiceRepliesEnabled, voiceReplyControl);
+    this.cfg.voiceRepliesEnabled = voiceEnabled;
+
+    const provider = voiceEnabled
       ? await getReadyBridgeVoiceProvider().catch((error) => {
         console.warn('[Feishu] voice provider unavailable:', (error as Error).message);
         return null;
@@ -198,7 +196,7 @@ export class FeishuAdapter {
     await deliverFeishuVoiceReply({
       chatId,
       text,
-      voiceEnabled: this.cfg.voiceRepliesEnabled,
+      voiceEnabled,
       provider,
       sendAudio: (targetChatId, opus, fileName, meta) => this.sendAudio(targetChatId, opus, fileName, meta),
       sendText: (targetChatId, replyText) => this.sendText(targetChatId, replyText),
@@ -304,7 +302,10 @@ export class FeishuAdapter {
     if (!command) return false;
 
     if (command === 'help') {
-      await this.sendText(chatId, formatFeishuCommandHelp(this.cfg.voiceRepliesEnabled));
+      await this.sendText(
+        chatId,
+        formatFeishuCommandHelp(resolveFeishuVoiceRepliesEnabled(this.cfg.voiceRepliesEnabled, voiceReplyControl)),
+      );
       return true;
     }
 

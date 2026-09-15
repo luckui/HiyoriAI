@@ -69,6 +69,7 @@ interface CodexThreadListParams {
   archived?: boolean | null;
   cwd?: string | string[] | null;
   searchTerm?: string | null;
+  modelProviders?: string[] | null;
   sourceKinds?: string[] | null;
 }
 
@@ -265,6 +266,7 @@ async function readCodexTasks(options: CodexDiscoveryOptions = {}): Promise<Code
       cursor,
       limit: 100,
       archived: false,
+      modelProviders: [],
       sourceKinds: CODEX_THREAD_SOURCE_KINDS,
     });
     threads.push(...response.data);

@@ -258,6 +258,25 @@ function getPcmWavDurationMs(wav: Buffer | ArrayBuffer): number | undefined {
   }
 }
 
+function getOggOpusDurationMs(opus: Buffer | ArrayBuffer): number | undefined {
+  const buffer = Buffer.from(opus);
+  if (buffer.length < 27) return undefined;
+  for (let i = buffer.length - 27; i >= 0; i--) {
+    if (
+      buffer[i] === 0x4f &&
+      buffer[i + 1] === 0x67 &&
+      buffer[i + 2] === 0x67 &&
+      buffer[i + 3] === 0x53
+    ) {
+      const granule = buffer.readBigInt64LE(i + 6);
+      if (granule < 0n) return undefined;
+      const ms = Number(granule) / 48;
+      return Number.isFinite(ms) && ms > 0 ? Math.round(ms) : undefined;
+    }
+  }
+  return undefined;
+}
+
 export function mergePcmWavBuffers(wavs: Array<Buffer | ArrayBuffer>): Buffer {
   if (wavs.length === 0) throw new Error('No WAV audio to merge');
   const buffers = wavs.map(wav => Buffer.from(wav));
@@ -458,7 +477,7 @@ export async function deliverFeishuVoiceReply(
         const wav = await synthesize(sentences[i], deps.provider);
         const opus = await encodeOpus(wav);
         await deps.sendAudio(deps.chatId, opus, `feishu-${Date.now()}-${i}.opus`, {
-          durationMs: getPcmWavDurationMs(wav),
+          durationMs: getOggOpusDurationMs(opus) ?? getPcmWavDurationMs(wav),
         });
         result.voiceSent++;
       }
