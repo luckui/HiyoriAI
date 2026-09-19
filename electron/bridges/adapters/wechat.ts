@@ -22,7 +22,7 @@ import { app } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
-import * as crypto from 'crypto';  // 🆕 Node.js 内置加密库，用于 AES-128-ECB
+import * as crypto from 'crypto';  // Node.js 内置加密库，用于 AES-128-ECB
 import QRCode from 'qrcode';
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -42,15 +42,15 @@ const API_TIMEOUT_MS = 15_000;
 const QR_TIMEOUT_MS = 35_000;
 
 const ITEM_TEXT = 1;
-const ITEM_IMAGE = 2;      // 🆕 图片消息类型
-const ITEM_VOICE = 3;      // 🆕 语音消息类型
-const ITEM_FILE = 4;       // 🆕 文件消息类型
-const ITEM_VIDEO = 5;      // 🆕 视频消息类型
+const ITEM_IMAGE = 2;      // 图片消息类型
+const ITEM_VOICE = 3;      // 语音消息类型
+const ITEM_FILE = 4;       // 文件消息类型
+const ITEM_VIDEO = 5;      // 视频消息类型
 
-const MEDIA_IMAGE = 1;     // 🆕 媒体类型：图片
-const MEDIA_VIDEO = 2;     // 🆕 媒体类型：视频
-const MEDIA_FILE = 3;      // 🆕 媒体类型：文件
-const MEDIA_VOICE = 4;     // 🆕 媒体类型：语音
+const MEDIA_IMAGE = 1;     // 媒体类型：图片
+const MEDIA_VIDEO = 2;     // 媒体类型：视频
+const MEDIA_FILE = 3;      // 媒体类型：文件
+const MEDIA_VOICE = 4;     // 媒体类型：语音
 
 const MSG_TYPE_USER = 1;
 const MSG_STATE_FINISH = 2;
@@ -59,7 +59,7 @@ const MAX_MESSAGE_LENGTH = 4000;
 const MAX_CONSECUTIVE_FAILURES = 3;
 const RETRY_DELAY_SECONDS = 2;
 
-const EP_GET_UPLOAD_URL = 'ilink/bot/getuploadurl';  // 🆕 获取文件上传 URL
+const EP_GET_UPLOAD_URL = 'ilink/bot/getuploadurl';  // 获取文件上传 URL
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -209,7 +209,7 @@ function splitMessage(text: string, maxLength = MAX_MESSAGE_LENGTH): string[] {
   return chunks;
 }
 
-// ── 🆕 文件发送辅助函数 ──────────────────────────────────────────────
+// ── 文件发送辅助函数 ──────────────────────────────────────────────
 
 /**
  * AES-128-ECB 加密（PKCS#7 padding）
@@ -820,7 +820,7 @@ export class WeChatAdapter {
   }
 
   /**
-   * 🆕 发送文件到微信用户（支持图片、视频、文档等）
+   * 发送文件到微信用户（支持图片、视频、文档等）
    * 
    * 微信 iLink API 文件传输流程：
    *   1. 读取文件内容

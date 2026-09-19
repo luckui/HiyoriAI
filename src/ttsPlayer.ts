@@ -86,9 +86,6 @@ function stopLipSync(): void {
 /** beat-sync 峰值检测状态（模块级，跨句子保持连续性） */
 let _beatLastRms = 0;
 let _beatLastTriggerMs = 0;
-let _beatFireCount = 0;      // 本次 TTS 播放期间累计触发次数，用于诊断
-let _beatRmsLogTimer = 0;    // 每 500ms 打一次 RMS 峰值样本，用于调阈值
-let _beatRmsMax = 0;         // 本采样周期内最大 RMS
 
 // RMS 升沿触发阈值：口型用 rms*10，即 rms=0.05 → 嘴开 50%。
 // 阈值必须远低于 0.1，否则 TTS 音频振幅不够时永远触发不了 beat。
@@ -123,14 +120,7 @@ function playBufferWithLipSync(audioBuffer: AudioBuffer): Promise<void> {
         // 放大并钳制到 [0, 1]，中文 TTS 音频振幅偶尔较小，提高系数确保口型明显
         (window as any)._live2dMouthOpen = Math.min(1, rms * 10);
 
-        // ── 诊断日志：每 500ms 打印一次当期最大 RMS，帮助校准阈值 ─────────
         const now = performance.now();
-        if (rms > _beatRmsMax) _beatRmsMax = rms;
-        if (now - _beatRmsLogTimer >= 500) {
-          console.log(`[beat-sync] rms peak=${_beatRmsMax.toFixed(4)}  mouth=${Math.min(1, _beatRmsMax * 10).toFixed(2)}  threshold=${BEAT_PEAK_THRESHOLD}  beats_total=${_beatFireCount}`);
-          _beatRmsMax = 0;
-          _beatRmsLogTimer = now;
-        }
 
         // ── beat-sync 峰值检测（RMS 升沿触发）────────────────────────────
         if (
@@ -138,11 +128,8 @@ function playBufferWithLipSync(audioBuffer: AudioBuffer): Promise<void> {
           _beatLastRms <= BEAT_PEAK_THRESHOLD &&
           now - _beatLastTriggerMs >= BEAT_MIN_INTERVAL_MS
         ) {
-          const interval = now - (_beatLastTriggerMs || now);
           _beatLastTriggerMs = now;
-          _beatFireCount++;
           getLiveModel()?.scheduleBeat(now);
-          console.log(`[beat-sync] ♪ beat #${_beatFireCount}  rms=${rms.toFixed(4)}  interval=${interval.toFixed(0)}ms`);
         }
         _beatLastRms = rms;
 
@@ -225,9 +212,6 @@ async function playTTSNow(text: string, onDuration?: (ms: number, sentenceText?:
   model?.setSpeaking(false);
   stopLipSync();
   // 重置 beat-sync 诊断计数器
-  _beatFireCount = 0;
-  _beatRmsMax = 0;
-  _beatRmsLogTimer = performance.now();
   _beatLastRms = 0;
   _beatLastTriggerMs = 0;
 

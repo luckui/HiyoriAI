@@ -356,12 +356,12 @@ function addToolCallBubble(ev: {
   result: string;
   ok: boolean;
   durationMs: number;
-  conversationId?: string;  // 🆕 工具调用来源对话ID
+  conversationId?: string;  // 工具调用来源对话ID
 }): void {
   const messagesDiv = document.getElementById('messages');
   if (!messagesDiv) return;
 
-  // 🆕 如果工具调用来自其他对话，显示警告标签
+  // 如果工具调用来自其他对话，显示警告标签
   const isOtherConv = ev.conversationId && ev.conversationId !== currentConversationId;
   const convTag = isOtherConv ? `<span style="color:#ff6b6b; font-size:10px;">[其他对话]</span> ` : '';
 

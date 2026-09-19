@@ -23,29 +23,29 @@ import runCommandTool from './impl/runCommand';
 import readSkillTool from './impl/skill';
 import memoryTool from './impl/memory';
 import todoTool from './impl/todo';
-import showAvailableTools from './impl/showAvailableTools';  // 🆕 显示可用工具列表
-import switchAgentMode from './impl/switchAgentMode';  // 🆕 切换 Agent 模式
+import showAvailableTools from './impl/showAvailableTools';  // 显示可用工具列表
+import switchAgentMode from './impl/switchAgentMode';  // 切换 Agent 模式
 import codingAgentTool from './impl/codingAgent';
 import codexProjectsTool from './impl/codexProjects';
 import minecraftCompanionTool, { minecraftActionTool } from './impl/minecraftCompanion';
 import minecraftGoalTool from './impl/minecraftGoal';
 
-// 🆕 打工人核心工具（文件操作）
+// 打工人核心工具（文件操作）
 import readFileTool from './impl/readFile';
 import editFileTool from './impl/editFile';
 import listDirectoryTool from './impl/listDirectory';
 import searchFilesTool from './impl/searchFiles';
 
-// 🆕 后台进程管理工具
+// 后台进程管理工具
 import processTool from './impl/process';
 
-// 🆕 打工人核心工具（Git 操作）
+// 打工人核心工具（Git 操作）
 import gitStatusTool from './impl/gitStatus';
 import gitDiffTool from './impl/gitDiff';
 import gitCommitTool from './impl/gitCommit';
 import gitLogTool from './impl/gitLog';
 
-// 🆕 高级工具（支持暂停/继续交互结果）
+// 高级工具（支持暂停/继续交互结果）
 import browserClickTool from './impl/browserClick';
 import browserTypeTool from './impl/browserType';
 import writeFileTool from './impl/writeFile';
@@ -58,7 +58,7 @@ import manageLive2dTool from './impl/manageLive2d';
 import asyncTaskTool from './impl/asyncTask';
 import scheduleTaskTool from './impl/scheduleTask';
 import manageBilibiliLiveTool from './impl/manageBilibiliLive';
-import watchBilibiliVideoTool from './impl/watchBilibiliVideo';  // 🆕 B站视频观看工具
+import watchBilibiliVideoTool from './impl/watchBilibiliVideo';  // B站视频观看工具
 import { runtimeTools } from './impl/runtime';
 
 const registry = new ToolRegistry()
@@ -69,30 +69,30 @@ const registry = new ToolRegistry()
   .register(readSkillTool)
   .register(memoryTool)        // 全局核心记忆工具（AI 主动管理用户画像）
   .register(todoTool)          // 任务管理工具（会话级任务追踪）
-  .register(showAvailableTools) // 🆕 显示可用工具列表（AI 自我感知能力边界）
-  .register(switchAgentMode)   // 🆕 切换 Agent 模式（AI 主动切换）
+  .register(showAvailableTools) // 显示可用工具列表（AI 自我感知能力边界）
+  .register(switchAgentMode)   // 切换 Agent 模式（AI 主动切换）
   .register(codexProjectsTool)  // Discover local Codex projects and tasks
   .register(codingAgentTool)    // User-facing bridge to Codex and coding agents
   .register(minecraftCompanionTool)
   .register(minecraftActionTool)
   .register(minecraftGoalTool)
   
-  // 🆕 注册打工人核心工具（文件操作）
+  // 注册打工人核心工具（文件操作）
   .register(readFileTool)
   .register(editFileTool)
   .register(listDirectoryTool)
   .register(searchFilesTool)
   
-  // 🆕 注册后台进程管理工具
+  // 注册后台进程管理工具
   .register(processTool)
   
-  // 🆕 注册打工人核心工具（Git 操作）
+  // 注册打工人核心工具（Git 操作）
   .register(gitStatusTool)
   .register(gitDiffTool)
   .register(gitCommitTool)
   .register(gitLogTool)
   
-  // 🆕 注册高级工具（支持暂停/继续交互结果）
+  // 注册高级工具（支持暂停/继续交互结果）
   .register(browserClickTool)
   .register(browserTypeTool)
   .register(writeFileTool)
@@ -105,7 +105,7 @@ const registry = new ToolRegistry()
   .register(manageBilibiliLiveTool)
   .register(asyncTaskTool)
   .register(scheduleTaskTool)
-  .register(watchBilibiliVideoTool);  // 🆕 B站视频观看
+  .register(watchBilibiliVideoTool);  // B站视频观看
 
 // 批量注册所有浏览器工具
 for (const tool of browserTools) {

@@ -205,7 +205,7 @@ async function callWithToolLoop(
   turnId = createTurnId(),
   trigger: TurnTrigger = { actor: 'user', source: 'unknown', event: 'message' },
 ): Promise<string> {
-  // 🆕 创建 AbortController 用于中断请求
+  // 创建 AbortController 用于中断请求
   currentAbortController = new AbortController();
   const signal = currentAbortController.signal;
 
@@ -501,7 +501,7 @@ async function sendChatMessageUnlocked(
       ? ['minecraft-chat']
       : getCurrentToolsets();  // ['chat'] 或 ['agent']
 
-    // 🆕 平台检测：根据消息来源动态注入平台附件工具
+    // 平台检测：根据消息来源动态注入平台附件工具
     // 例：[来源：Discord | ...] → 自动添加 discord_send_file
     const platform = detectPlatform(userContent);
     if (platform && effectiveMode !== MINECRAFT_MODE) {

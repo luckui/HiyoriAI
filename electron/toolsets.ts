@@ -146,15 +146,14 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
     tools: [
       // 核心能力
       "memory",                  // 全局核心记忆（AI 主动管理用户画像）
-      // "todo",                    // 任务管理（会话级任务追踪）
       "run_command",             // ⭐ 核心：执行命令
-      "show_available_tools",    // 🆕 显示可用工具列表
-      "switch_agent_mode",       // 🆕 切换 Agent 模式
+      "show_available_tools",    // 显示可用工具列表
+      "switch_agent_mode",       // 切换 Agent 模式
       
       // TTS 语音管理
-      "manage_tts",              // 🆕 管理本地 TTS 语音合成服务
-      "manage_hearing",          // 🆕 管理听觉系统（STT 语音识别）
-      "manage_live2d",           // 🆕 控制 Live2D 角色情绪与动作
+      "manage_tts",              // 管理本地 TTS 语音合成服务
+      "manage_hearing",          // 管理听觉系统（STT 语音识别）
+      "manage_live2d",           // 控制 Live2D 角色情绪与动作
 
       // 独立任务
       "async_task",
@@ -174,7 +173,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "run_command",             // ⭐ 执行命令（含 background 后台模式）
       "process",                 // ⭐ 后台进程管理（poll/kill/send，配合 run_command background）
       "show_available_tools",    // 显示可用工具列表
-      "switch_agent_mode",       // 🆕 切换 Agent 模式
+      "switch_agent_mode",       // 切换 Agent 模式
       "codex_projects",
       "coding_agent",
       
@@ -185,28 +184,20 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "browser_click_smart",     // 智能点击（Skill）
       "browser_type_smart",      // 智能输入（Skill）
       "browser_refresh",         // 刷新
-      // "browser_back",            // 后退
-      // "browser_search",          // 搜索引擎
       
       // Skills（高级能力）
       "write_file",              // Skill: 写入文件
-      "manage_tts",              // 🆕 管理本地 TTS 语音合成服务
-      "manage_hearing",          // 🆕 管理听觉系统（STT 语音识别）
-      "manage_live2d",           // 🆕 控制 Live2D 角色情绪与动作
+      "manage_tts",              // 管理本地 TTS 语音合成服务
+      "manage_hearing",          // 管理听觉系统（STT 语音识别）
+      "manage_live2d",           // 控制 Live2D 角色情绪与动作
       
       // 异步任务
-      "async_task",              // 🆕 异步后台任务管理
-      "schedule_task",           // 🆕 定时任务调度
+      "async_task",              // 异步后台任务管理
+      "schedule_task",           // 定时任务调度
       
       // B 站视频（供后台 agent 任务使用，如定时逛B站首页解说）
       "watch_bilibili_video",    // 打开B站视频并获取元数据      
-      // OCR 工具
-      // "sys_find_text",           // OCR 查找文字
-      // "sys_find_text_click",     // OCR 查找并点击
-      
       // 基础工具
-      // "calculate",               // 计算器
-      // "get_current_datetime",    // 获取当前时间
       "take_screenshot",         // 截图（屏幕）
     ],
   },
@@ -223,14 +214,14 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "codex_projects",
       "coding_agent",
       
-      // 🆕 打工人核心工具（文件操作）
+      // 打工人核心工具（文件操作）
       "read_file",               // 读取文件（支持行范围）
       "edit_file",               // 编辑文件（字符串替换）
       "list_directory",          // 列出目录内容
       "search_files",            // 搜索文件内容
       "write_file",              // 写入文件（覆盖/追加），skills
       
-      // 🆕 后台进程管理（run_command background=true 启动，process 管理）
+      // 后台进程管理（run_command background=true 启动，process 管理）
       "process",                 // poll/log/kill/send/list
 
       // Delegated runtime sessions
@@ -241,7 +232,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "runtime_list",
       "runtime_providers",
       
-      // 🆕 打工人核心工具（Git 操作）
+      // 打工人核心工具（Git 操作）
       "git_status",              // Git 状态
       "git_diff",                // Git 差异
       "git_commit",              // Git 提交
@@ -255,23 +246,18 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "browser_type_smart",
       "browser_refresh",
       "browser_search",
-      // "browser_back",
       
       // Skills
-      "manage_tts",              // 🆕 管理本地 TTS 语音合成服务
-      "manage_hearing",          // 🆕 管理听觉系统（STT 语音识别）
-      "manage_live2d",           // 🆕 控制 Live2D 角色情绪与动作
+      "manage_tts",              // 管理本地 TTS 语音合成服务
+      "manage_hearing",          // 管理听觉系统（STT 语音识别）
+      "manage_live2d",           // 控制 Live2D 角色情绪与动作
       
       // 异步任务
-      "async_task",              // 🆕 异步后台任务管理
-      "schedule_task",           // 🆕 定时任务调度
+      "async_task",              // 异步后台任务管理
+      "schedule_task",           // 定时任务调度
       
       // B 站视频
       "watch_bilibili_video",    // 打开B站视频并获取元数据
-      
-      // OCR 工具
-      // "sys_find_text",
-      // "sys_find_text_click",
       
       // 系统底层工具（⚠️ 调试用，生产环境不要开启）
       "sys_key_press",           // 键盘按键
@@ -281,8 +267,6 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "sys_wait",                // 等待
       
       // 基础工具
-      // "calculate",
-      // "get_current_datetime",
       "take_screenshot",
     ],
   },
@@ -338,18 +322,17 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "read_skill",              // 查阅 Skills（逛B站工作流、浏览器操作规范等）
       "show_available_tools",
       "switch_agent_mode",
-      "schedule_task",           // 🆕 定时任务调度（每N分钟执行直播任务，如B站推荐解说）
+      "schedule_task",           // 定时任务调度（每N分钟执行直播任务，如B站推荐解说）
       "manage_tts",
       "manage_hearing",
       "manage_live2d",
       "manage_bilibili_live",
-      "watch_bilibili_video",    // 🆕 观看B站视频并获取元数据（Streamer专用）
+      "watch_bilibili_video",    // 观看B站视频并获取元数据（Streamer专用）
       "browser_open",
       "browser_read_page",
       "browser_click_smart",
       "browser_type_smart",
       "browser_screenshot",
-      // "take_screenshot",
     ],
   },
 };

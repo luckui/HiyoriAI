@@ -16,7 +16,7 @@ import { ProxyAgent } from 'undici';
 import type { DiscordBridgeConfig } from '../bridge.config';
 import { sendChatMessage } from '../../aiService';
 import { traceReplyDelivery } from '../../turnTrace';
-import { listConversations } from '../../db';  // 🆕 导入对话列表，用于自动获取最新对话
+import { listConversations } from '../../db';  // 导入对话列表，用于自动获取最新对话
 import { noteBridgeInboundMessage } from '../asyncDelivery';
 
 const DISCORD_MAX_LEN = 1900;
@@ -107,7 +107,7 @@ export class DiscordAdapter {
       const content = msg.content.trim();
       if (!content) return;
 
-      // 🆕 自动获取对话 ID：若配置为空，使用最新对话
+      // 自动获取对话 ID：若配置为空，使用最新对话
       let conversationId = this.cfg.conversationId;
       if (!conversationId) {
         const convs = listConversations();

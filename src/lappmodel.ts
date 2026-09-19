@@ -1055,9 +1055,6 @@ export class LAppModel extends CubismUserModel {
     }
   }
 
-  // beat-sync 诊断日志定时器
-  private _beatSyncLogTimer = 0;
-
   private _updateBeatSync(dtSec: number): void {
     if (!this._model) return;
     const bs  = this._beatSync;
@@ -1126,12 +1123,6 @@ export class LAppModel extends CubismUserModel {
       if (Math.abs(bs.targetZ - paramZ) < 0.01 && Math.abs(bs.velocityZ) < 0.01) {
         paramZ = bs.targetZ; bs.velocityZ = 0;
       }
-    }
-
-    // 诊断（800ms 一次）
-    if (now - this._beatSyncLogTimer >= 800) {
-      this._beatSyncLogTimer = now;
-      console.log(`[beat-sync] primed=${bs.primed} tgtY=${bs.targetY.toFixed(1)} tgtZ=${bs.targetZ.toFixed(1)} X=${paramX.toFixed(1)} Y=${paramY.toFixed(1)} Z=${paramZ.toFixed(1)} segs=${bs.segments.length}`);
     }
 
     // 绝对覆写（与 airi setParameterValueById 完全一致，三轴同步写入）
