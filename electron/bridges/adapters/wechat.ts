@@ -875,8 +875,10 @@ export class WeChatAdapter {
     console.log(`[WeChat] 获取上传 URL 成功:`, JSON.stringify(uploadData));
     
     // 上传加密文件到 CDN
+    const uploadTarget = uploadData.upload_param || uploadData.upload_full_url;
+    if (!uploadTarget) throw new Error('获取上传 URL 失败：响应里既没有 upload_param 也没有 upload_full_url');
     const encryptQueryParam = await this.uploadFileToCdn(
-      uploadData.upload_param || uploadData.upload_full_url,
+      uploadTarget,
       encryptedBuffer,
       fileKey
     );

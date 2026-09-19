@@ -71,6 +71,10 @@ interface BridgeVoiceRuntime {
 const MAX_VOICE_SENTENCES = 8;
 const MAX_SENTENCE_LENGTH = 180;
 const WAV_HEADER_BYTES = 44;
+
+function toBuffer(data: Buffer | ArrayBuffer): Buffer {
+  return Buffer.isBuffer(data) ? data : Buffer.from(data);
+}
 let runtime: BridgeVoiceRuntime = {
   getProvider: () => null,
 };
@@ -130,7 +134,7 @@ export async function encodeWeChatSilkVoice(
   wav: ArrayBuffer | Buffer,
 ): Promise<WeChatVoiceEncoding> {
   const silk = await import('silk-wasm');
-  const wavBuffer = Buffer.from(wav);
+  const wavBuffer = toBuffer(wav);
   const wavInfo = silk.isWav(wavBuffer) ? silk.getWavFileInfo(wavBuffer) : null;
   const encoded = await silk.encode(wavBuffer, 0);
   return {
@@ -192,7 +196,7 @@ function parseSimplePcmWav(wav: Buffer): WavInfo {
 
 function getPcmWavDurationMs(wav: Buffer | ArrayBuffer): number | undefined {
   try {
-    const info = parseSimplePcmWav(Buffer.from(wav));
+    const info = parseSimplePcmWav(toBuffer(wav));
     return Math.max(1, Math.round((info.dataSize / info.byteRate) * 1000));
   } catch {
     return undefined;
@@ -200,7 +204,7 @@ function getPcmWavDurationMs(wav: Buffer | ArrayBuffer): number | undefined {
 }
 
 function getOggOpusDurationMs(opus: Buffer | ArrayBuffer): number | undefined {
-  const buffer = Buffer.from(opus);
+  const buffer = toBuffer(opus);
   if (buffer.length < 27) return undefined;
   for (let i = buffer.length - 27; i >= 0; i--) {
     if (
@@ -238,7 +242,7 @@ export async function deliverWeChatVoiceReply(
         const cleaned = cleanBridgeVoiceTextForProvider(deps.text, deps.provider);
         if (!hasSpeakableContent(cleaned)) throw new Error('Voice reply text is empty after cleanup');
         console.log(`[BridgeVoice] WeChat audio_file synthesize full text (${cleaned.length} chars): ${cleaned.slice(0, 120)}`);
-        const mergedWav = Buffer.from(await synthesize(cleaned, deps.provider));
+        const mergedWav = toBuffer(await synthesize(cleaned, deps.provider));
         parseSimplePcmWav(mergedWav);
         const filePath = join(tempDir, `wechat-${Date.now()}-merged.wav`);
         await writeFile(filePath, mergedWav);
@@ -329,7 +333,7 @@ export async function encodeFeishuOpusVoice(
   const tempDir = await mkBridgeVoiceTempDir();
   const inputPath = join(tempDir, 'input.wav');
   const outputPath = join(tempDir, 'output.opus');
-  await writeFile(inputPath, Buffer.from(wav));
+  await writeFile(inputPath, toBuffer(wav));
   try {
     await runFfmpeg([
       '-y',

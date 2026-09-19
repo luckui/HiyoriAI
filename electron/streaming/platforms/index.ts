@@ -4,7 +4,7 @@
  */
 
 import { EventEmitter } from 'events';
-import type { LiveEvent, LivePlatform, StreamerSessionConfig } from '../types';
+import type { LiveEvent, StreamerSessionConfig } from '../types';
 import { BiliClient } from './bilibili/biliClient';
 
 export interface PlatformAdapter extends EventEmitter {

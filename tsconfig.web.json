@@ -10,6 +10,8 @@
     "isolatedModules": true,
     "noEmit": true,
     "skipLibCheck": true,
+    // src/framework 是官方 Cubism SDK 源码（不改动），它在 strict / noUnusedLocals 下有大量报错；
+    // 我们自己的渲染层代码目前在 strict 下是干净的，新代码请按 strict 的标准写。
     "strict": false,
     "noUnusedLocals": false,
     "noUnusedParameters": false,

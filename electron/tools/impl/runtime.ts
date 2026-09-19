@@ -225,7 +225,8 @@ const runtimeProvidersTool: ToolDefinition<Record<string, never>> = {
   },
 };
 
-export const runtimeTools = [
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const runtimeTools: ToolDefinition<any>[] = [
   runtimeStartTool,
   runtimeSendTool,
   runtimeStatusTool,
@@ -234,4 +235,3 @@ export const runtimeTools = [
   runtimeProvidersTool,
 ];
 
-export default runtimeTools;

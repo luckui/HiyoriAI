@@ -9,9 +9,10 @@
     "postinstall": "patch-package && electron-rebuild -f -w better-sqlite3",
     "preview": "electron-vite preview",
     "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "pack:win": "chcp 65001 > nul && electron-vite build && electron-builder --win --x64"
+    "pack:win": "chcp 65001 > nul && npm run typecheck && electron-vite build && electron-builder --win --x64"
   },
   "build": {
     "appId": "com.hiyori.desktop-pet",

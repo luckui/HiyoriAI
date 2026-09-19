@@ -8,7 +8,8 @@
     "types": ["node"],
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "strict": false,
+    "strict": true,
+    "noUnusedLocals": true,
     "noEmit": true,
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo"
   },

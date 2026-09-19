@@ -1368,7 +1368,7 @@ app.whenReady().then(() => {
   minecraftIntegration = configureMinecraftMainIntegration({
     runtime: minecraftRuntime,
     sendChatMessage,
-    playTTS: playTTSAudio,
+    playTTS: async (text) => { await playTTSAudio(text); },
     sendWakeup: sendAgentWakeup,
     getFallbackConversationId: () => activeConversationId ?? defaultConvId,
     getMinecraftGoalState: () => minecraftGoalController?.status() ?? null,

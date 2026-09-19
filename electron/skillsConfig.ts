@@ -87,8 +87,9 @@ export function getSkillsConfig(): SkillsConfig {
   if (stored) {
     try {
       // 用 DEFAULT_SKILLS_CONFIG 作为底层保证新字段向后兼容
-      _cachedConfig = { ...DEFAULT_SKILLS_CONFIG, ...JSON.parse(stored) };
-      return _cachedConfig;
+      const config: SkillsConfig = { ...DEFAULT_SKILLS_CONFIG, ...JSON.parse(stored) };
+      _cachedConfig = config;
+      return config;
     } catch {
       /* 解析失败 → 返回默认值 */
     }

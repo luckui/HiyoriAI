@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { fork, type ChildProcess } from 'node:child_process';
+import { fork, type ChildProcess, type ForkOptions } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { ReplyTarget } from '../bridges/asyncDelivery';
@@ -266,8 +266,9 @@ function spawnMinecraftWorker(debugLogPath?: string): ChildProcess {
       HIYORI_MINECRAFT_WORKER: '1',
     },
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+    // fork 底层走 spawn，windowsHide 同样生效（避免弹出控制台窗口），只是 @types/node 没把它列进 ForkOptions
     windowsHide: true,
-  });
+  } as ForkOptions & { windowsHide: boolean });
 }
 
 function shouldResetWorkerOnTimeout(action: MinecraftAction): boolean {

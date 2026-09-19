@@ -405,14 +405,13 @@ export function createMineflayerAdapter(
         currentBotPosition: position,
         minimumBotMovement: 1.5,
       });
-      if (madeProgress && followSession?.bot === current && followSession.player === player) {
-        followSession.pathStuckResets = 0;
+      const session = followSession;
+      const ownsSession = session !== undefined && session.bot === current && session.player === player;
+      if (madeProgress && ownsSession) {
+        session.pathStuckResets = 0;
       }
-      if (followSession?.bot === current
-        && followSession.player === player
-        && (followSession.blocked || followSession.retryInProgress)
-        && madeProgress) {
-        const recovered = followSession;
+      if (ownsSession && (session.blocked || session.retryInProgress) && madeProgress) {
+        const recovered = session;
         recovered.blocked = false;
         recovered.retryInProgress = false;
         recovered.blockedNotified = false;
@@ -872,7 +871,7 @@ export function createMineflayerAdapter(
           severity: 'warning' as const,
           kind: 'navigation.failure',
           text: `${failure.reason}: ${failure.message}`,
-          data: failure,
+          data: { ...failure },
         })),
       };
     }
@@ -2157,7 +2156,7 @@ export function createMineflayerAdapter(
     const count = Math.max(1, Math.min(Math.trunc(options.count) || 1, item.count ?? 1));
     const playerName = options.player?.trim() || owner;
     if (playerName) {
-      const player = Object.values(current.players ?? {}).find(
+      const player: any = Object.values(current.players ?? {}).find(
         (entry: any) => entry.username === playerName,
       );
       const entity = player?.entity;
@@ -3117,7 +3116,7 @@ function visibleEntities(bot: any): MinecraftObservedEntity[] {
         type,
         position: vector(entity.position),
         distance: distanceToBot(bot, entity.position),
-        hostile: HOSTILE_MOBS.has(normalizeEntityName(entity.name ?? entity.displayName ?? entityName)),
+        hostile: HOSTILE_MOBS.has(normalizeEntityName(entity.name ?? entity.displayName ?? entityName) ?? ''),
       };
     });
 }

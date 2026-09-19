@@ -12,6 +12,10 @@ export interface JSONSchemaProperty {
   description?: string;
   enum?: string[];
   items?: JSONSchemaProperty;
+  properties?: Record<string, JSONSchemaProperty>;
+  required?: string[];
+  minimum?: number;
+  maximum?: number;
 }
 
 export interface JSONSchemaObject {

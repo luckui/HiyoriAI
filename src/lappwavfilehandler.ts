@@ -11,7 +11,7 @@ export class LAppWavFileHandler {
   private _ctx:          AudioContext           | null = null;
   private _analyser:     AnalyserNode           | null = null;
   private _source:       AudioBufferSourceNode  | null = null;
-  private _timeDomain:   Float32Array           | null = null;
+  private _timeDomain:   Float32Array<ArrayBuffer> | null = null;
   private _lastRms     = 0;
   private _isPlaying   = false;
   private _endedResolve: (() => void) | null = null;

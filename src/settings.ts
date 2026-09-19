@@ -1033,7 +1033,6 @@ async function enableTTSFromToggle(): Promise<void> {
     ttsCfg.enabled = false;
     await saveTTSSettings();
   } finally {
-    unsubscribe?.();
     toggle.disabled = false;
     void refreshTTSRuntimeStatus();
   }

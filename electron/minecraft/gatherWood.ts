@@ -167,7 +167,7 @@ async function goToPosition(
   z: number,
   minDistance: number,
   signal?: AbortSignal,
-  onProgress?: Parameters<typeof patchedGoto>[2]['onProgress'],
+  onProgress?: NonNullable<Parameters<typeof patchedGoto>[2]>['onProgress'],
 ): Promise<PathfindResult> {
   const targetBlock = bot.blockAt(new Vec3(Math.floor(x), Math.floor(y), Math.floor(z)));
   const aboveOne = bot.blockAt(new Vec3(Math.floor(x), Math.floor(y) + 1, Math.floor(z)));
