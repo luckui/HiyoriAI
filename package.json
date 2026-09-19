@@ -11,6 +11,7 @@
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
+    "ui-probe": "node scripts/ui-probe/run.js",
     "test:watch": "vitest",
     "pack:win": "chcp 65001 > nul && npm run typecheck && electron-vite build && electron-builder --win --x64"
   },
