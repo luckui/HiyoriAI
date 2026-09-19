@@ -22,7 +22,8 @@ import { toolRegistry } from '../tools/index';
 import { resolveToolset } from '../toolsets';
 import { browserSession } from '../tools/impl/browserSession';
 import { FUNDED_ALLOWED_TOOLS, checkToolCall } from './streamerGuard';
-import { isToolImageResult, type ChatMessage, type ToolSchema } from '../tools/types';
+import type { ChatMessage, ToolSchema } from '../tools/types';
+import { runToolLoop, toolResultText, type ToolCallOutcome } from '../toolLoop';
 import {
   SESSION_SYSTEM_PROMPT,
   FUNDED_EXECUTOR_SYSTEM_PROMPT,
@@ -288,61 +289,51 @@ class StreamerControllerManager extends EventEmitter {
         { role: 'user', content: reply.prompt },
       ];
 
-      const MAX_ROUNDS = 8;
-      let finalText = '';
-
-      for (let round = 0; round < MAX_ROUNDS; round++) {
-        const data = await fetchCompletion(provider, msgBuf, toolSchemas.length > 0 ? toolSchemas : undefined);
-        const choice = data.choices[0];
-
+      const finalText = await runToolLoop({
+        messages: msgBuf,
+        tools: toolSchemas,
+        maxRounds: 8,
+        complete: (buf, tools) => fetchCompletion(provider, buf, tools),
         // 无工具调用 → 模型决定直接回复（普通聊天或最终播报）
-        if (choice.finish_reason !== 'tool_calls' || !choice.message.tool_calls?.length) {
-          finalText = choice.message.content?.trim() ?? '';
-          break;
-        }
+        onFinal: (text) => text,
+        onRoundLimit: () => '',
 
-        // ── 第一次工具调用：此刻才能诚实地说"我现在去做某事" ──
-        if (!executedAnyTool) {
-          executedAnyTool = true;
-          // 模型在 content 字段里应已生成口语确认，如"好的，我去看这个视频！"
-          // 有且长度合适则直接播出；否则用静态后备文案
-          const modelAck = choice.message.content?.trim() ?? '';
-          const ackText = modelAck.length > 0 && modelAck.length <= 60
-            ? modelAck
-            : fundedAckFallback(fundedBy.uname, choice.message.tool_calls[0].function.name);
-          if (this.config.autoTTS) await this.speakText(ackText);
-          // 确认真实调用工具后才消费信用，普通聊天不会走到这里
-          giftCreditLedger.consume(fundedBy.uid);
-          console.log(`[StreamerController] funded ack spoken: "${ackText}"`);
-        }
-
-        // 执行工具
-        msgBuf.push({
-          role: 'assistant',
-          content: choice.message.content,
-          tool_calls: choice.message.tool_calls,
-        });
-
-        for (const tc of choice.message.tool_calls) {
-          // 程序层安全检查（白名单 + URL 参数验证），不依赖 AI 自律
-          const currentPageUrl = browserSession.currentPage?.url();
-          const guard = checkToolCall(tc.function.name, tc.function.arguments, currentPageUrl);
-          if (!guard.safe) {
-            const blocked = `[BLOCKED] ${guard.reason ?? '安全策略拒绝'}，无法执行此操作。`;
-            msgBuf.push({ role: 'tool', tool_call_id: tc.id, content: blocked });
-            console.warn(`[StreamerController] funded tool blocked: ${tc.function.name} — ${guard.reason}`);
-            continue;
+        runTools: async (calls, { assistantText }) => {
+          // ── 第一次工具调用：此刻才能诚实地说"我现在去做某事" ──
+          if (!executedAnyTool) {
+            executedAnyTool = true;
+            // 模型在 content 字段里应已生成口语确认，如"好的，我去看这个视频！"
+            // 有且长度合适则直接播出；否则用静态后备文案
+            const ackText = assistantText.length > 0 && assistantText.length <= 60
+              ? assistantText
+              : fundedAckFallback(fundedBy.uname, calls[0].function.name);
+            if (this.config.autoTTS) await this.speakText(ackText);
+            // 确认真实调用工具后才消费信用，普通聊天不会走到这里
+            giftCreditLedger.consume(fundedBy.uid);
+            console.log(`[StreamerController] funded ack spoken: "${ackText}"`);
           }
-          const taskCtx = { conversationId: `funded-${fundedBy.uid}-${Date.now()}` };
-          const result = await toolRegistry.execute(tc.function.name, tc.function.arguments, taskCtx);
-          // 截图等图像结果只回填文字说明，避免把整段 base64 塞进上下文
-          const textResult = isToolImageResult(result) ? result.text : String(result);
-          msgBuf.push({ role: 'tool', tool_call_id: tc.id, content: textResult });
-          console.log(`[StreamerController] funded tool: ${tc.function.name} → ${textResult.slice(0, 80)}`);
-        }
 
-        msgBuf.push({ role: 'user', content: TOOL_LOOP_CONTINUE });
-      }
+          // 逐个执行：每次都按当前页面 URL 重新做安全检查（白名单 + URL 参数验证），不依赖 AI 自律
+          const outcomes: ToolCallOutcome[] = [];
+          for (const call of calls) {
+            const guard = checkToolCall(call.function.name, call.function.arguments, browserSession.currentPage?.url());
+            if (!guard.safe) {
+              console.warn(`[StreamerController] funded tool blocked: ${call.function.name} — ${guard.reason}`);
+              outcomes.push({ call, result: `[BLOCKED] ${guard.reason ?? '安全策略拒绝'}，无法执行此操作。` });
+              continue;
+            }
+            const taskCtx = { conversationId: `funded-${fundedBy.uid}-${Date.now()}` };
+            const result = await toolRegistry.execute(call.function.name, call.function.arguments, taskCtx);
+            console.log(`[StreamerController] funded tool: ${call.function.name} → ${toolResultText(result).slice(0, 80)}`);
+            outcomes.push({ call, result });
+          }
+          return outcomes;
+        },
+
+        afterTools: () => {
+          msgBuf.push({ role: 'user', content: TOOL_LOOP_CONTINUE });
+        },
+      });
 
       // 普通聊天分支（模型没有调用任何工具）
       if (!executedAnyTool) {

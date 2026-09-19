@@ -2,7 +2,7 @@
  * AgentRunner — 子智能体执行引擎
  *
  * 在后台运行一个隔离的 ReAct 工具循环。
- * 复用 aiService 的核心 LLM 调用逻辑，但：
+ * 与主对话共用 toolLoop 的循环骨架，但：
  *   - 不继承父对话历史（上下文隔离）
  *   - 工具集受限（CHILD_BLOCKED_TOOLS 禁止递归/模式切换/记忆写入）
  *   - 有独立 AbortSignal（可单独取消）
@@ -13,11 +13,11 @@ import aiConfig from './ai.config';
 import { fetchCompletion } from './llmClient';
 import { toolRegistry } from './tools/index';
 import { resolveToolset } from './toolsets';
-import { isToolImageResult } from './tools/types';
+import { runToolLoop, toolResultText } from './toolLoop';
 import { stripThinkTags } from './utils/textUtils';
 import { CHILD_BLOCKED_TOOLS } from './taskManager';
 import type { DBTask } from './db';
-import type { ChatMessage, ContentPart, ToolSchema } from './tools/types';
+import type { ChatMessage, ToolSchema } from './tools/types';
 import { traceTurnEvent } from './turnTrace';
 import {
   FORMAT_ERROR_PREFIX,
@@ -293,7 +293,6 @@ export async function runChildAgent(
   const systemPrompt = buildChildSystemPrompt(task);
   const resultSchema = taskResultSchema(task);
   const toolSchemas = getChildToolSchemas(task);
-  const withTools = !!toolSchemas?.length;
   const traceBase = {
     turnId: task.id,
     taskId: task.id,
@@ -318,19 +317,24 @@ export async function runChildAgent(
     { role: 'user', content: task.prompt },
   ];
   let lastMinecraftAction: { status: 'failed' | 'partial' | 'cancelled'; result: string } | undefined;
+  let nextRound = 0;
 
-  for (let round = 0; round < maxRounds; round++) {
-    if (signal.aborted) {
-      traceTurnEvent({ ...traceBase, type: 'child-task-cancelled', round: round + 1 });
-      throw new Error('任务已被取消');
-    }
+  const loop = runToolLoop({
+    messages: msgBuf,
+    tools: toolSchemas,
+    maxRounds,
+    signal,
+    abortMessage: '任务已被取消',
+    imageCaption: '（以下是截取的屏幕截图）',
 
-    onProgress(round / maxRounds, `执行中 (轮次 ${round + 1}/${maxRounds})`);
-    console.log(`[AgentRunner] "${task.title}" 轮次 ${round + 1}/${maxRounds} — 等待 LLM 响应…`);
+    complete: (buf, tools, sig) => fetchChildCompletion(provider, buf, tools, sig!),
 
-    const data = await fetchChildCompletion(provider, msgBuf, withTools ? toolSchemas : undefined, signal);
-    const choice = data.choices[0];
-    traceTurnEvent({
+    beforeRound: (round) => {
+      onProgress(round / maxRounds, `执行中 (轮次 ${round + 1}/${maxRounds})`);
+      console.log(`[AgentRunner] "${task.title}" 轮次 ${round + 1}/${maxRounds} — 等待 LLM 响应…`);
+    },
+
+    onResponse: (choice, round) => traceTurnEvent({
       ...traceBase,
       type: 'child-llm-response',
       round: round + 1,
@@ -341,11 +345,10 @@ export async function runChildAgent(
         name: call.function.name,
         arguments: call.function.arguments,
       })) ?? [],
-    });
+    }),
 
-    // 无工具调用 → 返回最终文本
-    if (choice.finish_reason !== 'tool_calls' || !choice.message.tool_calls?.length) {
-      let finalText = stripThinkTags(choice.message.content?.trim() ?? '');
+    onFinal: async (text, _choice, round) => {
+      let finalText = text;
       if (!finalText) {
         traceTurnEvent({ ...traceBase, type: 'child-task-empty-retry', round: round + 1 });
         msgBuf.push({
@@ -381,136 +384,109 @@ export async function runChildAgent(
       }
       traceTurnEvent({ ...traceBase, type: 'child-task-completed', round: round + 1, result: finalText });
       return finalText;
-    }
+    },
 
-    // 有工具调用 → 打印工具列表
-    const toolNames = choice.message.tool_calls.map((tc) => {
-      let argsPreview = '';
+    runTools: async (calls, { round }) => {
+      const toolNames = calls.map((tc) => {
+        let argsPreview = '';
+        try {
+          argsPreview = JSON.stringify(JSON.parse(tc.function.arguments)).slice(0, 80);
+        } catch { argsPreview = tc.function.arguments.slice(0, 80); }
+        return `${tc.function.name}(${argsPreview})`;
+      });
+      console.log(`[AgentRunner] "${task.title}" 轮次 ${round + 1} 工具调用:\n  ${toolNames.join('\n  ')}`);
+
+      const taskContext = {
+        conversationId: `task-${task.id}`,
+        parentConversationId: task.conversation_id ?? undefined,
+        executor: 'child' as const,
+        taskId: task.id,
+        signal,
+      };
+      const executions = await toolRegistry.executeBatch(
+        calls.map((tc) => ({ id: tc.id, name: tc.function.name, arguments: tc.function.arguments })),
+        taskContext,
+        {
+          queued: ({ call, args, claims }) => traceTurnEvent({
+            ...traceBase,
+            type: 'child-tool-queued',
+            round: round + 1,
+            toolCallId: call.id,
+            tool: call.name,
+            args,
+            claims,
+          }),
+          started: ({ call, args, claims, queueWaitMs }) => traceTurnEvent({
+            ...traceBase,
+            type: 'child-tool-started',
+            round: round + 1,
+            toolCallId: call.id,
+            tool: call.name,
+            args,
+            claims,
+            queueWaitMs,
+          }),
+          completed: ({ call, args, claims, queueWaitMs, durationMs, result }) => traceTurnEvent({
+            ...traceBase,
+            type: 'child-tool-completed',
+            round: round + 1,
+            toolCallId: call.id,
+            tool: call.name,
+            args,
+            claims,
+            queueWaitMs,
+            durationMs,
+            result: toolResultText(result),
+          }),
+        },
+      );
+      const callsById = new Map(calls.map((tc) => [tc.id, tc]));
+      return executions.map(({ call, result }) => ({ call: callsById.get(call.id)!, result }));
+    },
+
+    afterTools: (outcomes, round) => {
+      for (const { call, result } of outcomes) {
+        const text = toolResultText(result);
+        console.log(`[AgentRunner] "${task.title}" 工具返回 ${call.function.name}: ${text.slice(0, 120)}${text.length > 120 ? '…' : ''}`);
+        if (taskUsesToolset(task, 'minecraft') && call.function.name === 'minecraft_action') {
+          const status = structuredToolStatus(text);
+          lastMinecraftAction = status === 'failed' || status === 'partial' || status === 'cancelled'
+            ? { status, result: text }
+            : undefined;
+        }
+      }
+      msgBuf.push({
+        role: 'user',
+        content: '【系统】根据以上工具结果，继续执行下一步或给出最终结果。',
+      });
+      onProgress((round + 1) / maxRounds, `轮次 ${round + 1} 完成，工具调用 ${outcomes.length} 次`);
+      nextRound = round + 1;
+    },
+
+    // 超出轮数：强制总结，但子任务仍按失败处理（未确认完成）
+    onRoundLimit: async () => {
+      msgBuf.push({
+        role: 'user',
+        content: `【系统提示】已达到最大轮数 ${maxRounds}。请停止调用工具，用自然语言总结已完成的工作和结果。`,
+      });
+      let summary: string;
       try {
-        const parsed = JSON.parse(tc.function.arguments);
-        argsPreview = JSON.stringify(parsed).slice(0, 80);
-      } catch { argsPreview = tc.function.arguments.slice(0, 80); }
-      return `${tc.function.name}(${argsPreview})`;
-    });
-    console.log(`[AgentRunner] "${task.title}" 轮次 ${round + 1} 工具调用:\n  ${toolNames.join('\n  ')}`);
-
-    // 有工具调用 → 追加 assistant 消息
-    msgBuf.push({
-      role: 'assistant',
-      content: choice.message.content,
-      tool_calls: choice.message.tool_calls,
-    });
-
-    const taskContext = {
-      conversationId: `task-${task.id}`,
-      parentConversationId: task.conversation_id ?? undefined,
-      executor: 'child' as const,
-      taskId: task.id,
-      signal,
-    };
-    const calls = choice.message.tool_calls.map((tc) => ({
-      id: tc.id,
-      name: tc.function.name,
-      arguments: tc.function.arguments,
-    }));
-    const batchResults = await toolRegistry.executeBatch(calls, taskContext, {
-      queued: ({ call, args, claims }) => traceTurnEvent({
-        ...traceBase,
-        type: 'child-tool-queued',
-        round: round + 1,
-        toolCallId: call.id,
-        tool: call.name,
-        args,
-        claims,
-      }),
-      started: ({ call, args, claims, queueWaitMs }) => traceTurnEvent({
-        ...traceBase,
-        type: 'child-tool-started',
-        round: round + 1,
-        toolCallId: call.id,
-        tool: call.name,
-        args,
-        claims,
-        queueWaitMs,
-      }),
-      completed: ({ call, args, claims, queueWaitMs, durationMs, result }) => traceTurnEvent({
-        ...traceBase,
-        type: 'child-tool-completed',
-        round: round + 1,
-        toolCallId: call.id,
-        tool: call.name,
-        args,
-        claims,
-        queueWaitMs,
-        durationMs,
-        result: isToolImageResult(result) ? result.text : String(result),
-      }),
-    });
-    const toolCallsById = new Map(choice.message.tool_calls.map((tc) => [tc.id, tc]));
-    const execResults = batchResults.map(({ call, result }) => ({
-      tc: toolCallsById.get(call.id)!,
-      result,
-    }));
-
-    // 回填结果，同时打印摘要
-    for (const { tc, result } of execResults) {
-      const resultPreview = typeof result === 'object' && result !== null
-        ? JSON.stringify(result).slice(0, 120)
-        : String(result).slice(0, 120);
-      console.log(`[AgentRunner] "${task.title}" 工具返回 ${tc.function.name}: ${resultPreview}${resultPreview.length >= 120 ? '…' : ''}`);
-      if (taskUsesToolset(task, 'minecraft') && tc.function.name === 'minecraft_action') {
-        const text = isToolImageResult(result) ? result.text : String(result);
-        const status = structuredToolStatus(text);
-        lastMinecraftAction = status === 'failed' || status === 'partial' || status === 'cancelled'
-          ? { status, result: text }
-          : undefined;
+        const fallback = await fetchChildCompletion(provider, msgBuf, undefined, signal);
+        summary = stripThinkTags(fallback.choices[0]?.message.content?.trim() ?? '') || '未能生成最终总结';
+      } catch (error) {
+        throw new Error(
+          `子任务达到最大轮数 ${maxRounds}，未确认完成；生成最后总结时失败：${error instanceof Error ? error.message : String(error)}`,
+        );
       }
-    }
-    for (const { tc, result } of execResults) {
-      if (isToolImageResult(result)) {
-        msgBuf.push({ role: 'tool', tool_call_id: tc.id, content: result.text });
-        const imageParts: ContentPart[] = [
-          { type: 'text', text: '（以下是截取的屏幕截图）' },
-          {
-            type: 'image_url',
-            image_url: {
-              url: `data:${result.mimeType};base64,${result.imageBase64}`,
-              detail: 'low',
-            },
-          },
-        ];
-        msgBuf.push({ role: 'user', content: imageParts });
-      } else {
-        const textResult = typeof result === 'object' ? JSON.stringify(result) : String(result);
-        msgBuf.push({ role: 'tool', tool_call_id: tc.id, content: textResult });
-      }
-    }
-
-    // 注入继续提示
-    msgBuf.push({
-      role: 'user',
-      content: '【系统】根据以上工具结果，继续执行下一步或给出最终结果。',
-    });
-
-    onProgress((round + 1) / maxRounds, `轮次 ${round + 1} 完成，工具调用 ${execResults.length} 次`);
-  }
-
-  // 超出轮数：强制总结
-  msgBuf.push({
-    role: 'user',
-    content: `【系统提示】已达到最大轮数 ${maxRounds}。请停止调用工具，用自然语言总结已完成的工作和结果。`,
+      throw new Error(`子任务达到最大轮数 ${maxRounds}，未确认完成。最后总结：${summary}`);
+    },
   });
 
   try {
-    const fallback = await fetchChildCompletion(provider, msgBuf, undefined, signal);
-    const summary = stripThinkTags(fallback.choices[0]?.message.content?.trim() ?? '')
-      || '未能生成最终总结';
-    throw new Error(`子任务达到最大轮数 ${maxRounds}，未确认完成。最后总结：${summary}`);
+    return await loop;
   } catch (error) {
-    if (error instanceof Error && error.message.includes(`最大轮数 ${maxRounds}`)) throw error;
-    throw new Error(
-      `子任务达到最大轮数 ${maxRounds}，未确认完成；生成最后总结时失败：${error instanceof Error ? error.message : String(error)}`,
-    );
+    if (signal.aborted) traceTurnEvent({ ...traceBase, type: 'child-task-cancelled', round: nextRound + 1 });
+    throw error;
   }
 }
 

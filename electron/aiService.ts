@@ -3,8 +3,8 @@ import aiConfig, { LLMProviderConfig } from './ai.config';
 import { addMessage, getRecentContext, getMessages, renameConversation } from './db';
 import { toolRegistry } from './tools/index';
 import { getCurrentToolsets, getAgentMode, effectiveModeForTrigger, MINECRAFT_MODE } from './agentMode';
-import type { ChatMessage, ContentPart, ToolBatchHooks, ToolSchema } from './tools/types';
-import { isToolImageResult } from './tools/types';
+import type { ChatMessage, ToolBatchHooks, ToolSchema } from './tools/types';
+import { toolResultText, runToolLoop } from './toolLoop';
 import { memoryManager, globalMemoryManager, recordMessageActivity } from './memory/index';
 import { stripThinkTags } from './utils/textUtils';
 import { fetchCompletion } from './llmClient';
@@ -90,7 +90,7 @@ function createMainToolBatchHooks(
       queueWaitMs,
     }),
     completed: ({ call, args, claims, queueWaitMs, durationMs, result }) => {
-      const resultText = isToolImageResult(result) ? result.text : String(result);
+      const resultText = toolResultText(result);
       traceTurnEvent({
         ...traceBase,
         type: 'tool-completed',
@@ -256,17 +256,19 @@ async function _callWithToolLoopInternal(
 
   // 模式感知的最大循环轮数：chat 轻量 / agent 标准 / developer 深度
   const currentMode = getAgentMode();
-  const MAX_ROUNDS = ({ chat: 10, agent: 25, 'agent-debug': 25, developer: 200, streamer: 25 } as Record<string, number>)[currentMode] ?? 25;
-  
-  for (let round = 0; round < MAX_ROUNDS; round++) {
-    // 🆕 检查中断信号
-    if (signal?.aborted) {
-      throw new Error('AI 回答已被用户中断');
-    }
+  const maxRounds = ({ chat: 10, agent: 25, 'agent-debug': 25, developer: 200, streamer: 25 } as Record<string, number>)[currentMode] ?? 25;
 
-    const data = await fetchCompletion(provider, msgBuf, withTools ? toolSchemas : undefined, signal);
-    const choice = data.choices[0];
-    traceTurnEvent({
+  return runToolLoop({
+    messages: msgBuf,
+    tools: toolSchemas,
+    maxRounds,
+    signal,
+    abortMessage: 'AI 回答已被用户中断',
+    imageCaption: '（以下是截取的屏幕截图，请结合图像内容回答用户的问题）',
+
+    complete: (buf, tools, sig) => fetchCompletion(provider, buf, tools, sig),
+
+    onResponse: (choice, round) => traceTurnEvent({
       type: 'llm-response',
       turnId,
       conversationId: conversationId ?? 'unknown',
@@ -279,146 +281,96 @@ async function _callWithToolLoopInternal(
         name: call.function.name,
         arguments: call.function.arguments,
       })) ?? [],
-    });
+    }),
 
-    // ── 无工具调用 → 返回最终文本 ──
-    if (choice.finish_reason !== 'tool_calls' || !choice.message.tool_calls?.length) {
-      const finalText = stripThinkTags(choice.message.content?.trim() ?? '');
+    onFinal: (finalText, choice) => {
       // 防浏览器幻觉：用户要求访问/操作网站，但模型未调用工具却给出“已完成/进行中”口头回复。
-      if (!antiHallucinationNudgeUsed && withTools && hasBrowserTools(toolSchemas)) {
-        const latestUser = getLatestRealUserText(msgBuf);
-        const needToolAction = isLikelyBrowseIntent(latestUser);
-        const fakeDone = isLikelyToolFreeBrowserHallucination(finalText) || isLikelyProgressOnlyText(finalText);
-        if (needToolAction && fakeDone) {
-          antiHallucinationNudgeUsed = true;
-          msgBuf.push({
-            role: 'assistant',
-            content: choice.message.content ?? finalText,
-          });
-          appendInternalInstruction(
-            'browser-state-correction',
-            '【系统提示】用户请求涉及浏览器真实状态。请先用可用的浏览器工具获取事实，再回答用户；' +
-              '如果无法继续或缺少信息，请向用户说明需要什么。不要口头声称页面已经打开、点击或搜索完成。',
-          );
-          continue;
-        }
-
-        const needDomParse = isLikelyDomParseIntent(latestUser);
-        const giveExcuse = isLikelyCannotParseExcuse(finalText);
-        if (needDomParse && giveExcuse) {
-          antiHallucinationNudgeUsed = true;
-          msgBuf.push({
-            role: 'assistant',
-            content: choice.message.content ?? finalText,
-          });
-          appendInternalInstruction(
-            'dom-read-correction',
-            '【系统提示】用户请求涉及 DOM/HTML 原文。请优先使用可用的页面读取或元素工具获取真实内容；' +
-              '如果当前工具确实不足，请说明限制并询问用户是否接受替代方案。',
-          );
-          continue;
-        }
+      if (antiHallucinationNudgeUsed || !withTools || !hasBrowserTools(toolSchemas)) return finalText;
+      const latestUser = getLatestRealUserText(msgBuf);
+      const needToolAction = isLikelyBrowseIntent(latestUser);
+      const fakeDone = isLikelyToolFreeBrowserHallucination(finalText) || isLikelyProgressOnlyText(finalText);
+      if (needToolAction && fakeDone) {
+        antiHallucinationNudgeUsed = true;
+        msgBuf.push({ role: 'assistant', content: choice.message.content ?? finalText });
+        appendInternalInstruction(
+          'browser-state-correction',
+          '【系统提示】用户请求涉及浏览器真实状态。请先用可用的浏览器工具获取事实，再回答用户；' +
+            '如果无法继续或缺少信息，请向用户说明需要什么。不要口头声称页面已经打开、点击或搜索完成。',
+        );
+        return undefined;
       }
 
+      const needDomParse = isLikelyDomParseIntent(latestUser);
+      const giveExcuse = isLikelyCannotParseExcuse(finalText);
+      if (needDomParse && giveExcuse) {
+        antiHallucinationNudgeUsed = true;
+        msgBuf.push({ role: 'assistant', content: choice.message.content ?? finalText });
+        appendInternalInstruction(
+          'dom-read-correction',
+          '【系统提示】用户请求涉及 DOM/HTML 原文。请优先使用可用的页面读取或元素工具获取真实内容；' +
+            '如果当前工具确实不足，请说明限制并询问用户是否接受替代方案。',
+        );
+        return undefined;
+      }
       return finalText;
-    }
+    },
 
-    // ── 有工具调用 → 追加 assistant 消息 ──
-    msgBuf.push({
-      role: 'assistant',
-      content: choice.message.content,
-      tool_calls: choice.message.tool_calls,
-    });
+    runTools: async (calls) => {
+      const executions = await toolRegistry.executeBatch(
+        calls.map((tc) => ({ id: tc.id, name: tc.function.name, arguments: tc.function.arguments })),
+        { conversationId, turnId, trigger, signal },
+        createMainToolBatchHooks(conversationId, turnId, trigger),
+      );
+      const callsById = new Map(calls.map((tc) => [tc.id, tc]));
+      return executions.map(({ call, result }) => ({ call: callsById.get(call.id)!, result }));
+    },
 
-    // ── 并行执行本轮所有工具 ──
-    const calls = choice.message.tool_calls.map((tc) => ({
-      id: tc.id,
-      name: tc.function.name,
-      arguments: tc.function.arguments,
-    }));
-    const batchResults = await toolRegistry.executeBatch(
-      calls,
-      { conversationId, turnId, trigger, signal },
-      createMainToolBatchHooks(conversationId, turnId, trigger),
-    );
-    const toolCallsById = new Map(choice.message.tool_calls.map((tc) => [tc.id, tc]));
-    const execResults = batchResults.map(({ call, result }) => ({
-      tc: toolCallsById.get(call.id)!,
-      result,
-    }));
-
-    // ── 回填结果：普通文本 → tool 消息；图像 → tool 消息 + user 多模态消息 ──
-    for (const { tc, result } of execResults) {
-      if (isToolImageResult(result)) {
-        // 1. tool 消息（文字描述，让模型知道工具已执行）
-        msgBuf.push({ role: 'tool', tool_call_id: tc.id, content: result.text });
-        // 2. user 多模态消息（注入图像，让视觉模型能"看到"截图）
-        const imageParts: ContentPart[] = [
-          { type: 'text', text: '（以下是截取的屏幕截图，请结合图像内容回答用户的问题）' },
-          {
-            type: 'image_url',
-            image_url: {
-              url: `data:${result.mimeType};base64,${result.imageBase64}`,
-              detail: 'low',
-            },
-          },
-        ];
-        msgBuf.push({ role: 'user', content: imageParts });
-      } else {
-        // 普通文本结果
-        msgBuf.push({ role: 'tool', tool_call_id: tc.id, content: result });
-      }
-    }
     // 每轮工具结果回填后注入统一提示。
     // 这里不强制继续；工具结果要求询问/回复时，模型应停止工具循环并面向用户回答。
-    const hasToolContinuation = execResults.some(({ result }) => {
-      const text = isToolImageResult(result) ? result.text : String(result);
-      return text.startsWith('🔄');
-    });
+    afterTools: (outcomes) => {
+      const hasToolContinuation = outcomes.some(({ result }) => toolResultText(result).startsWith('🔄'));
+      // run_command 失败：给出基于错误事实的下一步判断，不强制跳转到知识库。
+      const hasCommandFailure = outcomes.some(({ call, result }) =>
+        call.function.name === 'run_command' && toolResultText(result).startsWith('❌'));
 
-    // run_command 失败：给出基于错误事实的下一步判断，不强制跳转到知识库。
-    const hasCommandFailure = execResults.some(({ tc, result }) => {
-      if (tc.function.name !== 'run_command') return false;
-      const text = isToolImageResult(result) ? result.text : String(result);
-      return text.startsWith('❌');
-    });
+      if (hasToolContinuation) {
+        appendInternalInstruction(
+          'tool-continuation-policy',
+          '【工具结果处理】上面的工具给出了“建议下一步”。请先判断是否信息充足、是否仍符合用户目标：' +
+            '若需要用户选择或确认，就询问用户并结束本轮；若已经可以回答，就回复用户；只有确实应继续执行时，才调用下一步工具。',
+        );
+      } else if (hasCommandFailure) {
+        appendInternalInstruction(
+          'command-failure-policy',
+          '【工具结果处理】run_command 执行失败。请基于错误信息判断下一步：' +
+            '能修正且仍符合用户目标时再重试；需要更多信息时询问用户；无法继续时如实说明失败原因。' +
+            '不要编造命令已成功。',
+        );
+      } else {
+        appendInternalInstruction(
+          'tool-result-policy',
+          '【工具结果处理】根据以上工具结果选择下一步：' +
+            '工具结果要求“回复用户”时，回复用户并结束本轮；要求“询问用户”时，提出问题并等待；' +
+            '只有工具结果或用户目标明确需要继续操作时，才继续调用工具。不要重复已完成的同一工具调用。',
+        );
+      }
+    },
 
-    if (hasToolContinuation) {
+    // 超出轮数：追加系统提示，让 AI 用自然语言总结失败原因并回复用户
+    onRoundLimit: async () => {
       appendInternalInstruction(
-        'tool-continuation-policy',
-        '【工具结果处理】上面的工具给出了“建议下一步”。请先判断是否信息充足、是否仍符合用户目标：' +
-          '若需要用户选择或确认，就询问用户并结束本轮；若已经可以回答，就回复用户；只有确实应继续执行时，才调用下一步工具。',
+        'tool-round-limit',
+        '【系统提示】你已经连续调用了 ' + maxRounds + ' 轮工具，操作仍未完成。' +
+          '请停止继续调用工具，用自然语言向用户总结：① 你尝试了哪些步骤，② 哪一步卡住了，③ 可能的原因是什么。',
       );
-    } else if (hasCommandFailure) {
-      appendInternalInstruction(
-        'command-failure-policy',
-        '【工具结果处理】run_command 执行失败。请基于错误信息判断下一步：' +
-          '能修正且仍符合用户目标时再重试；需要更多信息时询问用户；无法继续时如实说明失败原因。' +
-          '不要编造命令已成功。',
-      );
-    } else {
-      appendInternalInstruction(
-        'tool-result-policy',
-        '【工具结果处理】根据以上工具结果选择下一步：' +
-          '工具结果要求“回复用户”时，回复用户并结束本轮；要求“询问用户”时，提出问题并等待；' +
-          '只有工具结果或用户目标明确需要继续操作时，才继续调用工具。不要重复已完成的同一工具调用。',
-      );
-    }
-    // 继续循环，带上工具结果再请求
-  }
-
-  // 超出轮数：追加系统提示，让 AI 用自然语言总结失败原因并回复用户
-  appendInternalInstruction(
-    'tool-round-limit',
-    '【系统提示】你已经连续调用了 ' + MAX_ROUNDS + ' 轮工具，操作仍未完成。' +
-      '请停止继续调用工具，用自然语言向用户总结：① 你尝试了哪些步骤，② 哪一步卡住了，③ 可能的原因是什么。',
-  );
-  try {
-    const fallback = await fetchCompletion(provider, msgBuf); // 不带工具，强制输出文字
-    return stripThinkTags(fallback.choices[0]?.message.content?.trim() ?? '（操作超出轮数，且无法生成总结）');
-  } catch {
-    return `（操作未完成：工具调用超过 ${MAX_ROUNDS} 轮，请检查页面状态后重试）`;
-  }
+      try {
+        const fallback = await fetchCompletion(provider, msgBuf); // 不带工具，强制输出文字
+        return stripThinkTags(fallback.choices[0]?.message.content?.trim() ?? '（操作超出轮数，且无法生成总结）');
+      } catch {
+        return `（操作未完成：工具调用超过 ${maxRounds} 轮，请检查页面状态后重试）`;
+      }
+    },
+  });
 }
 
 // ── 主接口 ────────────────────────────────────────────────
