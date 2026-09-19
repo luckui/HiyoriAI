@@ -6,24 +6,8 @@ import { randomUUID } from 'crypto';
 
 // ── 类型定义 ──────────────────────────────────────────────
 
-export interface Conversation {
-  id: string;
-  title: string;
-  created_at: number;
-  updated_at: number;
-}
-
-export interface ConversationWithPreview extends Conversation {
-  preview: string;
-}
-
-export interface DBMessage {
-  id: string;
-  conversation_id: string;
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  created_at: number;
-}
+import type { Conversation, ConversationWithPreview, DBMessage } from '../shared/types/chat';
+export type { Conversation, ConversationWithPreview, DBMessage };
 
 export interface MemoryFragment {
   id: string;

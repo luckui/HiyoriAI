@@ -26,21 +26,8 @@ import {
 const conversationTurnQueue = new ConversationTurnQueue();
 
 // ── 工具调用调试事件 ─────────────────────────────────────
-/** 单次工具调用的调试记录（推送给渲染层展示） */
-export interface ToolCallEvent {
-  /** 工具名，如 browser_click_smart */
-  name: string;
-  /** 解析后的参数对象 */
-  args: Record<string, unknown>;
-  /** 执行结果文字（截取前 300 字） */
-  result: string;
-  /** true = ✅ 成功；false = ❌ 失败 / ⏸️ 暂停 */
-  ok: boolean;
-  /** 执行耗时（毫秒） */
-  durationMs: number;
-  /** 工具调用来源对话ID（用于区分跨对话工具调用） */
-  conversationId?: string;
-}
+import type { ToolCallEvent } from '../shared/types/chat';
+export type { ToolCallEvent };
 
 let _toolEventListener: ((ev: ToolCallEvent) => void) | null = null;
 

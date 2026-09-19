@@ -7,68 +7,8 @@
  */
 
 
-export type ProviderType = 'openai-compatible';
-
-export interface LLMProviderConfig {
-  type: ProviderType;
-  /** 服务商展示名称 */
-  name: string;
-  /** API 基础地址（结尾不带斜杠，如 https://api.openai.com/v1） */
-  baseUrl: string;
-  /** Bearer Token / API Key */
-  apiKey: string;
-  /** 模型 ID */
-  model: string;
-  /** 最大回复 token 数，默认 1024 */
-  maxTokens?: number;
-  /** 温度参数 0-2，默认 0.85 */
-  temperature?: number;
-  /**
-   * 推理模型（如 doubao-seed、DeepSeek-R1）的 thinking token 上限。
-   * 对应 volcengine/ark API 的 `thinking.budget_tokens` 字段。
-   * 设为 0 表示关闭 thinking（等价 type:"disabled"）。
-   * 不设则不发此字段（模型默认行为）。
-   *
-   * ⚠️ 智能兼容性检测：
-   * 系统会根据模型名称自动判断是否支持 thinking 参数，即使配置了此字段，
-   * 如果模型名称不包含 seed/reasoner/r1/thinking，也不会发送 thinking 参数。
-   *
-   * 支持 thinking 的模型关键词：
-   *   - doubao-seed / doubao-pro-seed（字节豆包推理模型）
-   *   - deepseek-reasoner / deepseek-r1（DeepSeek R1）
-   *   - qwen-plus-thinking / qwen-max-thinking（阿里云 Qwen 推理版）
-   *
-   * 不支持的常见模型（会被自动过滤）：
-   *   - doubao-pro-4k / doubao-lite-4k（豆包标准模型）
-   *   - deepseek-chat（DeepSeek 对话模型）
-   *   - gpt-4o / gpt-4o-mini（OpenAI）
-   *   - glm-4-xxx（智谱 GLM）
-   */
-  thinkingBudgetTokens?: number;
-  /**
-   * 额外透传到 API 的请求体字段（优先级最高）。
-   * 可用于配置服务商特有参数（如自定义 stop 序列、response_format 等）。
-   */
-  extraParams?: Record<string, unknown>;
-}
-
-export interface AIConfig {
-  /** 当前激活的 provider key */
-  activeProvider: string;
-  /**
-   * 短期记忆窗口（轮数）。
-   * 1 轮 = 1 条 user + 1 条 assistant。
-   * 超出部分永久存入 SQLite，但不进入本次请求的 context。
-   */
-  contextWindowRounds: number;
-  providers: Record<string, LLMProviderConfig>;
-  /**
-   * 用户在 UI 中主动删除的 provider key 列表。
-   * loadPersistedConfig 合并时会跳过这些 key，避免代码新增的同名 provider 被复活。
-   * 运行时字段，不需要在 ai.config.ts 里预设。
-   */
-  deletedProviders?: string[];
-}
+import type { ProviderType, LLMProviderConfig, AIConfig } from '../shared/types/config';
+export type { ProviderType, LLMProviderConfig, AIConfig };
 
 const aiConfig: AIConfig = {
   activeProvider: 'doubao',

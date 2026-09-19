@@ -123,10 +123,7 @@ export function initLive2DController(): void {
   if (_initialized) return;
   _initialized = true;
 
-  // 使用 preload 暴露的 live2dAPI
-  const api = (window as any).live2dAPI as {
-    onCommand?: (cb: (cmd: Record<string, unknown>) => void) => (() => void);
-  } | undefined;
+  const api = window.live2dAPI;
 
   if (!api?.onCommand) {
     console.warn('[Live2DController] live2dAPI.onCommand 未找到，Live2D IPC 控制不可用');

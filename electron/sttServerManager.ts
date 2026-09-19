@@ -3,19 +3,15 @@
  * 通用的安装/启动/停止逻辑见 pythonService.ts；这里只描述 STT 的端口、启动参数与模型配置。
  */
 
-import { PythonService, type PythonServiceStatus, type ServiceResult } from './pythonService';
+import { PythonService, type ServiceResult } from './pythonService';
+import type { STTModelSize, SttServerStatus } from '../shared/types/services';
 
-export type STTModelSize = 'tiny' | 'base' | 'small' | 'medium' | 'large-v3';
+export type { STTModelSize, SttServerStatus };
 
 export interface STTServerConfig {
   model: STTModelSize;
   language: string;
   device: 'auto' | 'cpu' | 'cuda';
-}
-
-export interface SttServerStatus extends PythonServiceStatus {
-  model: STTModelSize;
-  language: string;
 }
 
 const STT_PORT = 9890;

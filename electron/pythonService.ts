@@ -15,11 +15,9 @@ import { join } from 'path';
 import { type ChildProcess, spawn } from 'child_process';
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { ensureAppUv, PYPI_INDEX, PYTHON_INSTALL_MIRROR } from './uvRuntime';
+import type { PythonServiceStatus, ServiceResult } from '../shared/types/services';
 
-export interface ServiceResult {
-  ok: boolean;
-  detail: string;
-}
+export type { PythonServiceStatus, ServiceResult };
 
 export interface CommandResult {
   code: number;
@@ -53,15 +51,6 @@ export interface PythonServiceSpec {
   env?(serverDir: string): Record<string, string>;
   /** requirements.txt 装完后的额外步骤；返回失败结果即中止安装 */
   afterRequirements?(ctx: InstallContext): Promise<ServiceResult | void>;
-}
-
-export interface PythonServiceStatus {
-  installed: boolean;     // venv + 依赖已安装
-  running: boolean;       // 进程存活
-  healthy: boolean;       // /health 可达
-  pid: number | null;
-  port: number;
-  serverDir: string;
 }
 
 const PYTHON_ENV = { PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' };

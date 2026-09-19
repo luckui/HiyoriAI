@@ -1,9 +1,6 @@
-import type { Live2DModelProfile } from './live2dAvatar';
 
-export interface AvatarConfig {
-  activeModelId: string;
-  models: Live2DModelProfile[];
-}
+import type { AvatarConfig } from '../../shared/types/config';
+export type { AvatarConfig };
 
 export const BUILTIN_HIYORI_MODEL_ID = 'builtin:hiyori_pro';
 

@@ -1,64 +1,8 @@
 import { LAppDelegate } from './lappdelegate';
+import type { AvatarConfig, AvatarMotionResource, AvatarMotionSlot, Live2DModelProfile } from '../shared/types/config';
 
-type AvatarMotionSlot = 'idle' | 'touch' | 'thinking' | 'speaking';
 const ACTIVE_MOTION_SLOTS: AvatarMotionSlot[] = ['idle', 'touch'];
 const BUILTIN_AVATAR_ID = 'builtin:hiyori_pro';
-
-interface AvatarMotionResource {
-  id: string;
-  group: string;
-  index: number;
-  file: string;
-  label: string;
-}
-
-interface AvatarExpressionResource {
-  id: string;
-  name: string;
-  file: string;
-}
-
-interface Live2DModelProfile {
-  id: string;
-  name: string;
-  sourceDir: string;
-  modelJsonName: string;
-  importedAt?: number;
-  motions: AvatarMotionResource[];
-  expressions: AvatarExpressionResource[];
-  hitAreas: Array<{ id: string; name: string }>;
-  lipSyncIds: string[];
-  mapping: {
-    motions: Record<AvatarMotionSlot, string[]>;
-    expressions: Record<string, string>;
-  };
-  unassignedMotionIds: string[];
-}
-
-interface AvatarConfig {
-  activeModelId: string;
-  models: Live2DModelProfile[];
-}
-
-declare global {
-  interface Window {
-    avatarAPI?: {
-      get(): Promise<AvatarConfig>;
-      importFolder(): Promise<{
-        ok: boolean;
-        canceled?: boolean;
-        detail?: string;
-        config?: AvatarConfig;
-        profile?: Live2DModelProfile;
-        baseUrl?: string;
-      }>;
-      save(cfg: AvatarConfig): Promise<AvatarConfig>;
-      select(modelId: string): Promise<AvatarConfig>;
-      delete(modelId: string): Promise<AvatarConfig>;
-      onConfigChanged(cb: (cfg: AvatarConfig) => void): () => void;
-    };
-  }
-}
 
 const SLOT_LABELS: Record<AvatarMotionSlot, { title: string; desc: string }> = {
   idle: { title: '待机', desc: '空闲时循环播放' },

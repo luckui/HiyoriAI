@@ -6,8 +6,11 @@
 
 import { existsSync } from 'fs';
 import { join } from 'path';
-import { PythonService, type InstallContext, type PythonServiceStatus, type ServiceResult } from './pythonService';
+import { PythonService, type InstallContext, type ServiceResult } from './pythonService';
 import { PYPI_INDEX } from './uvRuntime';
+import type { TtsServerStatus } from '../shared/types/services';
+
+export type { TtsServerStatus };
 
 const HF_MIRROR = 'https://hf-mirror.com';
 const DEFAULT_ENGINE = 'edge-tts';
@@ -98,10 +101,6 @@ function serviceFor(engine?: string): PythonService {
     services.set(key, service);
   }
   return service;
-}
-
-export interface TtsServerStatus extends PythonServiceStatus {
-  engine: string;
 }
 
 export async function getStatus(engine?: string): Promise<TtsServerStatus> {

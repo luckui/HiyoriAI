@@ -125,9 +125,7 @@ export class LAppDelegate {
    * 注册全屏光标追踪：监听主进程推送的光标坐标，转换后驱动 Live2D 目光跟随
    */
   private initializeCursorTracking(): void {
-    const electronAPI = (window as any).electronAPI;
-    if (!electronAPI?.onCursorPosition) return;
-    electronAPI.onCursorPosition((pos: { x: number; y: number }) => {
+    window.electronAPI?.onCursorPosition((pos) => {
       const sub = this._subdelegates.at(0);
       const canvas = this._canvases.at(0);
       if (!sub || !canvas) return;

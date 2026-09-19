@@ -1,45 +1,8 @@
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { basename, join } from 'path';
 
-export type AvatarMotionSlot = 'idle' | 'touch' | 'thinking' | 'speaking';
-
-export interface AvatarMotionResource {
-  id: string;
-  group: string;
-  index: number;
-  file: string;
-  label: string;
-}
-
-export interface AvatarExpressionResource {
-  id: string;
-  name: string;
-  file: string;
-}
-
-export interface AvatarHitArea {
-  id: string;
-  name: string;
-}
-
-export interface AvatarMapping {
-  motions: Record<AvatarMotionSlot, string[]>;
-  expressions: Record<string, string>;
-}
-
-export interface Live2DModelProfile {
-  id: string;
-  name: string;
-  sourceDir: string;
-  modelJsonName: string;
-  importedAt?: number;
-  motions: AvatarMotionResource[];
-  expressions: AvatarExpressionResource[];
-  hitAreas: AvatarHitArea[];
-  lipSyncIds: string[];
-  mapping: AvatarMapping;
-  unassignedMotionIds: string[];
-}
+import type { AvatarMotionSlot, AvatarMotionResource, AvatarExpressionResource, AvatarHitArea, AvatarMapping, Live2DModelProfile } from '../../shared/types/config';
+export type { AvatarMotionSlot, AvatarMotionResource, AvatarExpressionResource, AvatarHitArea, AvatarMapping, Live2DModelProfile };
 
 interface Model3Json {
   FileReferences?: {

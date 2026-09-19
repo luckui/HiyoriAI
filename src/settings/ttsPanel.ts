@@ -1,6 +1,7 @@
 /** 语音合成设置：TTS 方案、总开关（打开时自动部署本地服务）、健康检查、Genie 音色导入 */
 
-import { BUILTIN_TTS_PROVIDERS, type TTSConfig } from './types';
+import type { TTSConfig } from '../../shared/types/config';
+import { BUILTIN_TTS_PROVIDERS } from './types';
 import { clearSettingsDirty, markSettingsDirty, registerSection } from './sections';
 import { bindPasswordToggle, button, input, runWithButton, select } from './dom';
 import { showUnsavedSettingsDialog } from './dialog';

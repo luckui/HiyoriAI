@@ -1,6 +1,6 @@
 /** Skills 设置：全局开关与展示模式、按集合启用/覆盖展示模式、逐个勾选技能、导入/删除集合 */
 
-import type { CollectionInfo, SkillEntry, SkillListingMode, SkillsConfig } from './types';
+import type { SkillCollectionInfo, SkillEntry, SkillListingMode, SkillsConfig } from '../../shared/types/config';
 import { clearSettingsDirty, markSettingsDirty, registerSection } from './sections';
 
 /** 当前面板里正在编辑的配置草稿（点保存或离开时写回） */
@@ -33,7 +33,7 @@ async function load(): Promise<void> {
 
   let config: SkillsConfig;
   let allSkills: SkillEntry[];
-  let collections: CollectionInfo[];
+  let collections: SkillCollectionInfo[];
   try {
     [config, allSkills, collections] = await Promise.all([
       window.skillsAPI.getConfig(),

@@ -1,6 +1,7 @@
 /** 平台桥接设置：Discord / 飞书 / 微信 */
 
-import type { DiscordConfig, FeishuConfig, WeChatConfig } from './types';
+import type { DiscordConfig, FeishuConfig } from '../../shared/types/config';
+import type { WeChatAPI } from '../../shared/preloadApi';
 import { clearSettingsDirty, markSettingsDirty, registerSection, type SettingsSection } from './sections';
 import { bindPasswordToggle, button, input, renderBridgeStatus, runWithButton } from './dom';
 
@@ -150,7 +151,7 @@ async function saveWeChat(): Promise<void> {
   const api = window.wechatAPI;
   if (!api) return;
   const current = await api.get().catch(() => null);
-  const cfg: WeChatConfig = {
+  const cfg: Parameters<WeChatAPI['save']>[0] = {
     enabled: input('wc-enabled').checked,
     voiceRepliesEnabled: input('wc-voice-replies-enabled').checked,
     voiceReplyDelivery: current?.voiceReplyDelivery ?? 'audio_file',

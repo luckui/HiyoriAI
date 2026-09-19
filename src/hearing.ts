@@ -9,33 +9,7 @@
  *   5. 接收转写结果，显示到聊天界面
  */
 
-// ── 类型声明 ────────────────────────────────────────────────────────
-
-declare global {
-  interface Window {
-    hearingAPI?: {
-      start(source: string): Promise<{ ok: boolean; detail: string; wsUrl?: string }>;
-      stop(): Promise<{ ok: boolean; detail: string }>;
-      getStatus(): Promise<any>;
-      onStarted(cb: (ev: { source: string; wsUrl: string; mode: string }) => void): () => void;
-      onStopped(cb: () => void): () => void;
-      onTranscription(cb: (result: TranscriptionEvent) => void): () => void;
-      reportTranscription(result: TranscriptionEvent): void;
-      reportCaptureFailed(reason: string): void;
-      onTerminalBlock(cb: (ev: { blockId: string; line?: string; status?: 'running' | 'idle' | 'done' | 'error'; title?: string }) => void): () => void;
-      onAutoSend(cb: (ev: { text: string; type: 'dictation' | 'summary' }) => void): () => void;
-    };
-  }
-}
-
-interface TranscriptionEvent {
-  text: string;
-  start: number;
-  end: number;
-  is_final: boolean;
-  language: string;
-  timestamp: number;
-}
+import type { TranscriptionResult } from '../shared/types/chat';
 
 // ── 状态 ────────────────────────────────────────────────────────────
 
@@ -206,7 +180,7 @@ function connectSTT(wsUrl: string): Promise<void> {
 
         // 转写结果
         if (data.text) {
-          const result: TranscriptionEvent = {
+          const result: TranscriptionResult = {
             text: data.text,
             start: data.start ?? 0,
             end: data.end ?? 0,
@@ -286,13 +260,13 @@ async function getSystemAudioStream(): Promise<MediaStream | null> {
 // ── 转写结果处理 ────────────────────────────────────────────────────
 
 /** 转写结果回调（由 chat.ts 注册） */
-let transcriptionCallback: ((result: TranscriptionEvent) => void) | null = null;
+let transcriptionCallback: ((result: TranscriptionResult) => void) | null = null;
 
-export function onTranscription(cb: (result: TranscriptionEvent) => void): void {
+export function onTranscription(cb: (result: TranscriptionResult) => void): void {
   transcriptionCallback = cb;
 }
 
-function onTranscriptionResult(result: TranscriptionEvent): void {
+function onTranscriptionResult(result: TranscriptionResult): void {
   console.log(`[Hearing] 转写: "${result.text}" (${result.language})`);
   transcriptionCallback?.(result);
 }

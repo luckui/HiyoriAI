@@ -12,51 +12,8 @@
 
 // ── 类型定义 ────────────────────────────────────────────────────────
 
-/** 预设音色项 */
-export interface VoicePresetItem {
-  /** 预设 ID，同时作为 speaker 字段发送给 TTS 服务 */
-  id: string;
-  /** 显示名 */
-  name: string;
-  /** 描述（如"中文女声 A"） */
-  description: string;
-  /** 对应的参考音频文件名（相对于 voices/ 目录） */
-  refAudioFile?: string;
-}
-
-export interface TTSProviderConfig {
-  /** 目前仅 http-tts；将来可扩展 websocket 等 */
-  type: 'http-tts';
-  /** 显示名："Edge-TTS 本地"、"CosyVoice 远程"… */
-  name: string;
-  /** RESTful 端点（不带尾斜杠） */
-  baseUrl: string;
-  /** Bearer Token，留空则不发 */
-  apiKey: string;
-  /** 音色 ID */
-  speaker: string;
-  /** 语言代码 */
-  language: string;
-  /** 是否由本应用管理进程生命周期 */
-  isLocal?: boolean;
-  /** 本地引擎标识：'edge-tts' | 'moss-tts-nano' … */
-  localEngine?: string;
-  /** 音色选择模式：text = 自由文本输入（默认），preset = 下拉预设列表 */
-  speakerMode?: 'text' | 'preset';
-  /** 预设音色列表（speakerMode='preset' 时在 UI 展示下拉） */
-  voicePresets?: VoicePresetItem[];
-}
-
-export interface TTSConfig {
-  /** 全局开关：用户是否想要语音 */
-  enabled: boolean;
-  /** 当前使用的 provider key */
-  activeProvider: string;
-  /** 所有已配置的 TTS 服务商 */
-  providers: Record<string, TTSProviderConfig>;
-  /** 用户主动删除的 key，防止代码更新后同名 provider 复活 */
-  deletedProviders?: string[];
-}
+import type { VoicePresetItem, TTSProviderConfig, TTSConfig } from '../shared/types/config';
+export type { VoicePresetItem, TTSProviderConfig, TTSConfig };
 
 // ── MOSS-TTS-Nano 预设音色 ──────────────────────────────────────────
 

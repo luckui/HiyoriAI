@@ -1,10 +1,11 @@
 /** LLM 服务商设置：多个 provider 的增删改与"当前使用" */
 
-import { BUILTIN_LLM_PROVIDERS, type RuntimeConfig } from './types';
+import type { AIConfig } from '../../shared/types/config';
+import { BUILTIN_LLM_PROVIDERS } from './types';
 import { clearSettingsDirty, markSettingsDirty, registerSection } from './sections';
 import { bindPasswordToggle, button, input } from './dom';
 
-let cfg: RuntimeConfig | null = null;
+let cfg: AIConfig | null = null;
 /** 当前表单正在编辑的 provider key */
 let editKey: string | null = null;
 

@@ -10,7 +10,7 @@ import { extractEmotionTag, notifyInteraction, triggerEmotion } from '../live2dC
 import { addMessage, addTypingIndicator } from './messages';
 import { getCurrentConversationId, refreshConvTitle } from './conversations';
 import { showEstimatedTypewriterWhenTTSDisabled, typewriterPlayback } from './typewriter';
-import type { WakeupPayload } from './types';
+import type { WakeupPayload } from '../../shared/types/chat';
 
 const SEND_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>';
 const STOP_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';

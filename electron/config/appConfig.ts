@@ -3,36 +3,8 @@ import type { TTSConfig } from '../tts.config';
 import type { SkillsConfig } from '../skillsConfig';
 import type { AvatarConfig } from '../avatar/avatarConfig';
 
-export interface DiscordConfig {
-  enabled: boolean;
-  token: string;
-  allowedChannels: string;
-  proxyUrl: string;
-}
-
-export interface WeChatConfig {
-  enabled: boolean;
-  token: string;
-  accountId: string;
-  baseUrl: string;
-  sendChunkDelay: number;
-  voiceRepliesEnabled: boolean;
-  voiceReplyDelivery: 'audio_file' | 'native_voice';
-}
-
-export interface FeishuConfig {
-  enabled: boolean;
-  appId: string;
-  appSecret: string;
-  allowedChatIds: string;
-  voiceRepliesEnabled: boolean;
-}
-
-export interface BridgeAppConfig {
-  discord: DiscordConfig;
-  wechat: WeChatConfig;
-  feishu: FeishuConfig;
-}
+import type { DiscordConfig, WeChatConfig, FeishuConfig, BridgeAppConfig } from '../../shared/types/config';
+export type { DiscordConfig, WeChatConfig, FeishuConfig, BridgeAppConfig };
 
 export interface AppConfig {
   version: 1;

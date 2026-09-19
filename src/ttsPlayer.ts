@@ -47,16 +47,7 @@ let _nextPlaybackId = 0;
 
 // ── 主入口 ───────────────────────────────────────────────────────
 
-type TtsAPI = {
-  isEnabled(): Promise<boolean>;
-  speak(text: string): Promise<{ data: string } | null>;
-  /** 取消主进程所有挂起的 speak 请求，防止旧请求堆积在 CPU 推理队列 */
-  abortSpeak?: () => Promise<void>;
-  /** 可选：TTS 播放时暂停听力（如果听力未开启，调用无副作用） */
-  pauseHearing?: () => Promise<void>;
-  /** 可选：TTS 结束后恢复听力 */
-  resumeHearing?: () => Promise<void>;
-};
+type TtsAPI = Window['ttsAPI'];
 
 // ── WebAudio 共享 AudioContext + 实时口型 ─────────────────────────
 
@@ -75,7 +66,7 @@ function stopLipSync(): void {
     cancelAnimationFrame(_rafId);
     _rafId = null;
   }
-  (window as any)._live2dMouthOpen = 0;
+  window._live2dMouthOpen = 0;
 }
 
 /**
@@ -118,7 +109,7 @@ function playBufferWithLipSync(audioBuffer: AudioBuffer): Promise<void> {
         }
         const rms = Math.sqrt(sumSq / dataArray.length);
         // 放大并钳制到 [0, 1]，中文 TTS 音频振幅偶尔较小，提高系数确保口型明显
-        (window as any)._live2dMouthOpen = Math.min(1, rms * 10);
+        window._live2dMouthOpen = Math.min(1, rms * 10);
 
         const now = performance.now();
 
@@ -189,7 +180,7 @@ export function playTTS(text: string, onDuration?: (ms: number, sentenceText?: s
 
 async function playTTSNow(text: string, onDuration?: (ms: number, sentenceText?: string) => void): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const ttsAPI = (window as any).ttsAPI as TtsAPI | undefined;
+  const ttsAPI = window.ttsAPI;
   if (!ttsAPI) {
     console.warn('[TTS] 跳过：window.ttsAPI 未注入（preload 未包含？）');
     return;
@@ -281,13 +272,13 @@ async function playTTSNow(text: string, onDuration?: (ms: number, sentenceText?:
  * 在应用初始化时调用
  */
 export function registerTTSPlayListener(): void {
-  const ttsAPI = (window as any).ttsAPI;
+  const ttsAPI = window.ttsAPI;
   if (!ttsAPI?.onPlay) {
     console.warn('[TTS] ttsAPI.onPlay 未注入，无法注册 tts:play 监听器');
     return;
   }
 
-  ttsAPI.onPlay((text: string) => {
+  ttsAPI.onPlay((text) => {
     console.log('[TTS] 收到主进程推送的文本，调用 playTTS():', text.substring(0, 50));
     // 复用聊天框的 TTS 逻辑并显示打字机气泡（pause/resume hearing 已内置于 playTTS 内部）
     playTTS(

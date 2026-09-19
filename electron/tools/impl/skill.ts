@@ -22,6 +22,7 @@
  *   - 与 Hermes Agent / VS Code Copilot 的 Agent Skills 标准兼容
  */
 
+import type { SkillCollectionInfo, SkillEntry, SkillImportResult } from '../../../shared/types/config';
 import * as fs from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
@@ -259,15 +260,7 @@ export function getSkillTopicsForPrompt(): string {
  * 单个集合的元信息（来自目录中的 _collection.json，或从目录名生成默认值）。
  * 设计用途：UI 展示、动态列集合，支持用户自行新增集合目录。
  */
-export interface CollectionInfo {
-  /** 集合唯一标识符（目录名，根目录 skill 固定为 'skills'） */
-  id: string;
-  /** 带 emoji 的可读名称，例如 "📦 Scientific（科研技能库）" */
-  displayName: string;
-  /** 可选描述文本 */
-  description: string;
-  /** 是否允许用户删除（仅用户导入的子目录集合可删除，'skills' 根集合不可删） */
-  removable: boolean;
+export interface CollectionInfo extends SkillCollectionInfo {
   /** 集合在文件系统中的实际路径（主进程内部使用，不发往渲染进程） */
   dirPath: string;
 }
@@ -396,12 +389,7 @@ export function removeUserCollection(collId: string): { success: boolean; messag
  *   - collection: 所属集合名（'scientific' | 'skills' | ...）
  *   - skillKey:   在 disabledSkills 中使用的唯一标识符
  */
-export function listTopicsForUI(): Array<{
-  name: string;
-  summary: string;
-  collection: string;
-  skillKey: string;
-}> {
+export function listTopicsForUI(): SkillEntry[] {
   const topics = listTopics();
   return topics
     .filter(t => SKILLS_DIRS.some(d => t.filePath.startsWith(d)))
@@ -428,12 +416,7 @@ function copyDirRecursive(src: string, dest: string): void {
   }
 }
 
-export interface ImportResult {
-  success: boolean;
-  canceled?: boolean;
-  type?: 'skill' | 'collection';
-  message: string;
-}
+export type ImportResult = SkillImportResult;
 
 /**
  * 将用户选择的文件夹导入到 USER_SKILLS_DIR。

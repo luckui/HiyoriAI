@@ -8,15 +8,13 @@ import { ACubismMotion } from '@framework/motion/acubismmotion';
 import { csmVector } from '@framework/type/csmvector';
 
 import * as LAppDefine from './lappdefine';
+import type { AvatarMapping, AvatarMotionSlot } from '../shared/types/config';
 import { LAppModel } from './lappmodel';
 import { LAppPal } from './lapppal';
 import { LAppSubdelegate } from './lappsubdelegate';
 
-export type AvatarMotionSlot = 'idle' | 'touch' | 'thinking' | 'speaking';
-export interface AvatarRuntimeMapping {
-  motions: Record<AvatarMotionSlot, string[]>;
-  expressions?: Record<string, string>;
-}
+/** 模型加载时使用的动作槽映射（表情映射可选） */
+export type AvatarRuntimeMapping = Omit<AvatarMapping, 'expressions'> & Partial<Pick<AvatarMapping, 'expressions'>>;
 
 export class LAppLive2DManager {
   private releaseAllModel(): void {

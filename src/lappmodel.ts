@@ -799,7 +799,7 @@ export class LAppModel extends CubismUserModel {
       let value = 0.0;
 
       // 外部 WebAudio RMS（TTS リアルタイム口型）が利用可能なら優先使用
-      const externalMouth = (window as any)._live2dMouthOpen as number | undefined;
+      const externalMouth = window._live2dMouthOpen;
       if (typeof externalMouth === 'number' && externalMouth > 0) {
         value = externalMouth;
         // TTS 播放时用 set（覆盖）：确保 TTS 完全接管嘴巴控制权，

@@ -50,14 +50,8 @@ export interface HearingStatus {
   wsUrl: string;
 }
 
-export interface TranscriptionResult {
-  text: string;
-  start: number;
-  end: number;
-  is_final: boolean;
-  language: string;
-  timestamp: number;
-}
+import type { TranscriptionResult } from '../shared/types/chat';
+export type { TranscriptionResult };
 
 export interface TranscriptEntry {
   text: string;
