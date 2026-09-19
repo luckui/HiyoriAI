@@ -133,13 +133,6 @@ export function getTodoStore(conversationId: string): TodoStore {
   return todoStores.get(conversationId)!;
 }
 
-/**
- * 清理会话的 TodoStore（会话删除时调用）
- */
-export function clearTodoStore(conversationId: string): void {
-  todoStores.delete(conversationId);
-}
-
 // ─── 工具定义 ────────────────────────────────────────
 
 const todoTool: ToolDefinition<TodoParams> = {

@@ -48,7 +48,6 @@ declare global {
       send(conversationId: string, content: string, replyTarget?: unknown, requestContext?: unknown): Promise<{ content: string; created_at: number; turnId?: string }>;
       stopAI?(): Promise<void>;
       /** 监听主进程注入的 AI 主动消息（来自后台任务完成通知） */
-      onAgentMessage?(cb: (payload: { conversationId: string; content: string }) => void): () => void;
       /** 监听 background/batch 任务完成后的主对话 AI 唤醒（触发新轮工作流） */
       onWakeup?(cb: (payload: { conversationId: string; text: string; replyTarget?: unknown; trigger?: unknown }) => void): () => void;
       onExternalTurn?(cb: (payload: {
@@ -98,7 +97,6 @@ let _halfBody = false;
 let _scale = 1.0;
 const BASE_W           = 360;  // 基础窗口宽度
 const BASE_CANVAS_FULL = 360;  // 全身模式下 canvas 局面高度
-const BASE_CANVAS_HALF = 220;  // 半身模式下 canvas 局面高度
 const MIN_SCALE = 0.75;
 const MAX_SCALE = 2.0;
 
@@ -281,7 +279,6 @@ interface TodoItem {
   status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
 }
 
-let currentTodoList: TodoItem[] = [];
 let isTodoCollapsed = false;
 
 /** 从 todo 工具的文本结果中解析任务列表（读取模式时使用） */
@@ -305,7 +302,6 @@ function parseTodoFromResult(resultText: string): TodoItem[] {
 }
 
 function updateTodoPanel(todoList: TodoItem[]): void {
-  currentTodoList = todoList;
   const panel = document.getElementById('todo-panel');
   const listDiv = document.getElementById('todo-list');
   if (!panel || !listDiv) return;
@@ -740,7 +736,6 @@ async function autoSendMessage(text: string, type: 'dictation' | 'summary'): Pro
 // 发送消息
 // =====================================================
 
-let isStopMode = false; // 是否处于可停止状态
 
 async function sendMessage(): Promise<void> {
   if (!currentConversationId) return;
@@ -753,7 +748,6 @@ async function sendMessage(): Promise<void> {
     await (window as any).chatAPI?.stopAI?.();
     // 恢复按钮状态
     isSending = false;
-    isStopMode = false;
     if (sendBtn) {
       sendBtn.disabled = false;
       sendBtn.classList.remove('stop-mode');
@@ -775,7 +769,6 @@ async function sendMessage(): Promise<void> {
 
   input.value = '';
   isSending = true;
-  isStopMode = true;
   
   // 切换为停止按钮
   if (sendBtn) {
@@ -818,7 +811,6 @@ async function sendMessage(): Promise<void> {
     }
   } finally {
     isSending = false;
-    isStopMode = false;
     if (sendBtn) {
       sendBtn.disabled = false;
       sendBtn.classList.remove('stop-mode');
@@ -1283,14 +1275,12 @@ export async function initChat(): Promise<void> {
   });
 
   // Agent 模式切换器
-  let isAgentMode = true; // 默认 Agent 模式
   const agentModeBtn = document.getElementById('agent-mode-btn');
   const agentModeText = document.getElementById('agent-mode-text');
   
   // 更新 UI 的通用函数
   function updateAgentModeUI(mode: string) {
     const isAgent = mode === 'agent' || mode === 'agent-debug' || mode === 'developer' || mode === 'minecraft';
-    isAgentMode = isAgent;
     
     if (agentModeText) {
       if (mode === 'agent-debug') {
@@ -1499,16 +1489,6 @@ export async function initChat(): Promise<void> {
   window.hearingAPI?.onAutoSend((ev) => {
     console.log(`[Hearing] 自动发送 (${ev.type}):`, ev.text.slice(0, 50));
     autoSendMessage(ev.text, ev.type);
-  });
-
-  // ── AI 主动消息注入（兼容旧入口；新异步任务默认走 wakeup）────────────
-  window.chatAPI?.onAgentMessage?.((payload) => {
-    // 仅当当前对话与通知对话一致时显示
-    if (payload.conversationId !== currentConversationId) return;
-    console.log('[Chat] 收到 AI 主动消息:', payload.content.slice(0, 60));
-    addMessage('ai', payload.content, true, Date.now());
-    // TTS 开启时由 tts:play 的逐句回调驱动气泡；关闭时才显示整段估算气泡。
-    void showEstimatedTypewriterWhenTTSDisabled(payload.content);
   });
 
   window.chatAPI?.onExternalTurn?.((payload) => {

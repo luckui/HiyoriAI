@@ -112,8 +112,7 @@ const HERMES_SYSTEM_PROMPT = `你是一个长期记忆整理助手。你的任�
 - "Discord 昵称为 louis066505，频道 ID 1484202499320578170"
 - "身份为学生，工作习惯：晚上 20:00-24:00 活跃"
 - "当前 LLM 提供商：豆包 Seed (doubao-seed-2-0-pro-260215)"
-- "B站搜索使用 browser_open + browser_find 工具组合"
-- "浏览器工具：browser_open、browser_click、browser_screenshot 可用"
+- "看 B 站习惯先打开首页推荐，再挑感兴趣的视频"
 
 ### 坏的条目（冗长、流水账、虚构）
 - "用户曾在2026年4月14日查询了上海的天气情况"（会话日志）

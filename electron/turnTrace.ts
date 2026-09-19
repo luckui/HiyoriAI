@@ -97,7 +97,6 @@ function logSummary(event: Record<string, unknown>): void {
     'turn-error',
     'turn-completed',
     'reply-delivered',
-    'agent-message-injected',
     'tool-queued',
     'child-task-started',
     'child-llm-response',

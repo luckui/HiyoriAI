@@ -7,8 +7,8 @@
  *   - 进程（PID）与端口
  *
  * 环境管理策略：
- *   - 内嵌 uv（tools/uv.exe）自动管理 Python 解释器和 venv
- *   - 优先使用系统 Python，无 Python 时 uv 自动下载（支持镜像）
+ *   - uv（tools/uv.exe）管理 Python 解释器和 venv；缺失时自动从清华 PyPI 镜像下载（uvRuntime.ts）
+ *   - 优先使用系统 Python，无 Python 时 uv 自动下载（npmmirror 镜像）
  *   - 每个引擎独立 .venv，完全隔离
  *   - pip 源使用清华镜像，模型权重使用 hf-mirror.com
  *
@@ -21,13 +21,11 @@ import { app } from 'electron';
 import { join } from 'path';
 import { ChildProcess, spawn } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
+import { ensureAppUv, PYPI_INDEX, PYTHON_INSTALL_MIRROR } from './uvRuntime';
 
 // ── 国内镜像 ────────────────────────────────────────────────────────
 
-const PYPI_INDEX = 'https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple';
 const HF_MIRROR  = 'https://hf-mirror.com';
-/** python-build-standalone 镜像（uv python install 用） */
-const PY_INSTALL_MIRROR = 'https://mirror.ghproxy.com/https://github.com/indygreg/python-build-standalone/releases/download';
 
 // ── 引擎配置 ────────────────────────────────────────────────────────
 
@@ -90,8 +88,8 @@ const ENGINES: Record<string, EngineSpec> = {
           return [c];
         }
       }
-      // 回退：从 PyPI 安装
-      return ['genie-tts'];
+      // 回退：从 PyPI 安装。锁定版本：server.py 按 2.0.x 的接口编写，新版本可能再次改接口
+      return ['genie-tts==2.0.2'];
     },
     hasModelDownload: true,
   },
@@ -105,12 +103,6 @@ function resolveEngine(engine?: string): EngineSpec {
 }
 
 // ── 路径 ────────────────────────────────────────────────────────────
-
-function getUvExe(): string {
-  return app.isPackaged
-    ? join(process.resourcesPath, 'tools', 'uv.exe')
-    : join(app.getAppPath(), 'tools', 'uv.exe');
-}
 
 function getTtsServerDir(engine?: string): string {
   const spec = resolveEngine(engine);
@@ -244,17 +236,14 @@ export async function install(onProgress?: (msg: string) => void, engine?: strin
     return { ok: false, detail: `tts-server 目录不存在或缺少 server.py: ${serverDir}` };
   }
 
-  const uv = getUvExe();
-  if (!existsSync(uv)) {
-    return { ok: false, detail: `未找到 uv 工具: ${uv}` };
-  }
-
   const log = (m: string) => { onProgress?.(m); };
 
-  // 镜像环境变量
-  const mirrorEnv: Record<string, string> = {
-    UV_PYTHON_INSTALL_MIRROR: PY_INSTALL_MIRROR,
-  };
+  let uv: string;
+  try {
+    uv = await ensureAppUv(onProgress);
+  } catch (error) {
+    return { ok: false, detail: error instanceof Error ? error.message : String(error) };
+  }
 
   // 1. 创建 venv（uv 自动检测/下载 Python）
   const venvDir = getVenvDir(engine);
@@ -262,7 +251,7 @@ export async function install(onProgress?: (msg: string) => void, engine?: strin
     log('创建 Python 虚拟环境（uv 自动管理 Python）…');
     const venvResult = await runCmd(
       `"${uv}" venv .venv --python ">=3.10"`,
-      serverDir, 300_000, onProgress, mirrorEnv,
+      serverDir, 300_000, onProgress, { UV_PYTHON_INSTALL_MIRROR: PYTHON_INSTALL_MIRROR },
     );
     if (venvResult.code !== 0) {
       return { ok: false, detail: `创建 venv 失败:\n${venvResult.stderr.slice(0, 1000)}` };
@@ -437,13 +426,28 @@ export async function installAndStart(onProgress?: (msg: string) => void, engine
 
   const spec = resolveEngine(engine);
   const localUrl = `http://127.0.0.1:${spec.port}`;
+  // 进程起来不代表能出声：服务明确报告不可用（如 Genie 一个角色都没加载成功）时如实失败，让开关退回关闭
+  const problem = await findHealthProblem(localUrl);
+  if (problem) {
+    await stopServer(engine);
+    return { ok: false, detail: `TTS 服务已启动但不可用：${problem}` };
+  }
   onProgress?.('全部完成');
   return { ok: true, detail: `${startResult.detail}\nTTS 本地服务已就绪 (${localUrl})` };
 }
 
-export function getLocalUrl(engine?: string): string {
-  const spec = resolveEngine(engine);
-  return `http://127.0.0.1:${spec.port}`;
+/** 读取 /health 的 status；只把明确的失败状态当作不可用（loading / starting 属于正常启动过程） */
+async function findHealthProblem(localUrl: string): Promise<string | undefined> {
+  try {
+    const resp = await fetch(`${localUrl}/health`, { signal: AbortSignal.timeout(15_000) });
+    const body = await resp.json().catch(() => undefined) as { status?: string; errors?: unknown; error?: string } | undefined;
+    if (body?.status === 'no_characters' || body?.status === 'error') {
+      return body.errors ? JSON.stringify(body.errors) : body.error ?? body.status;
+    }
+  } catch {
+    // 读不到健康状态不阻断：进程已确认启动，交给播放时的健康检查
+  }
+  return undefined;
 }
 
 // ── PID 管理 ────────────────────────────────────────────────────────

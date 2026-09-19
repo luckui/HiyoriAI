@@ -58,55 +58,6 @@ export function consumePendingBridgeMessages(platform: BridgePlatform, id: strin
   return messages;
 }
 
-export async function routeAsyncBridgeMessage(
-  adapter: BridgeDeliveryAdapter,
-  conversationId: string,
-  text: string
-): Promise<RouteResult> {
-  const route = recentRoutes.get(conversationId);
-  if (!route) return 'none';
-
-  if (route.platform === 'discord' && route.channelId && adapter.sendDiscord) {
-    try {
-      await adapter.sendDiscord(route.channelId, text);
-      return 'sent';
-    } catch (error) {
-      console.warn('[BridgeDelivery] Discord async delivery failed:', (error as Error).message);
-      return 'failed';
-    }
-  }
-
-  if (route.platform === 'wechat' && route.userId) {
-    const key = pendingKey('wechat', route.userId);
-    const messages = pendingMessages.get(key) ?? [];
-    messages.push(text);
-    pendingMessages.set(key, messages);
-    return 'pending';
-  }
-
-  if (route.platform === 'feishu' && route.channelId && adapter.sendFeishu) {
-    try {
-      await adapter.sendFeishu(route.channelId, text);
-      return 'sent';
-    } catch (error) {
-      console.warn('[BridgeDelivery] Feishu async delivery failed:', (error as Error).message);
-      return 'failed';
-    }
-  }
-
-  if (route.platform === 'minecraft' && route.userId && adapter.sendMinecraft) {
-    try {
-      await adapter.sendMinecraft(route.userId, text);
-      return 'sent';
-    } catch (error) {
-      console.warn('[BridgeDelivery] Minecraft async delivery failed:', (error as Error).message);
-      return 'failed';
-    }
-  }
-
-  return 'none';
-}
-
 export async function deliverReplyToTarget(
   adapter: BridgeDeliveryAdapter,
   target: ReplyTarget | undefined,

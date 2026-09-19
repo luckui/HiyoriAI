@@ -23,7 +23,3 @@ export function canonicalMinecraftMaterial(name: string): string {
   return name;
 }
 
-export function sameMinecraftMaterialFamily(left: string, right: string): boolean {
-  const family = minecraftMaterialFamily(left);
-  return family !== undefined && family === minecraftMaterialFamily(right);
-}

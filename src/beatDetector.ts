@@ -152,14 +152,3 @@ export function initBeatDetector(): void {
   }
 }
 
-/** 外部可调用：手动停止 beat 检测 */
-export function stopBeatDetector(): void {
-  stop();
-}
-
-/** 外部可调用：手动重启 beat 检测 */
-export function restartBeatDetector(): void {
-  stop();
-  _startAttempted = false;
-  start().catch(err => console.warn('[BeatDetector] 重启失败:', err));
-}

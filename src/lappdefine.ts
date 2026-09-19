@@ -7,8 +7,6 @@ import { LogLevel } from '@framework/live2dcubismframework';
 
 // Canvas 大小（auto = 跟随容器）
 export const CanvasSize: { width: number; height: number } | 'auto' = 'auto';
-export const CanvasNum = 1;
-
 // 视图参数
 export const ViewScale = 1.0;
 export const ViewMaxScale = 2.0;
@@ -16,9 +14,6 @@ export const ViewMinScale = 0.8;
 
 export const ViewLogicalLeft = -1.0;
 export const ViewLogicalRight = 1.0;
-export const ViewLogicalBottom = -1.0;
-export const ViewLogicalTop = 1.0;
-
 export const ViewLogicalMaxLeft = -2.0;
 export const ViewLogicalMaxRight = 2.0;
 export const ViewLogicalMaxBottom = -2.0;
@@ -30,11 +25,6 @@ export let ResourcesPath = '/Resources/';
 export function setResourcesPath(path: string): void {
   ResourcesPath = path;
 };
-
-// 不使用背景图和按钮图
-export const BackImageName = '';
-export const GearImageName = '';
-export const PowerImageName = '';
 
 // ── 可扩展的模型配置 ──────────────────────────────────────────────
 export interface ModelConfig {
@@ -73,9 +63,6 @@ export const Models: ModelConfig[] = [
 
 // 供 LAppModel 内部 idle 循环默认使用（实例可通过 setIdleGroup 覆盖）
 export const MotionGroupIdle = Models[0].motionIdle;
-
-// Flick 判定阈值（视图空间单位），超过此值视为划动而非点击
-export const FlickThreshold = 0.15;
 
 // 动作优先级
 export const PriorityNone = 0;

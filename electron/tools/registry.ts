@@ -1,4 +1,4 @@
-﻿import type { ToolDefinition, ToolSchema, ToolExecuteResult, ToolImageResult } from './types';
+﻿import type { ToolDefinition, ToolSchema, ToolImageResult } from './types';
 import { isToolPauseResult, isToolContinuationResult, isToolTerminalError } from './types';
 import { resolveToolset } from '../toolsets';
 import type {
@@ -73,7 +73,7 @@ export class ToolRegistry {
    *
    * 设计理念：
    *   - 声明式：工具分组在 toolsets.ts 集中定义，不在各工具代码中分散标记
-   *   - 可组合：toolset 支持嵌套（debugging = browser-full + file + terminal）
+   *   - 可组合：toolset 支持嵌套（developer includes agent-debug）
    *   - 条件过滤：checkAvailable() 运行时检测（API key 不存在时自动隐藏）
    *
    * @param toolsets - toolset 名称数组，如 ["browser-smart", "file-smart"]
@@ -81,13 +81,8 @@ export class ToolRegistry {
    *
    * @example
    * ```ts
-   * // 默认模式（智能工具）
-   * registry.getSchemasForToolset(["default"]);
-   * // → browser_click_smart, browser_type_smart, write_file, open_terminal...
-   *
-   * // 调试模式（包含底层工具）
-   * registry.getSchemasForToolset(["debugging"]);
-   * // → browser_click, browser_type, browser_click_smart, ...
+   * registry.getSchemasForToolset(["agent"]);            // Agent 模式工具
+   * registry.getSchemasForToolset(["chat", "discord"]);  // Chat 模式 + Discord 平台工具
    * ```
    */
   getSchemasForToolset(toolsets: string[]): ToolSchema[] {

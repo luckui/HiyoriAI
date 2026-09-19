@@ -37,11 +37,6 @@ function normalizeLanguage(language?: string): SpokenLanguage {
   return 'auto';
 }
 
-function speechLanguage(language?: string): Exclude<SpokenLanguage, 'auto'> {
-  const normalized = normalizeLanguage(language);
-  return normalized === 'auto' ? 'zh' : normalized;
-}
-
 function inferSpeechLanguage(text: string, language?: string): Exclude<SpokenLanguage, 'auto'> {
   const normalized = normalizeLanguage(language);
   if (normalized !== 'auto') return normalized;
@@ -165,6 +160,11 @@ export function normalizeSpokenText(text: string, options: SpokenTextOptions = {
     .trim();
 }
 
+/** 至少包含一个可读出的字符（任意语言的文字或数字）。纯标点如"……"送去合成会得到一段无意义的声音 */
+export function hasSpeakableContent(sentence: string): boolean {
+  return /[\p{L}\p{N}]/u.test(sentence);
+}
+
 export function splitSpokenText(text: string, options: SplitSpokenTextOptions = {}): string[] {
   const maxSegments = options.maxSegments ?? 8;
   const maxSentenceLength = options.maxSentenceLength ?? 180;
@@ -172,7 +172,7 @@ export function splitSpokenText(text: string, options: SplitSpokenTextOptions = 
   if (!normalized) return [];
   const raw = normalized.match(/[^。！？!?；;.]+[。！？!?；;.]?/g) ?? [normalized];
   const chunks: string[] = [];
-  for (const sentence of raw.map(value => value.trim()).filter(Boolean)) {
+  for (const sentence of raw.map(value => value.trim()).filter(hasSpeakableContent)) {
     if (sentence.length <= maxSentenceLength) {
       chunks.push(sentence);
       continue;

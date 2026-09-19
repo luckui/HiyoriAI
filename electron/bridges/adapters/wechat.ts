@@ -27,7 +27,6 @@ import QRCode from 'qrcode';
 
 // ── Constants ────────────────────────────────────────────────────────
 
-const ILINK_VER = '2.2.0';
 const ILINK_CV = (2 << 16) | (2 << 8) | 0; // 131584
 const CHANNEL_VERSION = '2.2.0';
 const ILINK_APP_ID = 'bot';

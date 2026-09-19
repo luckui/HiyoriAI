@@ -213,7 +213,7 @@ const sysMouseClick: ToolDefinition<MouseClickParams> = {
       description:
         '点击屏幕绝对坐标（操作系统级别，非浏览器内部）。\n' +
         '坐标以屏幕左上角为原点，X 向右，Y 向下，单位像素。\n' +
-        '【何时用此工具而非 browser_click】\n' +
+        '【何时用此工具而非 browser_click_smart】\n' +
         '  • 点击系统窗口（桌面、任务栏、文件资源管理器、系统对话框）\n' +
         '  • 点击非浏览器应用的界面元素\n' +
         '  • 需要先截图（take_screenshot）确认坐标后再点击',

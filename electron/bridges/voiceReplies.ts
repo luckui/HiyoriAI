@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import ffmpeg from '@ffmpeg-installer/ffmpeg';
 import type { TTSProviderConfig } from '../tts.config';
-import { normalizeSpokenText, splitSpokenText } from '../../shared/spokenText';
+import { hasSpeakableContent, normalizeSpokenText, splitSpokenText } from '../../shared/spokenText';
 
 export type WeChatVoiceDeliveryMode = 'audio_file' | 'native_voice';
 
@@ -86,67 +86,8 @@ export async function getReadyBridgeVoiceProvider(): Promise<TTSProviderConfig |
   return provider;
 }
 
-export function splitBridgeVoiceSentences(text: string): string[] {
-  const normalized = cleanBridgeVoiceText(text);
-  if (!normalized) return [];
-  return splitSpokenText(normalized, {
-    maxSegments: MAX_VOICE_SENTENCES,
-    maxSentenceLength: MAX_SENTENCE_LENGTH,
-  });
-  const readableSentences = normalized.match(/[^。！？!?；;.!?]+[。！？!?；;.!?]?/g) ?? [normalized];
-  const readableChunks: string[] = [];
-  for (const sentence of readableSentences.map(s => s.trim()).filter(Boolean)) {
-    if (sentence.length <= MAX_SENTENCE_LENGTH) {
-      readableChunks.push(sentence);
-      continue;
-    }
-    for (let i = 0; i < sentence.length; i += MAX_SENTENCE_LENGTH) {
-      readableChunks.push(sentence.slice(i, i + MAX_SENTENCE_LENGTH));
-    }
-  }
-  return readableChunks.slice(0, MAX_VOICE_SENTENCES);
-
-  const sentences = normalized.match(/[^。！？!?；;]+[。！？!?；;]?/g) ?? [normalized];
-  const chunks: string[] = [];
-  for (const sentence of sentences.map(s => s.trim()).filter(Boolean)) {
-    if (sentence.length <= MAX_SENTENCE_LENGTH) {
-      chunks.push(sentence);
-      continue;
-    }
-    for (let i = 0; i < sentence.length; i += MAX_SENTENCE_LENGTH) {
-      chunks.push(sentence.slice(i, i + MAX_SENTENCE_LENGTH));
-    }
-  }
-  return chunks.slice(0, MAX_VOICE_SENTENCES);
-}
-
 export function cleanBridgeVoiceText(text: string): string {
   return normalizeSpokenText(text, { language: 'auto' });
-  return text
-    .replace(/（[^（）]*）/g, '')
-    .replace(/\([^()]*\)/g, '')
-    .replace(/【([^【】]*)】/g, '$1')
-    .replace(/「([^「」]*)」/g, '$1')
-    .replace(/『([^『』]*)』/g, '$1')
-    .replace(/《([^《》]*)》/g, '$1')
-    .replace(/\*\*(.+?)\*\*/g, '$1')
-    .replace(/\*(.+?)\*/g, '$1')
-    .replace(/\*[^*\n]{1,30}\*/g, '')
-    .replace(/```([\s\S]*?)```/g, ' $1 ')
-    .replace(/`([^`\n]+)`/g, ' $1 ')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/^#{1,6}\s/gm, '')
-    .replace(/^[-*+]\s/gm, '')
-    .replace(/^>\s?/gm, '')
-    .replace(/[_~|]/g, '')
-    .replace(RE_EMOJI, '，')
-    .replace(/[，,]{2,}/g, '，')
-    .replace(/([。！？!?…])，/g, '$1')
-    .replace(/，[。！？!?…]/g, match => match.slice(1))
-    .replace(/^\s*[，,]\s*/g, '')
-    .replace(/\s*[，,]\s*$/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
 }
 
 function cleanBridgeVoiceTextForProvider(text: string, provider: TTSProviderConfig): string {
@@ -277,50 +218,6 @@ function getOggOpusDurationMs(opus: Buffer | ArrayBuffer): number | undefined {
   return undefined;
 }
 
-export function mergePcmWavBuffers(wavs: Array<Buffer | ArrayBuffer>): Buffer {
-  if (wavs.length === 0) throw new Error('No WAV audio to merge');
-  const buffers = wavs.map(wav => Buffer.from(wav));
-  const firstInfo = parseSimplePcmWav(buffers[0]);
-  if (firstInfo.audioFormat !== 1) {
-    throw new Error(`Unsupported WAV format: ${firstInfo.audioFormat}`);
-  }
-
-  const dataChunks: Buffer[] = [];
-  let totalDataSize = 0;
-  for (const buffer of buffers) {
-    const info = parseSimplePcmWav(buffer);
-    const compatible =
-      info.audioFormat === firstInfo.audioFormat &&
-      info.channels === firstInfo.channels &&
-      info.sampleRate === firstInfo.sampleRate &&
-      info.bitsPerSample === firstInfo.bitsPerSample &&
-      info.blockAlign === firstInfo.blockAlign;
-    if (!compatible) {
-      throw new Error('TTS WAV chunks have incompatible formats');
-    }
-    const data = buffer.subarray(info.dataOffset, info.dataOffset + info.dataSize);
-    dataChunks.push(data);
-    totalDataSize += data.length;
-  }
-
-  const out = Buffer.alloc(WAV_HEADER_BYTES + totalDataSize);
-  out.write('RIFF', 0);
-  out.writeUInt32LE(36 + totalDataSize, 4);
-  out.write('WAVE', 8);
-  out.write('fmt ', 12);
-  out.writeUInt32LE(16, 16);
-  out.writeUInt16LE(firstInfo.audioFormat, 20);
-  out.writeUInt16LE(firstInfo.channels, 22);
-  out.writeUInt32LE(firstInfo.sampleRate, 24);
-  out.writeUInt32LE(firstInfo.byteRate, 28);
-  out.writeUInt16LE(firstInfo.blockAlign, 32);
-  out.writeUInt16LE(firstInfo.bitsPerSample, 34);
-  out.write('data', 36);
-  out.writeUInt32LE(totalDataSize, 40);
-  Buffer.concat(dataChunks).copy(out, WAV_HEADER_BYTES);
-  return out;
-}
-
 export async function deliverWeChatVoiceReply(
   deps: WeChatVoiceReplyDeps,
 ): Promise<WeChatVoiceReplyResult> {
@@ -339,7 +236,7 @@ export async function deliverWeChatVoiceReply(
     try {
       if (deliveryMode === 'audio_file') {
         const cleaned = cleanBridgeVoiceTextForProvider(deps.text, deps.provider);
-        if (!cleaned) throw new Error('Voice reply text is empty after cleanup');
+        if (!hasSpeakableContent(cleaned)) throw new Error('Voice reply text is empty after cleanup');
         console.log(`[BridgeVoice] WeChat audio_file synthesize full text (${cleaned.length} chars): ${cleaned.slice(0, 120)}`);
         const mergedWav = Buffer.from(await synthesize(cleaned, deps.provider));
         parseSimplePcmWav(mergedWav);

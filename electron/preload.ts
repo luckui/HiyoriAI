@@ -28,12 +28,6 @@ contextBridge.exposeInMainWorld('chatAPI', {
     ipcRenderer.invoke('chat:send', conversationId, content, replyTarget, requestContext),
   stopAI: () =>
     ipcRenderer.invoke('chat:stop'),
-  /** 监听主进程注入的 AI 主动消息（来自后台任务完成通知或工具调用） */
-  onAgentMessage: (cb: (payload: { conversationId: string; content: string }) => void) => {
-    const handler = (_e: unknown, payload: { conversationId: string; content: string }) => cb(payload);
-    ipcRenderer.on('chat:agent-message', handler);
-    return () => { ipcRenderer.removeListener('chat:agent-message', handler); };
-  },
   /** 监听 background/batch 任务完成后触发的 AI 唤醒请求（触发新一轮主对话 AI） */
   onWakeup: (cb: (payload: { conversationId: string; text: string; replyTarget?: unknown; trigger?: unknown }) => void) => {
     const handler = (_e: unknown, payload: { conversationId: string; text: string; replyTarget?: unknown; trigger?: unknown }) => cb(payload);

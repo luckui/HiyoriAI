@@ -104,19 +104,6 @@ function craftErrorCode(error: unknown): MinecraftActionErrorCode | undefined {
     : undefined;
 }
 
-const LEAF_BLOCK_NAMES = [
-  'oak_leaves',
-  'spruce_leaves',
-  'birch_leaves',
-  'jungle_leaves',
-  'acacia_leaves',
-  'dark_oak_leaves',
-  'mangrove_leaves',
-  'cherry_leaves',
-  'azalea_leaves',
-  'flowering_azalea_leaves',
-];
-
 const GENERIC_TREE_NAMES = new Set([
   'tree',
   'trees',
@@ -1164,7 +1151,6 @@ export function createMineflayerAdapter(
         continue;
       }
       const craftCount = step.craftCount ?? Math.ceil(need / step.outputPerCraft);
-      const expectedOutput = craftCount * step.outputPerCraft;
       let table: any;
       if (step.requiresCraftingTable) {
         const ensured = await ensureCraftingTableFor(current, signal);
@@ -1938,7 +1924,7 @@ export function createMineflayerAdapter(
       const target = options.position
         ? new Vec3(Math.floor(options.position.x), Math.floor(options.position.y), Math.floor(options.position.z))
         : undefined;
-      const placed = await placeBlockAt(current, item, target, options.face ?? 'auto', options.signal);
+      await placeBlockAt(current, item, target, options.face ?? 'auto', options.signal);
       return {
         actionId: '',
         outcome: 'succeeded',

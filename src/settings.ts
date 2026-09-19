@@ -790,9 +790,9 @@ function renderTTSForm(): void {
     const hint = document.getElementById('tts-local-hint') as HTMLElement | null;
     if (hint) {
       const hintMap: Record<string, string> = {
-        'edge-tts': '一键部署免费的 edge-tts 本地服务（需 Python 3.10+）',
-        'moss-tts-nano': '部署 MOSS-TTS-Nano 本地离线语音合成（需 Python 3.10+，约 2GB 磁盘）',
-        'genie-tts': '部署 Genie-TTS 本地语音合成，菲比音色（需 Python 3.10+，约 1.5GB 磁盘，首次安装耗时较长）',
+        'edge-tts': '打开上方「语音播报」开关即可自动部署免费的 edge-tts 本地服务（自动准备 uv 与 Python，无需手动安装）',
+        'moss-tts-nano': '打开上方「语音播报」开关即可自动部署 MOSS-TTS-Nano 本地离线语音合成（约 2GB 磁盘）',
+        'genie-tts': '打开上方「语音播报」开关即可自动部署 Genie-TTS 本地语音合成，菲比音色（约 1.5GB 磁盘，首次安装耗时较长）',
       };
       hint.textContent = hintMap[p.localEngine || 'edge-tts'] ?? hintMap['edge-tts'];
     }
@@ -840,6 +840,7 @@ async function saveTTSSettings(): Promise<void> {
     setTimeout(() => { btn.textContent = '保存设置'; btn.disabled = false; }, 2000);
     console.error('[TTS save]', e);
   } finally {
+    unsubscribe?.();
     // 延迟重置，确保广播回调已被跳过
     setTimeout(() => { _ttsSavingFromUI = false; }, 500);
   }
@@ -878,15 +879,6 @@ function deleteTTSProvider(): void {
   ttsCfg.deletedProviders = [...(ttsCfg.deletedProviders ?? []), ttsEditKey];
   delete ttsCfg.providers[ttsEditKey];
   ttsEditKey = ttsCfg.activeProvider;
-  void saveTTSSettings();
-}
-
-function setActiveTTSProvider(): void {
-  if (!ttsCfg || !ttsEditKey) return;
-  syncTTSFormToCfg();
-  ttsCfg.activeProvider = ttsEditKey;
-  renderTTSProviderSelect();
-  renderTTSForm();
   void saveTTSSettings();
 }
 
@@ -1158,16 +1150,6 @@ function deleteProvider(): void {
   renderForm();
   // 立即持久化，不依赖用户手动点保存
   void saveSettings();
-}
-
-// ── 设为当前 ──────────────────────────────────────────
-
-function setActiveProvider(): void {
-  if (!cfg || !editKey) return;
-  syncFormToCfg();
-  cfg.activeProvider = editKey;
-  renderProviderSelect();
-  renderForm();
 }
 
 // ── 面板开关 ──────────────────────────────────────────

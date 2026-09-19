@@ -361,6 +361,3 @@ export function createCodexRuntimeProvider(
   };
 }
 
-export function createCodexAppServerEnv(): Record<string, string> {
-  return appServerEnv();
-}

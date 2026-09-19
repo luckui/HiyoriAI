@@ -15,8 +15,8 @@
 
 import { exec } from 'child_process';
 import { app } from 'electron';
-import { join } from 'path';
 import type { ToolDefinition } from '../types';
+import { appUvPaths, findAppUv } from '../../uvRuntime';
 import { terminalManager } from '../terminalManager';
 import { decodeBuffer } from '../encoding';
 
@@ -25,9 +25,8 @@ import { decodeBuffer } from '../encoding';
  * 使 Agent 在任意 shell 命令中可通过 %HIYORI_UV_EXE% / %HIYORI_DATA_DIR% 访问。
  */
 function buildEnv(userEnv?: Record<string, string>): Record<string, string> {
-  const uvExe = app.isPackaged
-    ? join(process.resourcesPath, 'tools', 'uv.exe')
-    : join(app.getAppPath(), 'tools', 'uv.exe');
+  // 随应用分发的 uv，或首次启用本地语音时自动下载的 uv
+  const uvExe = findAppUv() ?? appUvPaths().bundledPath;
   const dataDir = app.getPath('userData');
 
   return {

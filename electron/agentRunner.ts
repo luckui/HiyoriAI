@@ -19,12 +19,23 @@ import { CHILD_BLOCKED_TOOLS } from './taskManager';
 import type { DBTask } from './db';
 import type { ChatMessage, ContentPart, ToolSchema } from './tools/types';
 import { traceTurnEvent } from './turnTrace';
+import {
+  FORMAT_ERROR_PREFIX,
+  describeResultSchema,
+  exampleResult,
+  normalizeResultSchema,
+  validateResult,
+  type ResultSchema,
+  type ValidationResult,
+} from './resultSchema';
 
 // ── 子智能体默认配置 ─────────────────────────────────────
 
 const DEFAULT_MAX_ROUNDS = 15;
 const CHILD_MAX_OUTPUT_TOKENS = 4096;
 const CHILD_TRUNCATION_RETRY_TOKENS = 8192;
+/** 子任务单次 LLM 请求超时：服务端挂起时尽快失败并交给重试逻辑，而不是让整个批量任务卡死 */
+const CHILD_LLM_REQUEST_TIMEOUT_MS = 180_000;
 
 async function fetchChildCompletion(
   provider: Parameters<typeof fetchCompletion>[0],
@@ -34,7 +45,10 @@ async function fetchChildCompletion(
 ) {
   const configured = Number(provider.maxTokens ?? 0);
   const firstBudget = Math.max(CHILD_MAX_OUTPUT_TOKENS, Number.isFinite(configured) ? configured : 0);
-  let response = await fetchCompletion(provider, messages, tools, signal, { maxTokens: firstBudget });
+  let response = await fetchCompletion(provider, messages, tools, signal, {
+    maxTokens: firstBudget,
+    timeoutMs: CHILD_LLM_REQUEST_TIMEOUT_MS,
+  });
   const firstChoice = response.choices[0];
   if (firstChoice?.finish_reason !== 'length') return response;
 
@@ -47,6 +61,7 @@ async function fetchChildCompletion(
   console.warn(`[AgentRunner] child response reached output limit; retrying with ${CHILD_TRUNCATION_RETRY_TOKENS} tokens`);
   response = await fetchCompletion(provider, messages, tools, signal, {
     maxTokens: Math.max(CHILD_TRUNCATION_RETRY_TOKENS, firstBudget),
+    timeoutMs: CHILD_LLM_REQUEST_TIMEOUT_MS,
   });
   if (response.choices[0]?.finish_reason === 'length') {
     throw new Error('Child task output reached the length limit twice and was truncated before completion.');
@@ -94,6 +109,7 @@ function extractToolResultSummary(raw: string): string {
 // ── 构建子智能体 System Prompt ───────────────────────────
 
 function buildChildSystemPrompt(task: DBTask): string {
+  const resultSchema = taskResultSchema(task);
   const parts: string[] = [
     '你是一个专注的后台工作智能体，正在执行一项被委派的任务。',
     '',
@@ -126,8 +142,15 @@ function buildChildSystemPrompt(task: DBTask): string {
     parts.push(
       '- 你是后台任务，用户看不到你的中间过程，只能看到最终结果',
       '- 专注完成任务，不要闲聊',
-      '- 完成后用简洁的自然语言输出结果摘要',
-      '- 如果遇到无法解决的问题，说明原因并给出已完成的部分结果',
+      ...(resultSchema
+        ? [
+            '- 完成后严格按下方「输出格式」输出结果',
+            '- 如果确实无法得出结果，直接用一句话说明原因，不要编造字段值',
+          ]
+        : [
+            '- 完成后用简洁的自然语言输出结果摘要',
+            '- 如果遇到无法解决的问题，说明原因并给出已完成的部分结果',
+          ]),
     );
   }
 
@@ -149,7 +172,69 @@ function buildChildSystemPrompt(task: DBTask): string {
     );
   }
 
+  if (resultSchema) {
+    parts.push(
+      '',
+      '## 输出格式（必须遵守）',
+      '完成后只输出一个 JSON 对象，不要 Markdown 代码块，也不要任何额外说明。字段如下：',
+      describeResultSchema(resultSchema),
+      `示例（仅示意格式）：${exampleResult(resultSchema)}`,
+    );
+  }
+
   return parts.join('\n');
+}
+
+/** 批量任务声明的结果格式（创建时已校验；这里再规范化一次，损坏的声明视为未声明） */
+function taskResultSchema(task: DBTask): ResultSchema | undefined {
+  if (!task.metadata) return undefined;
+  try {
+    const declared = JSON.parse(task.metadata).resultSchema;
+    return declared === undefined ? undefined : normalizeResultSchema(declared).schema;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 按声明校验结构化结果：不符合时在同一对话里要求改正一次，仍不符合则判定失败（附原始回复片段便于排查）。
+ * 通过时返回只含声明字段、已规范化的 JSON 字符串。
+ */
+async function enforceResultSchema(
+  text: string,
+  schema: ResultSchema,
+  ctx: {
+    provider: Parameters<typeof fetchCompletion>[0];
+    msgBuf: ChatMessage[];
+    signal: AbortSignal;
+    onInvalid: (errors: string[]) => void;
+  },
+): Promise<string> {
+  const first = validateResult(text, schema);
+  if (first.ok) return JSON.stringify(first.value);
+
+  ctx.onInvalid(errorsOf(first));
+  ctx.msgBuf.push({ role: 'assistant', content: text });
+  ctx.msgBuf.push({
+    role: 'user',
+    content: [
+      `【系统】你的结果不符合格式要求：${errorsOf(first).join('；')}。`,
+      '请只输出一个 JSON 对象，不要任何额外文字。字段如下：',
+      describeResultSchema(schema),
+      '如果确实无法得出某个必填字段，直接用一句话说明原因，不要编造。',
+    ].join('\n'),
+  });
+  const retry = await fetchChildCompletion(ctx.provider, ctx.msgBuf, undefined, ctx.signal);
+  const retryText = stripThinkTags(retry.choices[0]?.message.content?.trim() ?? '');
+  const second = validateResult(retryText, schema);
+  if (second.ok) return JSON.stringify(second.value);
+
+  const raw = (retryText || text).replace(/\s+/g, ' ').slice(0, 300);
+  throw new Error(`${FORMAT_ERROR_PREFIX}：${errorsOf(second).join('；')}。原始回复：${raw}`);
+}
+
+function errorsOf(result: ValidationResult): string[] {
+  return 'errors' in result ? result.errors : [];
 }
 
 // ── 获取子智能体可用工具 ─────────────────────────────────
@@ -206,6 +291,7 @@ export async function runChildAgent(
   }
 
   const systemPrompt = buildChildSystemPrompt(task);
+  const resultSchema = taskResultSchema(task);
   const toolSchemas = getChildToolSchemas(task);
   const withTools = !!toolSchemas?.length;
   const traceBase = {
@@ -268,8 +354,12 @@ export async function runChildAgent(
         });
         const retry = await fetchChildCompletion(provider, msgBuf, undefined, signal);
         finalText = stripThinkTags(retry.choices[0]?.message.content?.trim() ?? '');
-        if (!finalText) finalText = synthesizeToolHistorySummary(msgBuf) || '（任务结束但未生成结果）';
-        if (!finalText) finalText = '（任务结束但未生成结果）';
+        if (!finalText) {
+          const history = synthesizeToolHistorySummary(msgBuf);
+          // Minecraft 动作工具的终态结果本身就是游戏事实，保留"用工具记录作结果"的兜底；其他任务空结果即失败
+          if (history && taskUsesToolset(task, 'minecraft')) finalText = history;
+          else throw new Error(`子任务没有给出任何结果${history ? `。实际执行过的操作：\n${history}` : ''}`);
+        }
       }
       console.log(
         `[AgentRunner] "${task.title}" 第 ${round + 1} 轮结束（无工具调用，返回最终结果）\n` +
@@ -280,6 +370,14 @@ export async function runChildAgent(
           `Minecraft 子任务未确认完成（最后动作状态：${lastMinecraftAction.status}）。`
           + `最终摘要：${finalText}。工具结果：${extractToolResultSummary(lastMinecraftAction.result)}`,
         );
+      }
+      if (resultSchema) {
+        finalText = await enforceResultSchema(finalText, resultSchema, {
+          provider,
+          msgBuf,
+          signal,
+          onInvalid: (errors) => traceTurnEvent({ ...traceBase, type: 'child-result-invalid', round: round + 1, errors }),
+        });
       }
       traceTurnEvent({ ...traceBase, type: 'child-task-completed', round: round + 1, result: finalText });
       return finalText;

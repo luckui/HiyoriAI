@@ -22,7 +22,7 @@ import { toolRegistry } from '../tools/index';
 import { resolveToolset } from '../toolsets';
 import { browserSession } from '../tools/impl/browserSession';
 import { FUNDED_ALLOWED_TOOLS, checkToolCall } from './streamerGuard';
-import type { ChatMessage, ToolSchema } from '../tools/types';
+import { isToolImageResult, type ChatMessage, type ToolSchema } from '../tools/types';
 import {
   SESSION_SYSTEM_PROMPT,
   FUNDED_EXECUTOR_SYSTEM_PROMPT,
@@ -335,7 +335,8 @@ class StreamerControllerManager extends EventEmitter {
           }
           const taskCtx = { conversationId: `funded-${fundedBy.uid}-${Date.now()}` };
           const result = await toolRegistry.execute(tc.function.name, tc.function.arguments, taskCtx);
-          const textResult = typeof result === 'object' ? JSON.stringify(result) : String(result);
+          // 截图等图像结果只回填文字说明，避免把整段 base64 塞进上下文
+          const textResult = isToolImageResult(result) ? result.text : String(result);
           msgBuf.push({ role: 'tool', tool_call_id: tc.id, content: textResult });
           console.log(`[StreamerController] funded tool: ${tc.function.name} → ${textResult.slice(0, 80)}`);
         }

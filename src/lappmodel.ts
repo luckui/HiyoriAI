@@ -42,7 +42,6 @@ import { LAppPal } from './lapppal';
 import { TextureInfo } from './lapptexturemanager';
 import { LAppWavFileHandler } from './lappwavfilehandler';
 import { CubismMoc } from '@framework/model/cubismmoc';
-import { LAppDelegate } from './lappdelegate';
 import { LAppSubdelegate } from './lappsubdelegate';
 
 // ── 情绪预设参数表（Hiyori_pro 无 exp3，用直接参数注入实现情绪）──────────────
@@ -956,51 +955,11 @@ export class LAppModel extends CubismUserModel {
   private _avatarIdleElapsedSec = 0;
   /** POST_SPEAK 余韵计时（秒） */
   private _postSpeakElapsedSec = 0;
-  /** 当前情绪名称（供状态机查表） */
-  private _currentEmotion = 'neutral';
 
   /** 无聊阈值：60 秒无交互 */
   private static readonly BORED_THRESHOLD_SEC = 60;
   /** POST_SPEAK 余韵时长：2 秒 */
   private static readonly POST_SPEAK_LINGER_SEC = 2;
-  /**
-   * 说话时动作循环池（shuffle 队列消费，Idle 作为手势间的自然休息帧）。
-   * 不使用纯随机，防止同一手势连续重复出现的刻板感。
-   * 参考 airi-main：说话节奏由 beat-sync 头部摆动表达，身体动作只需提供自然变化感。
-   */
-  private static readonly SPEAKING_GROUPS_POOL = [
-    'Tap', 'Idle', 'Flick', 'Idle', 'Tap@Body', 'Idle',
-  ] as const;
-  /** 当前 shuffle 后的动作队列（空时自动重新 shuffle） */
-  private _speakingQueue: string[] = [];
-  /** 上次消费的动作组（防止两个 shuffle 周期首尾相同） */
-  private _lastSpeakGroup = '';
-
-  /**
-   * 从 shuffle 队列取下一个说话动作组。
-   * 队列空时重新 Fisher-Yates shuffle，并保证队首不与上次队尾相同。
-   * 这样一个完整周期内所有组各出现一次，且不会出现连续同组。
-   */
-  private _nextSpeakingGroup(): string {
-    if (this._speakingQueue.length === 0) {
-      // Fisher-Yates shuffle
-      const pool: string[] = [...LAppModel.SPEAKING_GROUPS_POOL];
-      for (let i = pool.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        const tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
-      }
-      // 若 shuffle 后队首与上次队尾相同，把队首与随机非首位交换
-      if (pool.length > 1 && pool[0] === this._lastSpeakGroup) {
-        const swapIdx = 1 + Math.floor(Math.random() * (pool.length - 1));
-        const tmp = pool[0]; pool[0] = pool[swapIdx]; pool[swapIdx] = tmp;
-      }
-      this._speakingQueue = pool;
-    }
-    const group = this._speakingQueue.shift()!;
-    this._lastSpeakGroup = group;
-    return group;
-  }
-
   // ── Beat-Sync 状态（弹簧物理，移植自 airi-main）──────────────────────────
 
   private _beatSync: BeatSyncState = {
@@ -1192,9 +1151,6 @@ export class LAppModel extends CubismUserModel {
       if (this._avatarState === AvatarState.SPEAKING) return;
       this._avatarState = AvatarState.SPEAKING;
       this._avatarIdleElapsedSec = 0; // 重置 bored 计时器
-      // 重置说话动作队列（每次开口说话重新 shuffle，保证序列新鲜感）
-      this._speakingQueue = [];
-      this._lastSpeakGroup = '';
       // 重置 beat-sync 状态（velocity 归零，弹簧从模型当前值静止开始）
       this._beatSync.primed = false;
       this._beatSync.patternStarted = false;
@@ -1226,7 +1182,6 @@ export class LAppModel extends CubismUserModel {
    */
   public triggerReaction(emotionName: string, durationMs = 0, transitionMs = 300): void {
     const params = EMOTION_PRESETS[emotionName] ?? EMOTION_PRESETS.neutral;
-    this._currentEmotion = emotionName;
     this.setEmotionParams(params, transitionMs, durationMs);
     this._avatarIdleElapsedSec = 0; // 任何交互都重置 bored 计时器
 

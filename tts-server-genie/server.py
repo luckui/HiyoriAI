@@ -52,6 +52,14 @@ log = logging.getLogger("genie-tts-server")
 CONFIG_PATH = THIS_DIR / "config.yaml"
 CHAR_MODELS_DIR = THIS_DIR / "CharacterModels"
 
+# genie-tts 2.0.x 加载角色时必须指定模型语言（Chinese / Japanese / English），不支持 "auto"。
+# 可在 config.yaml 的 genie.character_language 中修改。
+DEFAULT_CHARACTER_LANGUAGE = "Chinese"
+
+# genie-tts 2.0.2 的中文 G2P 遇到没有韵母的字（嗯 ń / 呣 ḿ / 噷 hm）会在变调处理里 IndexError，
+# 整句静默产出空音频。合成前换成读音接近的字（已逐字验证替换后可正常转音素）。
+_G2P_UNSAFE_CHARS = str.maketrans({"嗯": "恩", "呣": "姆", "噷": "哼"})
+
 
 def load_config() -> dict:
     if CONFIG_PATH.exists():
@@ -73,6 +81,8 @@ class CharacterEntry:
 
 
 _characters: dict[str, CharacterEntry] = {}
+# 加载失败的角色及原因（通过 /health 与合成接口的报错暴露，避免"服务在线但一个角色都没有"时无从排查）
+_load_errors: dict[str, str] = {}
 
 
 def _load_character(char_name: str, version: str = "v2ProPlus") -> Optional[CharacterEntry]:
@@ -84,9 +94,11 @@ def _load_character(char_name: str, version: str = "v2ProPlus") -> Optional[Char
 
     if not tts_model_dir.exists():
         log.error("角色模型目录不存在: %s", tts_model_dir)
+        _load_errors[char_name] = f"角色模型目录不存在: {tts_model_dir}"
         return None
     if not prompt_wav_json.exists():
         log.error("prompt_wav.json 不存在: %s", prompt_wav_json)
+        _load_errors[char_name] = f"prompt_wav.json 不存在: {prompt_wav_json}"
         return None
 
     with open(prompt_wav_json, encoding="utf-8") as f:
@@ -102,33 +114,34 @@ def _load_character(char_name: str, version: str = "v2ProPlus") -> Optional[Char
     prompt_wav_path = str(prompt_wav_dir / preset["wav"])
     prompt_text = preset["text"]
 
-    # 参考音频语言：根据文本内容粗判断（均为中文）
-    ref_language = "Chinese"
+    # 模型语言与参考音频语言一致（内置 feibi 及导入的 GPT-SoVITS 音色均为中文）
+    language = cfg.get("character_language", DEFAULT_CHARACTER_LANGUAGE)
 
     try:
         genie.load_character(
             character_name=char_name,
             onnx_model_dir=str(tts_model_dir),
-            language="auto",
+            language=language,
         )
         genie.set_reference_audio(
             character_name=char_name,
             audio_path=prompt_wav_path,
             audio_text=prompt_text,
-            language="auto",
-            ref_language=ref_language,
+            language=language,
         )
-        log.info("角色 '%s' 加载完毕（预设: %s）", char_name, preset_key)
+        log.info("角色 '%s' 加载完毕（预设: %s，语言: %s）", char_name, preset_key, language)
     except Exception as e:
         log.error("加载角色 '%s' 失败: %s", char_name, e, exc_info=True)
+        _load_errors[char_name] = f"{type(e).__name__}: {e}"
         return None
 
+    _load_errors.pop(char_name, None)
     return CharacterEntry(
         name=char_name,
         model_dir=tts_model_dir,
         prompt_wav=prompt_wav_path,
         prompt_text=prompt_text,
-        ref_language=ref_language,
+        ref_language=language,
     )
 
 
@@ -239,13 +252,16 @@ async def tts_generate(request: Request, req: TTSRequest):
     char_name = req.speaker.strip() or cfg.get("default_character", "feibi")
     if char_name not in _characters:
         available = list(_characters.keys())
+        reason = _load_errors.get(char_name)
         raise HTTPException(
             status_code=400,
             detail=f"未知角色 '{char_name}'，可用角色: {available}"
+            + (f"（该角色加载失败：{reason}）" if reason else ""),
         )
 
-    # 语言：前端传 "auto" / "zh" / "en" / "ja" / "ko"，全部接受
+    # genie-tts 按角色模型的语言合成；请求里的 language（auto / zh / en…）仅用于日志
     language = req.language.strip() or "auto"
+    text = req.text.strip().translate(_G2P_UNSAFE_CHARS)
 
     log.info("TTS 排队: speaker=%s lang=%s text=%s", char_name, language, req.text[:60])
 
@@ -262,10 +278,9 @@ async def tts_generate(request: Request, req: TTSRequest):
             chunks: list[bytes] = []
             async for chunk in genie.tts_async(
                 character_name=char_name,
-                text=req.text.strip(),
+                text=text,
                 play=False,
                 split_sentence=False,
-                text_language=language,
             ):
                 # 每个 chunk 后检查客户端是否已断开（防止白白消耗 CPU）
                 if await request.is_disconnected():
@@ -282,6 +297,11 @@ async def tts_generate(request: Request, req: TTSRequest):
         except Exception as e:
             log.error("TTS synthesis failed: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail=str(e))
+
+    # genie-tts 会吞掉推理中的异常，只表现为一个音频块都没有：如实报错，而不是返回空 WAV
+    if not chunks:
+        log.error("TTS 合成失败：没有生成任何音频 text=%s", req.text[:60])
+        raise HTTPException(status_code=500, detail="合成失败：没有生成任何音频（genie-tts 内部报错，详见服务日志）")
 
     wav_bytes = pcm_chunks_to_wav(chunks)
     log.info(
@@ -320,6 +340,7 @@ async def health():
         "engine": "genie-tts",
         "status": "ok" if loaded else "no_characters",
         "characters": loaded,
+        **({"errors": _load_errors} if _load_errors else {}),
     }
 
 

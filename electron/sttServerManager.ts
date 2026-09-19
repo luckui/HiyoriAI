@@ -19,12 +19,7 @@ import { app } from 'electron';
 import { join } from 'path';
 import { ChildProcess, spawn } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
-
-// ── 国内镜像 ────────────────────────────────────────────────────────
-
-const PYPI_INDEX = 'https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple';
-/** python-build-standalone 镜像（uv python install 用） */
-const PY_INSTALL_MIRROR = 'https://mirror.ghproxy.com/https://github.com/indygreg/python-build-standalone/releases/download';
+import { ensureAppUv, PYPI_INDEX, PYTHON_INSTALL_MIRROR } from './uvRuntime';
 
 // ── 配置 ────────────────────────────────────────────────────────────
 
@@ -48,12 +43,6 @@ const defaultConfig: STTServerConfig = {
 let currentConfig: STTServerConfig = { ...defaultConfig };
 
 // ── 路径 ────────────────────────────────────────────────────────────
-
-function getUvExe(): string {
-  return app.isPackaged
-    ? join(process.resourcesPath, 'tools', 'uv.exe')
-    : join(app.getAppPath(), 'tools', 'uv.exe');
-}
 
 function getSttServerDir(): string {
   return app.isPackaged
@@ -194,17 +183,14 @@ export async function install(
     return { ok: false, detail: `stt-server 目录不存在或缺少 server.py: ${serverDir}` };
   }
 
-  const uv = getUvExe();
-  if (!existsSync(uv)) {
-    return { ok: false, detail: `未找到 uv 工具: ${uv}` };
-  }
-
   const log = (m: string) => { onProgress?.(m); };
 
-  // 镜像环境变量
-  const mirrorEnv: Record<string, string> = {
-    UV_PYTHON_INSTALL_MIRROR: PY_INSTALL_MIRROR,
-  };
+  let uv: string;
+  try {
+    uv = await ensureAppUv(onProgress);
+  } catch (error) {
+    return { ok: false, detail: error instanceof Error ? error.message : String(error) };
+  }
 
   // 1. 创建 venv
   const venvDir = getVenvDir();
@@ -212,7 +198,7 @@ export async function install(
     log('创建 Python 虚拟环境（uv 自动管理 Python）…');
     const venvResult = await runCmd(
       `"${uv}" venv .venv --python ">=3.10"`,
-      serverDir, 300_000, onProgress, mirrorEnv,
+      serverDir, 300_000, onProgress, { UV_PYTHON_INSTALL_MIRROR: PYTHON_INSTALL_MIRROR },
     );
     if (venvResult.code !== 0) {
       return { ok: false, detail: `创建 venv 失败:\n${venvResult.stderr.slice(0, 1000)}` };
@@ -387,10 +373,6 @@ export function getConfig(): STTServerConfig {
 
 export function getWebSocketUrl(): string {
   return `ws://127.0.0.1:${STT_PORT}`;
-}
-
-export function getPort(): number {
-  return STT_PORT;
 }
 
 // ── PID 管理 ────────────────────────────────────────────────────────

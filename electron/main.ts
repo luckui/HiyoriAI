@@ -88,7 +88,6 @@ import {
   getGlobalMemoryCursor,
   getStructuredGlobalMemory,
   setStructuredGlobalMemory,
-  addMessage as dbAddMessage,
 } from './db';
 import { sendChatMessage, setToolEventListener, stopCurrentAI } from './aiService';
 import {
@@ -98,7 +97,6 @@ import {
   traceTurnEvent,
   type TurnTrigger,
 } from './turnTrace';
-import { fetchCompletion } from './llmClient';
 import { triggerConversationLeave, memoryManager, globalMemoryManager, runStartupCatchUp, startIdleScheduler } from './memory/index';
 import { exportMemoryToMarkdown, importMemoryFromMarkdown } from './memory/memoryExport';
 import aiConfig from './ai.config';
@@ -129,7 +127,8 @@ import * as ttsServerManager from './ttsServerManager';
 import * as sttServerManager from './sttServerManager';
 import { hearingManager } from './hearingManager';
 import { taskManager } from './taskManager';
-import { buildTaskCompletedWakeup, buildTaskFailedWakeup, taskBelongsToSlot } from './taskWakeup';
+import { configureBatchResultsDir } from './batchRunner';
+import { buildBatchCompletedWakeup, buildTaskCompletedWakeup, buildTaskFailedWakeup, taskBelongsToSlot } from './taskWakeup';
 import { setScheduleReminderNotifier, taskScheduler } from './taskScheduler';
 import { initLive2DBridge } from './live2dBridge';
 import { minecraftRuntime } from './minecraft';
@@ -393,49 +392,9 @@ export async function playTTSAudio(text: string): Promise<boolean> {
 }
 
 /**
- * 向指定对话注入一条 AI 消息（无需用户输入，适用于异步任务完成通知）
+ * 唤醒父对话的 AI：触发新一轮 AI 处理（background/batch/cron 异步任务完成后）。
  *
- * 流程：
- *   1. 持久化到对话历史（role: 'assistant'）
- *   2. 推送 chat:agent-message 到渲染层 → 聊天窗口显示消息气泡
- *   3. 触发 TTS 播报（如窗口可用）
- *
- * 供使用：
- *   - speak 工具（后台 agent 主动通知用户）
- */
-export async function injectAgentMessage(
-  conversationId: string,
-  content: string,
-): Promise<void> {
-  const turnId = createTurnId();
-  traceTurnEvent({
-    type: 'agent-message-injected',
-    turnId,
-    conversationId,
-    trigger: { actor: 'system', source: 'runtime', event: 'direct-message' },
-    reply: content,
-    target: 'desktop',
-  });
-  // 1. 持久化
-  dbAddMessage({ conversation_id: conversationId, role: 'assistant', content });
-
-  // 2. 推送到渲染层聊天窗口
-  if (mainWin && !mainWin.isDestroyed() && !mainWin.webContents.isDestroyed()) {
-    mainWin.webContents.send('chat:agent-message', { conversationId, content });
-  }
-
-  // 3. TTS 播报
-  await playTTSAudio(content);
-}
-
-/**
- * 唤醒父对话的 AI：触发新一轮 AI 处理（仅用于 background/batch 异步任务完成后）。
- *
- * 与 injectAgentMessage 的区别：
- *   injectAgentMessage = AI 主动说话（speak 工具，子智能体自己发）
- *   sendAgentWakeup     = 系统通知主对话 AI「子任务结果来了，继续工作流」
- *
- * 仅对 background/batch 任务使用。cron 任务由子智能体自己用 speak 通知用户。
+ * 系统通知主对话 AI「子任务结果来了，继续工作流」，由主对话决定如何告知用户。
  */
 export function sendAgentWakeup(
   conversationId: string,
@@ -549,9 +508,10 @@ let minecraftGoalController: MinecraftGoalController | undefined;
 function createWindow(): void {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
 
+  // 窗口应有的尺寸：拖动时每次都用它还原尺寸（见 window-drag），由 window-resize 更新
+  let windowSize = { width: 360, height: 620 };
   const win = new BrowserWindow({
-    width: 360,
-    height: 620,
+    ...windowSize,
     x: width - 380,
     y: height - 640,
     transparent: true,
@@ -609,14 +569,17 @@ function createWindow(): void {
   }
 
   // ── 窗口控制 ──────────────────────────────────────────────
+  // Windows 小数缩放（如 125%）下，setPosition 每次都会因逻辑像素 ↔ 物理像素取整把窗口撑大约 1px；
+  // 拖动时每秒调用几十次，窗口就会越拖越大。因此改用 setBounds，每次都带上应有的尺寸。
   ipcMain.on('window-drag', (_e, { deltaX, deltaY }: { deltaX: number; deltaY: number }) => {
     const [x, y] = win.getPosition();
-    win.setPosition(x + deltaX, y + deltaY);
+    win.setBounds({ x: x + deltaX, y: y + deltaY, ...windowSize });
   });
 
   ipcMain.on('window-close', () => app.quit());
 
   ipcMain.on('window-resize', (_e, { width: w, height: h }: { width: number; height: number }) => {
+    windowSize = { width: w, height: h };
     const bounds = win.getBounds();
     const { height: screenH } = screen.getPrimaryDisplay().workAreaSize;
     // 钳位 y：确保窗口扩展后不超出屏幕底部（保留 6px 间距）
@@ -1258,17 +1221,10 @@ function createWindow(): void {
       let wakeupText: string;
 
       if (task.type === 'batch') {
-        // 批量任务：聚合结果可能超万字，wakeup 只告知状态 + task_id
-        // AI 必须主动调用 async_task result 才能拿到所有数据
-        const statsLine = task.result?.split('\n').slice(0, 4).join(' ') ?? '';
-        wakeupText = [
-          `【系统通知】批量任务「${task.title}」全部子任务已执行完毕。`,
-          statsLine ? `统计：${statsLine}` : '',
-          '',
-          `⚠️ 聚合结果体积较大，未自动注入上下文。`,
-          `请立即调用以下工具获取完整数据后再回复用户：`,
-          `  async_task({"action":"result","task_id":"${task.id}"})`,
-        ].filter(s => s !== null).join('\n');
+        // 批量任务：wakeup 只带统计与失败摘要，各项结果由 AI 用 async_task result 分页读取
+        const problemCount = taskManager.listTasks({ parentTaskId: task.id })
+          .filter((child) => child.status === 'failed' || child.status === 'cancelled').length;
+        wakeupText = buildBatchCompletedWakeup(task, problemCount);
       } else {
         // 普通后台任务：结果通常较短，直接附在 wakeup 里
         wakeupText = buildTaskCompletedWakeup(task);
@@ -1301,6 +1257,7 @@ function createWindow(): void {
     pushTaskEvent('task:cancelled')(task);
   });
   taskManager.on('task:progress',  pushTaskEvent('task:progress'));
+  taskManager.on('task:retrying',  pushTaskEvent('task:retrying'));
 }
 
 function registerAvatarProtocol(): void {
@@ -1316,7 +1273,9 @@ function registerAvatarProtocol(): void {
 app.whenReady().then(() => {
   configureTurnTrace(join(app.getPath('userData'), 'logs', 'agent-turns.jsonl'));
   initDatabase();
-  taskManager.reconcileInterruptedSlotTasks('minecraft');
+  configureBatchResultsDir(join(app.getPath('userData'), 'batch-results'));
+  // 上次退出时仍在排队 / 执行的任务已无人接管：标记为中断，之后可用 async_task retry 从断点继续
+  taskManager.reconcileInterruptedTasks();
   minecraftGoalController = new MinecraftGoalController({
     taskManager,
     runtime: minecraftRuntime,

@@ -200,8 +200,8 @@ function sanitizeLlmConfig(config: AIConfig): AIConfig {
 function sanitizeLlmProviders(providers: AIConfig['providers']): AIConfig['providers'] {
   const sanitized: AIConfig['providers'] = {};
   for (const [key, provider] of Object.entries(providers)) {
-    const copy = { ...provider };
-    delete copy.systemPrompt;
+    // 旧版配置里每个 provider 都带 systemPrompt，从未被读取；持久化时顺手剔除
+    const { systemPrompt: _legacy, ...copy } = provider as typeof provider & { systemPrompt?: string };
     sanitized[key] = copy;
   }
   return sanitized;

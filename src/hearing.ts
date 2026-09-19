@@ -297,6 +297,3 @@ function onTranscriptionResult(result: TranscriptionEvent): void {
   transcriptionCallback?.(result);
 }
 
-export function isActive(): boolean {
-  return isCapturing;
-}

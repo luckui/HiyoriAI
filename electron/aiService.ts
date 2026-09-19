@@ -61,52 +61,6 @@ export function stopCurrentAI(): void {
   }
 }
 
-/** 内部：执行工具并同时发射调试事件 */
-async function execAndEmit(
-  name: string,
-  argsJson: string,
-  conversationId: string | undefined,
-  turnId: string,
-  trigger: TurnTrigger,
-) {
-  const t0 = Date.now();
-  let parsedArgs: Record<string, unknown> = {};
-  try { parsedArgs = JSON.parse(argsJson); } catch { /* reported by the registry */ }
-  traceTurnEvent({
-    type: 'tool-started',
-    turnId,
-    conversationId: conversationId ?? 'unknown',
-    trigger,
-    tool: name,
-    args: parsedArgs,
-  });
-  const context = conversationId ? { conversationId, turnId, trigger } : undefined;
-  const result = await toolRegistry.execute(name, argsJson, context);
-  const durationMs = Date.now() - t0;
-  const resultText = isToolImageResult(result) ? result.text : String(result);
-  traceTurnEvent({
-    type: 'tool-completed',
-    turnId,
-    conversationId: conversationId ?? 'unknown',
-    trigger,
-    tool: name,
-    args: parsedArgs,
-    result: resultText,
-    durationMs,
-  });
-  if (_toolEventListener) {
-    _toolEventListener({
-      name,
-      args: parsedArgs,
-      result: resultText.slice(0, 300),
-      ok: !resultText.startsWith('❌') && !resultText.startsWith('[工具错误]'),
-      durationMs,
-      conversationId,  // 🆕 传递对话ID，用于区分工具调用来源
-    });
-  }
-  return result;
-}
-
 function createMainToolBatchHooks(
   conversationId: string | undefined,
   turnId: string,

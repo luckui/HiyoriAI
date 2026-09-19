@@ -6,7 +6,6 @@
  * 所有 openai-compatible 服务（OpenAI / DeepSeek / 智谱 / 月之暗面等）均可直接接入。
  */
 
-import { buildSystemPrompt } from './prompts/base-rules';
 
 export type ProviderType = 'openai-compatible';
 
@@ -24,8 +23,6 @@ export interface LLMProviderConfig {
   maxTokens?: number;
   /** 温度参数 0-2，默认 0.85 */
   temperature?: number;
-  /** 系统人设提示词 */
-  systemPrompt?: string;
   /**
    * 推理模型（如 doubao-seed、DeepSeek-R1）的 thinking token 上限。
    * 对应 volcengine/ark API 的 `thinking.budget_tokens` 字段。
@@ -48,23 +45,6 @@ export interface LLMProviderConfig {
    *   - glm-4-xxx（智谱 GLM）
    */
   thinkingBudgetTokens?: number;
-  /**
-   * 启用的工具集列表（新架构，借鉴 hermes-agent）
-   *
-   * 控制该 provider 可见哪些工具。支持：
-   *   - 预定义 toolset 名称（在 toolsets.ts 中定义）
-   *   - "default"：智能工具集（browser-smart + file-smart + terminal-smart...）
-   *   - "debugging"：调试模式（暴露所有底层工具）
-   *
-   * 未设置则默认使用 ["default"]。
-   *
-   * @example
-   * ```ts
-   * enabledToolsets: ["browser-smart", "file-smart", "terminal-smart"]
-   * enabledToolsets: ["debugging"]  // 调试模式，暴露底层工具
-   * ```
-   */
-  enabledToolsets?: string[];
   /**
    * 额外透传到 API 的请求体字段（优先级最高）。
    * 可用于配置服务商特有参数（如自定义 stop 序列、response_format 等）。
@@ -102,8 +82,6 @@ const aiConfig: AIConfig = {
       model: 'doubao-pro-4k',
       temperature: 0.85,
       maxTokens: 1024,
-      enabledToolsets: ['default'],  // 智能工具集（browser-smart + file-smart + terminal-smart...）
-      systemPrompt: buildSystemPrompt(),
     },
 
     'doubao-coding-plan': {
@@ -117,8 +95,6 @@ const aiConfig: AIConfig = {
       model: 'doubao-seed-2.0-code',  // Coding Plan 支持的模型
       temperature: 0.85,
       maxTokens: 2048,
-      enabledToolsets: ['default'],
-      systemPrompt: buildSystemPrompt(),
     },
 
     'doubao-agent-plan': {
@@ -132,8 +108,6 @@ const aiConfig: AIConfig = {
       model: 'doubao-seed-2.0-code',  // Agent Plan 支持的模型
       temperature: 0.85,
       maxTokens: 2048,
-      enabledToolsets: ['default'],
-      systemPrompt: buildSystemPrompt(),
     },
 
     qwen35: {
@@ -147,8 +121,6 @@ const aiConfig: AIConfig = {
       // Qwen3 系列默认开启 thinking，4B 小模型思考收益有限且占满 max_tokens。
       // vLLM 必须通过 chat_template_kwargs 传递，顶层 enable_thinking 字段会被忽略。
       extraParams: { chat_template_kwargs: { enable_thinking: false } },
-      enabledToolsets: ['default'],  // 智能工具集
-      systemPrompt: buildSystemPrompt(),
     },
 
     // ── 其他服务商预留（填入 apiKey 后修改 activeProvider 切换） ──────────

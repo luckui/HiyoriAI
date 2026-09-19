@@ -40,8 +40,7 @@ export interface ToolsetDefinition {
  *   - smart: 智能交互 Skills（点击/输入）
  *   - nav: 导航辅助（后退/刷新/搜索）
  *
- * ⚠️ 底层原子工具（browser_click, browser_type, sys_mouse_click 等）
- *    永不暴露给 AI，仅供 Skills 内部使用。
+ * ⚠️ sys_mouse_click / sys_key_press 等系统底层工具只在 agent-debug 暴露。
  */
 export const TOOLSETS: Record<string, ToolsetDefinition> = {
   // ═════════════════════════════════════════════════════════════
@@ -190,9 +189,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       // "browser_search",          // 搜索引擎
       
       // Skills（高级能力）
-      // "open_terminal",           // Skill: 打开终端
       "write_file",              // Skill: 写入文件
-      // "check_python_env",        // Skill: 检查 Python 环境
       "manage_tts",              // 🆕 管理本地 TTS 语音合成服务
       "manage_hearing",          // 🆕 管理听觉系统（STT 语音识别）
       "manage_live2d",           // 🆕 控制 Live2D 角色情绪与动作
@@ -261,8 +258,6 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       // "browser_back",
       
       // Skills
-      // "open_terminal",
-      // "check_python_env",
       "manage_tts",              // 🆕 管理本地 TTS 语音合成服务
       "manage_hearing",          // 🆕 管理听觉系统（STT 语音识别）
       "manage_live2d",           // 🆕 控制 Live2D 角色情绪与动作
@@ -408,9 +403,3 @@ export function validateToolset(name: string): boolean {
   return name in TOOLSETS;
 }
 
-/**
- * 获取所有可用的 toolset 名称
- */
-export function getAllToolsets(): string[] {
-  return Object.keys(TOOLSETS);
-}

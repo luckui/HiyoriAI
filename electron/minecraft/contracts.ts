@@ -1,5 +1,3 @@
-export const MINECRAFT_RUNTIME_CONTRACT_VERSION = 1;
-
 export type MinecraftFollowPhase =
   | 'inactive'
   | 'approaching'

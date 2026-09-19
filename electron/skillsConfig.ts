@@ -105,9 +105,3 @@ export function saveSkillsConfig(cfg: SkillsConfig): void {
   setSetting('skills_config', JSON.stringify(cfg));
 }
 
-/**
- * 使缓存失效（用于测试或需要强制重新读取的场景）。
- */
-export function invalidateSkillsConfigCache(): void {
-  _cachedConfig = null;
-}

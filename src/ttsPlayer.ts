@@ -26,93 +26,10 @@ function getLiveModel(): LAppModel | null {
   }
 }
 
-// ── 文本预处理：去除对 TTS 无意义的符号、表情、动作描述 ────────
-
-/** Unicode Emoji：使用 Unicode 属性转义，覆盖所有 emoji（含变体序列和 ZWJ 组合） */
-const RE_EMOJI = /\p{Extended_Pictographic}[\u{FE0F}\u{FE0E}\u{200D}\u{20E3}\p{Extended_Pictographic}]*/gu;
-
-/** 颜文字：由常见颜文字构成字符连续出现 3 个以上，避免误伤正常标点 */
-const RE_KAOMOJI = /[（()）≧≦∇OwO><;:XDd^_=+\-~·°▽○●□■♡♥★☆♪♫◇◆]{3,}/g;
-
-function cleanForTTS(text: string): string {
-  return text
-    // ── 1. 去除各种括号内的动作/表情/旁白描述 ──
-    .replace(/（[^（）]*）/g, '')              // 全角括号：（微笑）
-    .replace(/\([^()]*\)/g, '')               // 半角括号：(smiles)
-    .replace(/【[^【】]*】/g, '')              // 方头括号：【动作】
-    .replace(/「[^「」]*」/g, '')              // 日式引号：「旁白」
-    .replace(/『[^『』]*』/g, '')              // 日式双引号：『心想』
-    .replace(/〈[^〈〉]*〉/g, '')              // 尖括号：〈动作描述〉
-    .replace(/《[^《》]*》/g, '')              // 书名号：《偶尔用作描述》
-
-    // ── 2. 去除星号包裹的动作描述（AI 常用格式） ──
-    .replace(/\*[^*\n]{1,30}\*/g, '')         // *叹了口气* *微笑*（限 30 字防误删段落）
-
-    // ── 3. Markdown 语法 → 纯文本 ──
-    .replace(/\*\*(.+?)\*\*/g, '$1')          // **粗体**
-    .replace(/\*(.+?)\*/g, '$1')              // *斜体*（上一步已删动作，剩余的是格式）
-    .replace(/`{1,3}[\s\S]*?`{1,3}/g, '')    // `代码` / ```代码块```
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // [链接](url) → 保留文字
-    .replace(/^#{1,6}\s/gm, '')              // # 标题
-    .replace(/^[-*+]\s/gm, '')               // 列表符号
-    .replace(/^>\s?/gm, '')                  // 引用符号
-    .replace(/[_~|]/g, '')                   // 剩余 markdown 装饰符
-
-    // ── 4. Emoji + 颜文字 + 特殊符号 → 逗号（避免删除后前后文黏连） ──
-    .replace(RE_EMOJI, '，')                   // 🎉😊 → 逗号分隔
-    .replace(RE_KAOMOJI, '，')                 // ≧∇≦  OwO  ^_^
-    .replace(/[♪♫♬♩★☆✦✧❤♡♥❥◇◆○●□■△▽→←↑↓↔]/g, '') // 散落的装饰符号直接删
-
-    // ── 5. 清理多余逗号和空白 ──
-    .replace(/[，,]{2,}/g, '，')               // 连续多个逗号合并
-    .replace(/([。！？!?…])，/g, '$1')          // 句末标点后的多余逗号
-    .replace(/，([。！？!?…])/g, '$1')          // 句末标点前的多余逗号
-    .replace(/^\s*[，,]\s*/g, '')              // 开头的逗号
-    .replace(/\s*[，,]\s*$/g, '')              // 结尾的逗号
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-// ── 句子切分 ─────────────────────────────────────────────────────
+// ── 句子切分（清洗与切分由 shared/spokenText 负责） ─────────────────
 
 /** 单次并发请求上限，避免短文本产生过多分片 */
 const MAX_SEGMENTS = 8;
-
-/**
- * 按句末标点（。！？!?…）切分句子，保留标点在句尾。
- * 过短的碎片会合并到下一段，切分结果不超过 MAX_SEGMENTS 条。
- *
- * 英文句末 ". "（后接大写字母/汉字）也视为句子边界，但排除 2 字母以内的缩写
- * （Mr. Dr. e.g. i.e. U.S. 等），避免误切。
- */
-function splitSentences(text: string): string[] {
-  // 把英文句末 ". " + 大写 / CJK 规范化为中文句号，便于后续统一切分
-  // \w{3,} 排除 Mr./Dr./e.g. 等缩写（结尾单词 < 3 字符）
-  const normalized = text
-    .replace(/(?<=\w{3,})\.\s+(?=[A-Z\u4e00-\u9fa5\u3040-\u30ff])/g, '。')
-    // 英文 ! / ? 后跟空格 + 大写（避免句号规范化破坏已有感叹/问号切分）
-    .replace(/([!?])\s+(?=[A-Z\u4e00-\u9fa5])/g, '$1 ');
-
-  const raw = normalized.split(/(?<=[。！？!?…]+)\s*/);
-  const result: string[] = [];
-  let buffer = '';
-  for (const part of raw) {
-    buffer += part;
-    // 积累到至少 6 个字符才独立成句，避免切出过短碎片
-    if (buffer.trim().length >= 6) {
-      result.push(buffer.trim());
-      buffer = '';
-    }
-  }
-  if (buffer.trim().length >= 3) result.push(buffer.trim());
-
-  // 超出上限时，把尾部多余项合并成一句
-  if (result.length > MAX_SEGMENTS) {
-    const merged = [...result.slice(0, MAX_SEGMENTS - 1), result.slice(MAX_SEGMENTS - 1).join('')];
-    return merged;
-  }
-  return result.filter(s => s.length > 0);
-}
 
 // ── base64 → ArrayBuffer ─────────────────────────────────────────
 
@@ -315,6 +232,10 @@ async function playTTSNow(text: string, onDuration?: (ms: number, sentenceText?:
   _beatLastTriggerMs = 0;
 
   const sentences = splitSpokenText(cleaned, { maxSegments: MAX_SEGMENTS });
+  if (sentences.length === 0) {
+    console.warn('[TTS] 跳过：没有可朗读的内容（如纯标点“……”）');
+    return;
+  }
   console.log(`[TTS] 切分为 ${sentences.length} 句:`, sentences);
 
   getLiveModel()?.setSpeaking(true);

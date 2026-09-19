@@ -45,33 +45,3 @@ export function createPlatformAdapter(
   }
 }
 
-/**
- * 获取平台显示名称
- */
-export function getPlatformDisplayName(platform: LivePlatform): string {
-  const names: Record<LivePlatform, string> = {
-    bilibili: 'B站直播',
-  };
-  return names[platform] || platform;
-}
-
-/**
- * 验证平台配置
- */
-export function validatePlatformConfig(config: StreamerSessionConfig): string | null {
-  if (!config.roomId || config.roomId <= 0) {
-    return 'Invalid room_id';
-  }
-
-  switch (config.platform) {
-    case 'bilibili':
-      // B站直播间 ID 通常是正整数
-      if (!Number.isInteger(config.roomId)) {
-        return 'Bilibili room_id must be an integer';
-      }
-      return null;
-
-    default:
-      return `Unsupported platform: ${config.platform}`;
-  }
-}

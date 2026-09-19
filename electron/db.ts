@@ -41,8 +41,7 @@ let db: Database.Database;
 
 // ── 初始化 ────────────────────────────────────────────────
 
-export function initDatabase(): void {
-  const dbPath = join(app.getPath('userData'), 'hiyori-chat.db');
+export function initDatabase(dbPath = join(app.getPath('userData'), 'hiyori-chat.db')): void {
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
@@ -466,16 +465,6 @@ export function setMemoryCursor(conversationId: string, cursor: number): void {
 
 // ── 全局核心记忆 ──────────────────────────────────────────
 
-/** 读取全局核心记忆文本（不存在时返回 null）【遗留 API，建议迁移到 getStructuredGlobalMemory】 */
-export function getGlobalMemory(): string | null {
-  return getSetting('global_memory');
-}
-
-/** 更新全局核心记忆文本 */
-export function setGlobalMemory(content: string): void {
-  setSetting('global_memory', content);
-}
-
 /**
  * 读取「某对话已有多少条 memory_fragment 被纳入全局记忆」的游标。
  * 用于防止对同一片段重复精炼。
@@ -514,7 +503,17 @@ export interface DBTask {
   metadata: string | null;      // JSON
 }
 
-export function createTask(task: Omit<DBTask, 'id' | 'created_at' | 'started_at' | 'completed_at' | 'result' | 'error' | 'progress' | 'progress_text'>): DBTask {
+export type NewTask = Omit<DBTask, 'id' | 'created_at' | 'started_at' | 'completed_at' | 'result' | 'error' | 'progress' | 'progress_text'>;
+
+export interface TaskListFilter {
+  status?: TaskStatus;
+  conversationId?: string;
+  parentTaskId?: string;
+  /** 只返回顶层任务（排除批量子任务） */
+  topLevelOnly?: boolean;
+}
+
+function insertTask(task: NewTask, createdAt: number): DBTask {
   const full: DBTask = {
     ...task,
     id: randomUUID(),
@@ -522,7 +521,7 @@ export function createTask(task: Omit<DBTask, 'id' | 'created_at' | 'started_at'
     error: null,
     progress: 0,
     progress_text: null,
-    created_at: Date.now(),
+    created_at: createdAt,
     started_at: null,
     completed_at: null,
   };
@@ -537,21 +536,48 @@ export function createTask(task: Omit<DBTask, 'id' | 'created_at' | 'started_at'
   return full;
 }
 
+export function createTask(task: NewTask): DBTask {
+  return insertTask(task, Date.now());
+}
+
+/** 在同一个事务内批量创建任务：要么全部写入，要么一条都不留 */
+export function createTasks(tasks: NewTask[]): DBTask[] {
+  const createdAt = Date.now();
+  return db.transaction((rows: NewTask[]) => rows.map((row) => insertTask(row, createdAt)))(tasks);
+}
+
+/** 在事务中执行 fn（可嵌套，内部走 SAVEPOINT）；fn 抛错时整体回滚 */
+export function runInTransaction<T>(fn: () => T): T {
+  return db.transaction(fn)();
+}
+
+/** 安全解析 tasks.metadata（JSON）；为空、损坏或不是对象时返回空对象 */
+export function parseTaskMetadata(metadata: string | null): Record<string, unknown> {
+  if (!metadata) return {};
+  try {
+    const parsed = JSON.parse(metadata);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
 export function getTask(taskId: string): DBTask | null {
   return (db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as DBTask) ?? null;
 }
 
-export function listTasks(filter?: { status?: TaskStatus; conversationId?: string; parentTaskId?: string }): DBTask[] {
+export function listTasks(filter?: TaskListFilter): DBTask[] {
   let sql = 'SELECT * FROM tasks WHERE 1=1';
   const params: unknown[] = [];
   if (filter?.status) { sql += ' AND status = ?'; params.push(filter.status); }
   if (filter?.conversationId) { sql += ' AND conversation_id = ?'; params.push(filter.conversationId); }
   if (filter?.parentTaskId) { sql += ' AND parent_task_id = ?'; params.push(filter.parentTaskId); }
+  if (filter?.topLevelOnly) sql += ' AND parent_task_id IS NULL';
   sql += ' ORDER BY created_at DESC';
   return db.prepare(sql).all(...params) as DBTask[];
 }
 
-export function updateTask(taskId: string, updates: Partial<Pick<DBTask, 'status' | 'result' | 'error' | 'progress' | 'progress_text' | 'started_at' | 'completed_at'>>): void {
+export function updateTask(taskId: string, updates: Partial<Pick<DBTask, 'status' | 'result' | 'error' | 'progress' | 'progress_text' | 'started_at' | 'completed_at' | 'metadata'>>): void {
   const sets: string[] = [];
   const params: unknown[] = [];
   for (const [key, val] of Object.entries(updates)) {
@@ -560,10 +586,6 @@ export function updateTask(taskId: string, updates: Partial<Pick<DBTask, 'status
   if (sets.length === 0) return;
   params.push(taskId);
   db.prepare(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`).run(...params);
-}
-
-export function deleteTask(taskId: string): void {
-  db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
 }
 
 // ── 定时调度 CRUD ─────────────────────────────────────────
