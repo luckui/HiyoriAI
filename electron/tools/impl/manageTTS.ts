@@ -8,7 +8,8 @@
 import { BrowserWindow } from 'electron';
 import type { ToolDefinition, ToolExecuteResult } from '../types';
 import * as mgr from '../../ttsServerManager';
-import { getTTSConfig, updateTTSConfig } from '../../main';
+import { getTTSConfig } from '../../config/runtimeConfig';
+import { updateTTSConfig } from '../../ttsRuntime';
 
 type TTSAction = 'status' | 'set_enabled' | 'set_provider';
 

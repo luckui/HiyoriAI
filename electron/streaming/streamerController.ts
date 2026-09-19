@@ -13,7 +13,7 @@
 import { EventEmitter } from 'events';
 import { streamerSession } from './streamerSession';
 import type { StreamerReply } from './types';
-import { playTTSAudio } from '../main';
+import { playTTSAudio } from '../ttsRuntime';
 import { sendLive2DCommand } from '../live2dBridge';
 import aiConfig from '../ai.config';
 import { fetchCompletion } from '../llmClient';
