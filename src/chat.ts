@@ -72,6 +72,7 @@ declare global {
     };
     ttsAPI?: {
       isEnabled(): Promise<boolean>;
+      health(): Promise<{ ok: boolean; error?: string }>;
       speak(text: string): Promise<{ data: string } | null>;
     };
   }
