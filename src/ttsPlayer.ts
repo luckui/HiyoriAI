@@ -11,7 +11,7 @@
 
 import { LAppDelegate } from './lappdelegate';
 import type { LAppModel } from './lappmodel';
-import { shouldShowTypewriterBubble, showTypewriterBubble } from './chat';
+import { shouldShowTypewriterBubble, showTypewriterBubble } from './chat/typewriter';
 import { normalizeSpokenText, splitSpokenText } from '../shared/spokenText';
 import { createTypewriterPlaybackCallback } from './typewriterPlayback';
 import { SerialPlaybackQueue } from './ttsPlaybackQueue';
