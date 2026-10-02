@@ -95,7 +95,7 @@ export class LAppLive2DManager {
   }
 
   /** 半身显示模式（放大聚焦上半身） */
-  private _halfBodyMode = false;
+  private _halfBodyMode = LAppDefine.DefaultHalfBody;
 
   public setHalfBodyMode(half: boolean): void {
     this._halfBodyMode = half;
@@ -126,6 +126,7 @@ export class LAppLive2DManager {
     }
 
     if (model) {
+      model.setPoseTranslation(this._halfBodyMode);
       model.update();
       model.draw(projection);
     }

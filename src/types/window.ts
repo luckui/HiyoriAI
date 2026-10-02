@@ -2,10 +2,8 @@
 import type { PreloadApis } from '../../shared/preloadApi';
 
 declare global {
-  interface Window extends PreloadApis {
-    /** TTS 播放器写入的实时口型开合度（0–1），Live2D 模型每帧读取 */
-    _live2dMouthOpen?: number;
-  }
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+  interface Window extends PreloadApis {}
 }
 
 export {};

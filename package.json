@@ -120,7 +120,6 @@
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@larksuiteoapi/node-sdk": "^1.71.1",
-    "@nekopaw/tempora": "^0.4.0-alpha.1",
     "@nut-tree-fork/nut-js": "^4.2.6",
     "@openai/codex": "^0.146.0",
     "@types/qrcode": "^1.5.6",

@@ -43,6 +43,7 @@ import { TextureInfo } from './lapptexturemanager';
 import { LAppWavFileHandler } from './lappwavfilehandler';
 import { CubismMoc } from '@framework/model/cubismmoc';
 import { LAppSubdelegate } from './lappsubdelegate';
+import { BODY_PARAMS, FACE_PARAMS, PARAM_ALIASES, PROGRAM_OWNED_PARAMS, liveliness, type Pose, type PoseParam } from './liveliness/motor';
 
 // ── 情绪预设参数表（Hiyori_pro 无 exp3，用直接参数注入实现情绪）──────────────
 // 参数来源：hiyori_pro_t11.cdi3.json 确认存在的参数 ID
@@ -168,53 +169,6 @@ export const EMOTION_DURATION_MS: Record<string, number> = {
   shy:         6000,
   embarrassed: 6000,
   neutral:     0,     // 永久
-};
-
-// ── Beat-Sync 弹簧物理（移植自 airi-main beat-sync.ts）─────────────────────
-// ── Beat-Sync 弹簧物理（精确复刻 airi-main）────────────────────────────────
-// 原理：pre-stage 运行，读模型参数当前值作为弹簧位置，驱动到 beat 目标，
-//       用 setParameterValueById 绝对覆写。随后 motion add 在上面叠加。
-//       弹簧会「对抗」motion 的拉力，最终收敛使 finalAngleY ≈ beatTarget，
-//       与 motion 幅度无关。stiffness=120 / damping=16 与 airi-main 一致。
-// 轴：AngleY（左右转头，节拍感最强）+ AngleZ（头部侧倾，立体感）
-interface BeatSyncState {
-  targetY:   number;   // 当前分段目标（绝对值，如 ±10）
-  targetZ:   number;
-  velocityX: number;   // AngleX 弹簧速度（目标始终为 0，起稳定器作用，与 airi 一致）
-  velocityY: number;   // 弹簧速度（spring pos 直接从模型读，不单独存储）
-  velocityZ: number;
-  primed:    boolean;
-  lastBeatMs: number;
-  segments:  BeatSegment[];
-  topSide:   'left' | 'right';
-  patternStarted: boolean;
-  style:     BeatStyleName;
-  avgIntervalMs: number | null;
-}
-
-interface BeatSegment {
-  startMs:  number;
-  duration: number;
-  fromY: number; fromZ: number;
-  toY:   number; toZ:   number;
-}
-
-type BeatStyleName = 'punchy-v' | 'balanced-v' | 'swing-lr' | 'sway-sine';
-
-interface BeatStyleConfig {
-  topYaw:    number;   // AngleY 幅度（左右转头，绝对值，如 10 → 目标 ±10）
-  topRoll:   number;   // AngleZ 幅度（头部侧倾）
-  bottomDip: number;   // V 型底部 AngleZ 下沉量
-  swingLift?: number;
-  pattern:   'v' | 'swing' | 'sway';
-}
-
-// 与 airi-main defaultStyles 完全一致
-const BEAT_STYLES: Record<BeatStyleName, BeatStyleConfig> = {
-  'punchy-v':   { topYaw: 10, topRoll: 8,  bottomDip: 4, pattern: 'v'     },
-  'balanced-v': { topYaw: 6,  topRoll: 0,  bottomDip: 6, pattern: 'v'     },
-  'swing-lr':   { topYaw: 8,  topRoll: 0,  bottomDip: 6, swingLift: 8,  pattern: 'swing' },
-  'sway-sine':  { topYaw: 10, topRoll: 0,  bottomDip: 0, swingLift: 10, pattern: 'sway'  },
 };
 
 enum LoadStep {
@@ -705,18 +659,11 @@ export class LAppModel extends CubismUserModel {
 
     this._model.loadParameters(); // 前回セーブされた状態をロード
 
-    // ── Beat-Sync PRE-STAGE（与 airi useMotionUpdatePluginBeatSync 完全一致）
-    // 在 motion 运行之前：读模型当前参数值→弹簧积分→setParameterValueById 绝对覆写。
-    // motion 随后叠加其曲线；弹簧通过对抗 motion 的拉力，使最终角度收敛到 beatTarget。
-    this._updateBeatSync(deltaTimeSeconds);
-
     if (this._motionManager.isFinished()) {
       // ── 各状态下选择下一个动作 ─────────────────────────────────────────
       switch (this._avatarState) {
         case AvatarState.SPEAKING: {
-          // 与 airi 完全一致：说话时继续循环 Idle，为身体提供自然动态基线。
-          // beat-sync pre-stage 已经驱动头部节拍，motion 和 beat-sync 天然共存——
-          // motion 添加曲线值，beat-sync 弹簧对抗后收敛到 beatTarget，互不干扰。
+          // 说话时继续循环 Idle 作为身体的动态基线，说话的细节动作由灵动层叠加
           this.startRandomMotion(this._idleGroup, LAppDefine.PriorityIdle);
           break;
         }
@@ -750,6 +697,11 @@ export class LAppModel extends CubismUserModel {
     }
     this._model.saveParameters(); // 状態を保存
     //--------------------------------------------------------------------------
+
+    // 灵动层（音乐律动、说话动作、视线）。律动起来时先从待机动画手里接过头和躯干，
+    // 之后眨眼、表情、鼠标跟随、呼吸照常叠加
+    const pose = liveliness.update(deltaTimeSeconds, performance.now());
+    this._yieldToProgram(pose.authority);
 
     // まばたき
     if (!motionUpdated) {
@@ -787,7 +739,10 @@ export class LAppModel extends CubismUserModel {
       this._breath.updateParameters(this._model, deltaTimeSeconds);
     }
 
-    // ── Beat-Sync：已在 loadParameters 之后的 pre-stage 完成，此处无需重复 ──
+    // 灵动层的头和身体在物理之前叠加：头发、衣服会被带着甩起来
+    this._applyPose(pose, BODY_PARAMS);
+    this._poseOffsetX = pose.offsetX;
+    this._poseOffsetY = pose.offsetY;
 
     // 物理演算の設定
     if (this._physics != null) {
@@ -798,12 +753,9 @@ export class LAppModel extends CubismUserModel {
     if (this._lipsync) {
       let value = 0.0;
 
-      // 外部 WebAudio RMS（TTS リアルタイム口型）が利用可能なら優先使用
-      const externalMouth = window._live2dMouthOpen;
-      if (typeof externalMouth === 'number' && externalMouth > 0) {
-        value = externalMouth;
-        // TTS 播放时用 set（覆盖）：确保 TTS 完全接管嘴巴控制权，
-        // 防止动作动画的嘴巴曲线叠加导致口型异常（参考 airi-main 的分层设计）
+      if (pose.mouthOpen !== null) {
+        value = pose.mouthOpen;
+        // TTS 播放时用 set（覆盖）：说话完全接管嘴巴，动作曲线里的口型不再叠加
         for (let i = 0; i < this._lipSyncIds.getSize(); ++i) {
           this._model.setParameterValueById(this._lipSyncIds.at(i), value);
         }
@@ -824,6 +776,9 @@ export class LAppModel extends CubismUserModel {
 
     // 情绪参数过渡（直接参数控制，用于无 exp3 文件的模型）
     this._updateEmotionTransition(deltaTimeSeconds);
+
+    // 灵动层的眉眼在表情之后叠加：表情定住的脸上也还有挑眉、眯眼这些细节
+    this._applyPose(pose, FACE_PARAMS);
 
     this._model.update();
   }
@@ -960,181 +915,62 @@ export class LAppModel extends CubismUserModel {
   private static readonly BORED_THRESHOLD_SEC = 60;
   /** POST_SPEAK 余韵时长：2 秒 */
   private static readonly POST_SPEAK_LINGER_SEC = 2;
-  // ── Beat-Sync 状态（弹簧物理，移植自 airi-main）──────────────────────────
+  // ── 灵动层的落地：把归一化偏移换算成本模型的参数值 ─────────────────────
 
-  private _beatSync: BeatSyncState = {
-    targetY: 0, targetZ: 0,
-    velocityX: 0, velocityY: 0, velocityZ: 0,
-    primed: false, lastBeatMs: 0, segments: [],
-    topSide: 'left', patternStarted: false,
-    style: 'punchy-v', avgIntervalMs: null,
-  };
+  private _poseParamInfo = new Map<PoseParam, { index: number; halfRange: number; defaultValue: number } | null>();
+  private _poseOffsetX = 0;
+  private _poseOffsetY = 0;
+  /** 随拍的整体平移只在半身构图用：全身时脚也离地，像在原地跳 */
+  private _poseTranslation = false;
 
-  /**
-   * 接收外部 beat 信号（每检测到一次节拍时调用）。
-   * 由 chat.ts / ttsPlayer.ts 在 TTS 播放时按 RMS 峰值触发。
-   * 参考 airi-main BeatSyncController.scheduleBeat()。
-   */
-  public scheduleBeat(timestampMs?: number): void {
-    const now = timestampMs != null ? timestampMs : performance.now();
-    const bs = this._beatSync;
+  public setPoseTranslation(enabled: boolean): void {
+    this._poseTranslation = enabled;
+  }
 
-    if (!bs.primed) {
-      bs.primed = true;
-      bs.lastBeatMs = now;
-      bs.targetY = 0; bs.targetZ = 0;
-      return;
+  /** 本模型对应参数的下标、半幅和默认值；先找标准名再找别名，都没有就是 null（跳过） */
+  private _poseParam(id: PoseParam) {
+    let info = this._poseParamInfo.get(id);
+    if (info !== undefined) return info;
+    info = null;
+    for (const name of [id, ...(PARAM_ALIASES[id] ?? [])]) {
+      const index = this._model.getParameterIndex(CubismFramework.getIdManager().getId(name));
+      if (index >= this._model.getParameterCount()) continue;
+      const min = this._model.getParameterMinimumValue(index);
+      const max = this._model.getParameterMaximumValue(index);
+      info = { index, halfRange: (max - min) / 2, defaultValue: this._model.getParameterDefaultValue(index) };
+      break;
     }
+    this._poseParamInfo.set(id, info);
+    return info;
+  }
 
-    const rawInterval = now - bs.lastBeatMs;
-    const interval = Math.min(2000, Math.max(220, rawInterval));
-    bs.lastBeatMs = now;
-    bs.avgIntervalMs = bs.avgIntervalMs == null
-      ? interval
-      : bs.avgIntervalMs * 0.7 + interval * 0.3;
-
-    // BPM 自动切换风格（与 airi autoStyleShift 一致）
-    const bpm = 60000 / bs.avgIntervalMs;
-    bs.style = bpm < 120 ? 'swing-lr' : bpm < 180 ? 'balanced-v' : 'punchy-v';
-
-    const halfDur = Math.max(80, interval / 2);
-    const startY  = bs.targetY;
-    const startZ  = bs.targetZ;
-    const sc = BEAT_STYLES[bs.style];
-    const nextSide: 'left' | 'right' = bs.topSide === 'left' ? 'right' : 'left';
-
-    bs.segments = [];
-
-    // pose 生成与 airi getTopPose / getBottomPose 完全对应
-    const getTopPose = (side: 'left' | 'right') => {
-      const dir = side === 'left' ? -1 : 1;
-      const zOff = (sc.pattern === 'swing' || sc.pattern === 'sway')
-        ? (sc.swingLift ?? sc.topRoll) : sc.topRoll;
-      return {
-        y: dir * sc.topYaw,
-        z: sc.pattern === 'v' ? dir * zOff : zOff,
-      };
-    };
-    const bottomPose = { y: 0, z: -sc.bottomDip };
-
-    const push = (sMs: number, dur: number, fY: number, fZ: number, tY: number, tZ: number) =>
-      bs.segments.push({ startMs: sMs, duration: dur, fromY: fY, fromZ: fZ, toY: tY, toZ: tZ });
-
-    if (sc.pattern === 'v') {
-      if (!bs.patternStarted) {
-        const top = getTopPose('left');
-        push(now, halfDur, startY, startZ, top.y, top.z);
-        bs.patternStarted = true; bs.topSide = 'left'; return;
-      }
-      const nextTop = getTopPose(nextSide);
-      push(now,           halfDur, startY,       startZ,       bottomPose.y, bottomPose.z);
-      push(now + halfDur, halfDur, bottomPose.y, bottomPose.z, nextTop.y,    nextTop.z);
-      bs.topSide = nextSide;
-    } else if (sc.pattern === 'swing') {
-      const sidePose = getTopPose(bs.topSide);
-      const oppPose  = getTopPose(nextSide);
-      const sideDur  = Math.max(60, interval * 0.35);
-      const crossDur = Math.max(60, interval - sideDur);
-      push(now,           sideDur,  startY,      startZ,      sidePose.y, sidePose.z);
-      push(now + sideDur, crossDur, sidePose.y,  sidePose.z,  oppPose.y,  oppPose.z);
-      bs.patternStarted = true; bs.topSide = nextSide;
-    } else { // sway
-      if (!bs.patternStarted) {
-        const side = getTopPose(bs.topSide);
-        push(now, halfDur, startY, startZ, side.y, side.z);
-        bs.patternStarted = true; return;
-      }
-      const lift    = sc.swingLift ?? 10;
-      const apex    = { y: 0, z: lift };
-      const oppPose = getTopPose(nextSide);
-      const leg1 = Math.max(60, interval * 0.5);
-      const leg2 = Math.max(60, interval - leg1);
-      push(now,       leg1, startY,  startZ,  apex.y,    apex.z);
-      push(now + leg1, leg2, apex.y, apex.z,  oppPose.y, oppPose.z);
-      bs.topSide = nextSide;
+  private _applyPose(pose: Pose, ids: readonly PoseParam[]): void {
+    for (const id of ids) {
+      const value = pose.params[id];
+      if (!value) continue;
+      const info = this._poseParam(id);
+      if (info) this._model.addParameterValueByIndex(info.index, value * info.halfRange);
     }
   }
 
-  private _updateBeatSync(dtSec: number): void {
-    if (!this._model) return;
-    const bs  = this._beatSync;
-    const now = performance.now();
-    const RELEASE_DELAY_MS = 1800;
-    const STIFFNESS = 120;
-    const DAMPING   = 16;
-
-    // ── 按时间线推进分段目标（绝对值，与 airi updateTargets 一致）────────
-    let cY = bs.targetY, cZ = bs.targetZ;
-    while (bs.segments.length) {
-      const seg = bs.segments[0];
-      if (now < seg.startMs) { cY = seg.fromY; cZ = seg.fromZ; break; }
-      const progress = Math.min(1, (now - seg.startMs) / Math.max(seg.duration, 1));
-      const t = 1 - Math.pow(1 - progress, 3); // easeOutCubic
-      cY = seg.fromY + (seg.toY - seg.fromY) * t;
-      cZ = seg.fromZ + (seg.toZ - seg.fromZ) * t;
-      if (progress >= 1) { bs.segments.shift(); continue; }
-      break;
+  /**
+   * 控制权交接：待机动画在头和躯干上的偏移按 authority 收回到默认姿势，
+   * 律动由程序完整驱动，不再和动画里节奏无关的转头、晃身打架。
+   * 在 saveParameters 之后做，不写回动画的状态，音乐停了动画原样接回来
+   */
+  private _yieldToProgram(authority: number): void {
+    if (authority <= 0) return;
+    for (const id of PROGRAM_OWNED_PARAMS) {
+      const info = this._poseParam(id);
+      if (!info) continue;
+      const value = this._model.getParameterValueByIndex(info.index);
+      this._model.setParameterValueByIndex(info.index, info.defaultValue + (value - info.defaultValue) * (1 - authority));
     }
-
-    // 超时释放（与 airi shouldRelease 一致）
-    if (bs.primed && !bs.segments.length && (now - bs.lastBeatMs) > RELEASE_DELAY_MS) {
-      bs.primed = false; bs.patternStarted = false; bs.topSide = 'left';
-      bs.lastBeatMs = 0; cY = 0; cZ = 0;
-      bs.velocityY *= 0.5; bs.velocityZ *= 0.5;
-    }
-    bs.targetY = cY; bs.targetZ = cZ;
-
-    // ── 半隐式欧拉弹簧积分（精确复刻 airi useMotionUpdatePluginBeatSync）──
-    // 关键：直接读模型当前参数值（loadParameters 之后的值）作为弹簧位置，
-    //       与 airi 的 getParameterValueById 语义完全一致。
-    // 弹簧会"对抗" motion 叠加的拉力，最终使 finalAngle ≈ beatTarget，
-    // 与 motion 幅度无关——这是 pre-stage set 的核心优势。
-    // ── 精确复刻 airi useMotionUpdatePluginBeatSync（三轴）────────────────
-    // 读 loadParameters 之后的当前帧参数值作为弹簧 pos（与 airi getParameterValueById 语义一致）
-    let paramX = this._model.getParameterValueById(this._idParamAngleX);
-    let paramY = this._model.getParameterValueById(this._idParamAngleY);
-    let paramZ = this._model.getParameterValueById(this._idParamAngleZ);
-
-    // X 轴：targetX 始终为 0（与 airi 完全一致），弹簧将 idle motion 带来的 X 偏移拉回中轴，
-    //       起到「稳定器」作用，减少头部左右漂移，让节拍感更聚焦在 Y/Z。
-    {
-      const target = 0; // airi: beatSync.targetX.value = 0，恒为 0
-      const accel = (STIFFNESS * (target - paramX) - DAMPING * bs.velocityX);
-      bs.velocityX += accel * dtSec;
-      paramX = paramX + bs.velocityX * dtSec;
-      if (Math.abs(target - paramX) < 0.01 && Math.abs(bs.velocityX) < 0.01) {
-        paramX = target; bs.velocityX = 0;
-      }
-    }
-    // Y 轴
-    {
-      const accel = (STIFFNESS * (bs.targetY - paramY) - DAMPING * bs.velocityY);
-      bs.velocityY += accel * dtSec;
-      paramY = paramY + bs.velocityY * dtSec;
-      if (Math.abs(bs.targetY - paramY) < 0.01 && Math.abs(bs.velocityY) < 0.01) {
-        paramY = bs.targetY; bs.velocityY = 0;
-      }
-    }
-    // Z 轴
-    {
-      const accel = (STIFFNESS * (bs.targetZ - paramZ) - DAMPING * bs.velocityZ);
-      bs.velocityZ += accel * dtSec;
-      paramZ = paramZ + bs.velocityZ * dtSec;
-      if (Math.abs(bs.targetZ - paramZ) < 0.01 && Math.abs(bs.velocityZ) < 0.01) {
-        paramZ = bs.targetZ; bs.velocityZ = 0;
-      }
-    }
-
-    // 绝对覆写（与 airi setParameterValueById 完全一致，三轴同步写入）
-    // motion 在本函数之后运行，会在此基础上叠加其曲线值
-    this._model.setParameterValueById(this._idParamAngleX, paramX);
-    this._model.setParameterValueById(this._idParamAngleY, paramY);
-    this._model.setParameterValueById(this._idParamAngleZ, paramZ);
   }
 
   /**
    * 设置 TTS 讲话状态（状态机版本）。
-   * - true  → 进入 SPEAKING，立即打断 Idle 播放 Tap 动作，激活 beat-sync
+   * - true  → 进入 SPEAKING，立即打断 Idle 播放 Tap 动作
    * - false → 进入 POST_SPEAK，2 s 后自动回 IDLE_CALM，表情淡出
    */
   public setSpeaking(speaking: boolean): void {
@@ -1142,12 +978,6 @@ export class LAppModel extends CubismUserModel {
       if (this._avatarState === AvatarState.SPEAKING) return;
       this._avatarState = AvatarState.SPEAKING;
       this._avatarIdleElapsedSec = 0; // 重置 bored 计时器
-      // 重置 beat-sync 状态（velocity 归零，弹簧从模型当前值静止开始）
-      this._beatSync.primed = false;
-      this._beatSync.patternStarted = false;
-      this._beatSync.segments = [];
-      this._beatSync.targetY = 0; this._beatSync.targetZ = 0;
-      this._beatSync.velocityX = 0; this._beatSync.velocityY = 0; this._beatSync.velocityZ = 0;
       // 立即打断 Idle，产生「开口说话」的视觉信号（直接用 Tap 开场）
       this.startRandomMotion('Tap', LAppDefine.PriorityNormal);
     } else {
@@ -1157,8 +987,6 @@ export class LAppModel extends CubismUserModel {
       ) return;
       this._avatarState = AvatarState.POST_SPEAK;
       this._postSpeakElapsedSec = 0;
-      // beat-sync 释放（下一帧自然超时处理）
-      this._beatSync.lastBeatMs = 0;
     }
   }
 
@@ -1481,6 +1309,10 @@ export class LAppModel extends CubismUserModel {
     // 各読み込み終了後
     if (this._state == LoadStep.CompleteSetup) {
       matrix.multiplyByMatrix(this._modelMatrix);
+      // 随拍起伏：平移整个模型，不依赖模型有没有对应参数（只在半身构图）
+      if (this._poseTranslation && (this._poseOffsetX || this._poseOffsetY)) {
+        matrix.translateRelative(this._poseOffsetX, this._poseOffsetY);
+      }
 
       this.getRenderer().setMvpMatrix(matrix);
 

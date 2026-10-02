@@ -1,46 +1,42 @@
 /**
- * Beat Detector — 系统音频节拍检测，驱动 Live2D 模型随音乐弹动
+ * 系统音频监听：给灵动层送两样东西，让模型跟着电脑上放的音乐动
+ *   - 音量：每帧的 RMS，决定律动幅度（主歌轻、副歌重）
+ *   - 鼓点：频谱通量检测出的 onset，喂给节拍时钟推算速度和相位
  *
- * 架构与 airi-main 完全对齐：
- *   getDisplayMedia() → createMediaStreamSource()
- *   → @nekopaw/tempora AudioWorklet（能量历史法 onset 检测）
- *   → scheduleBeat() → BeatSyncState 弹簧物理 → AngleX / BodyAngleX
+ *   getDisplayMedia(loopback) → MediaStreamSource → AnalyserNode
+ *     → 每帧：时域 RMS → liveliness.setMusicLevel
+ *             dB 频谱 → OnsetDetector → liveliness.onMusicOnset
  *
  * 不与 hearing.ts 共用任何状态，完全独立的 AudioContext。
  * 自动启动：页面加载后立即尝试；若需要用户手势，则在首次点击时重试。
  */
 
-import { startAnalyser } from '@nekopaw/tempora';
-import workletUrl from '@nekopaw/tempora/worklet?url';
-import { LAppDelegate } from './lappdelegate';
+import { liveliness } from './liveliness/motor';
+import { rmsOfByteTimeDomain } from './liveliness/dynamics';
+import { OnsetDetector } from './liveliness/onsetDetector';
 
-// ── 获取当前 Live2D 模型实例 ────────────────────────────────────────
-function getLiveModel() {
-  try {
-    return LAppDelegate.getInstance().getFirstSubdelegate()?.getLive2DManager().getFirstModel() ?? null;
-  } catch {
-    return null;
-  }
-}
+/** 1024 点 @48kHz ≈ 21 ms 窗口、47 Hz 一个频点：底鼓能分出来，时间又不至于糊 */
+const FFT_SIZE = 1024;
 
-// ── 内部状态 ────────────────────────────────────────────────────────
 let _active = false;
 let _audioCtx: AudioContext | undefined;
 let _stream: MediaStream | undefined;
+let _rafId: number | null = null;
 let _startAttempted = false;
 
-// ── 停止 ────────────────────────────────────────────────────────────
 function stop(): void {
   if (!_active) return;
   _active = false;
+  if (_rafId !== null) cancelAnimationFrame(_rafId);
+  _rafId = null;
   try { _stream?.getTracks().forEach(t => t.stop()); } catch { /* noop */ }
-  try { _audioCtx?.close(); } catch { /* noop */ }
+  try { void _audioCtx?.close(); } catch { /* noop */ }
   _stream = undefined;
   _audioCtx = undefined;
+  liveliness.setMusicLevel(0);
   console.log('[BeatDetector] 已停止');
 }
 
-// ── 启动 ────────────────────────────────────────────────────────────
 async function start(): Promise<void> {
   if (_active) return;
 
@@ -68,46 +64,31 @@ async function start(): Promise<void> {
     console.warn('[BeatDetector] 未获取到系统音频轨道（请在分享时勾选"共享系统音频"）');
     return;
   }
-
   const audioStream = new MediaStream(audioTracks);
 
-  // 创建独立 AudioContext + tempora analyser
   const ctx = new AudioContext();
-  let analyser: Awaited<ReturnType<typeof startAnalyser>>;
-  try {
-    analyser = await startAnalyser({
-      context: ctx,
-      worklet: workletUrl,
-      workletParams: {
-        sensitivity: 0.7,
-        minBeatInterval: 0.2,        // 最小节拍间隔 200ms = 300 BPM 上限
-        lowpassFilterFrequency: 200,  // 低通，降低人声，突出鼓声
-        highpassFilterFrequency: 30,
-        adaptiveThreshold: true,
-        spectralFlux: true,
-      },
-      listeners: {
-        onBeat: (e) => {
-          // 直接调用 scheduleBeat，与 airi signal chain 完全对等
-          getLiveModel()?.scheduleBeat(performance.now());
-          console.log(`[BeatDetector] ♪ energy=${e.energy.toFixed(3)} interval=${e.interval.toFixed(0)}ms`);
-        },
-      },
-    });
-  } catch (err) {
-    console.error('[BeatDetector] tempora analyser 启动失败:', err);
-    ctx.close();
-    audioStream.getTracks().forEach(t => t.stop());
-    return;
-  }
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = FFT_SIZE;
+  // 默认 0.8 的频谱平滑会把鼓点的瞬态抹平，检测 onset 必须关掉
+  analyser.smoothingTimeConstant = 0;
+  ctx.createMediaStreamSource(audioStream).connect(analyser);
 
-  // 音频路由：source → analyser.workletNode
-  const source = ctx.createMediaStreamSource(audioStream);
-  source.connect(analyser.workletNode);
+  const samples = new Uint8Array(FFT_SIZE);
+  const spectrum = new Float32Array(analyser.frequencyBinCount);
+  const detector = new OnsetDetector(ctx.sampleRate / FFT_SIZE);
+  const tick = (): void => {
+    analyser.getByteTimeDomainData(samples);
+    liveliness.setMusicLevel(rmsOfByteTimeDomain(samples));
+    analyser.getFloatFrequencyData(spectrum);
+    const onset = detector.push(spectrum, performance.now());
+    if (onset) liveliness.onMusicOnset(onset.timeMs, onset.strength);
+    _rafId = requestAnimationFrame(tick);
+  };
 
   _active = true;
   _audioCtx = ctx;
   _stream = audioStream;
+  _rafId = requestAnimationFrame(tick);
 
   // 音频轨道结束（用户停止共享）→ 自动停止
   audioTracks.forEach(track => {
@@ -121,7 +102,6 @@ async function start(): Promise<void> {
   console.log('[BeatDetector] 音频轨道:', audioTracks[0].label);
 }
 
-// ── 自动启动逻辑 ─────────────────────────────────────────────────────
 /**
  * 在 main.ts 的 DOMContentLoaded 中调用。
  * Electron 的 setDisplayMediaRequestHandler 已处理权限，
@@ -151,4 +131,3 @@ export function initBeatDetector(): void {
     window.addEventListener('load', () => setTimeout(tryStart, 500), { once: true });
   }
 }
-

@@ -13,6 +13,7 @@
 
 import { initLive2DController } from '../live2dController';
 import { LAppDelegate } from '../lappdelegate';
+import * as LAppDefine from '../lappdefine';
 import { initAvatarStudio } from '../avatarStudio';
 import {
   applyInitialLayout,
@@ -41,7 +42,9 @@ function initHeaderButtons(): void {
   });
 
   // 半身/全身切换：只改变 Live2D 渲染，窗口与 canvas 尺寸不变
-  let halfBody = false;
+  let halfBody = LAppDefine.DefaultHalfBody;
+  const viewModeIcon = document.getElementById('view-mode-icon');
+  if (viewModeIcon) viewModeIcon.textContent = halfBody ? '半' : '全';
   document.getElementById('view-mode-btn')?.addEventListener('click', (e) => {
     e.stopPropagation();
     halfBody = !halfBody;

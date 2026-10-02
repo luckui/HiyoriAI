@@ -19,6 +19,9 @@ export const ViewLogicalMaxRight = 2.0;
 export const ViewLogicalMaxBottom = -2.0;
 export const ViewLogicalMaxTop = 2.0;
 
+/** 启动时用半身构图：桌宠/主播式的近景，随音乐的起伏也只在半身时才自然 */
+export const DefaultHalfBody = true;
+
 // 资源路径（Vite publicDir = public/，里面有 Resources/ Junction）
 // 打包后由 src/main.ts 动态覆盖为 file:// 绝对路径
 export let ResourcesPath = '/Resources/';

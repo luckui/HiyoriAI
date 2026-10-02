@@ -15,6 +15,8 @@ import { shouldShowTypewriterBubble, showTypewriterBubble } from './chat/typewri
 import { normalizeSpokenText, splitSpokenText } from '../shared/spokenText';
 import { createTypewriterPlaybackCallback } from './typewriterPlayback';
 import { SerialPlaybackQueue } from './ttsPlaybackQueue';
+import { liveliness } from './liveliness/motor';
+import { rmsOfByteTimeDomain } from './liveliness/dynamics';
 
 // ── 获取当前 Live2D 模型实例 ───────────────────────────────────────
 
@@ -49,7 +51,7 @@ let _nextPlaybackId = 0;
 
 type TtsAPI = Window['ttsAPI'];
 
-// ── WebAudio 共享 AudioContext + 实时口型 ─────────────────────────
+// ── WebAudio 共享 AudioContext + 实时音量 ─────────────────────────
 
 let _audioCtx: AudioContext | null = null;
 let _rafId: number | null = null;
@@ -61,28 +63,18 @@ function getAudioContext(): AudioContext {
   return _audioCtx;
 }
 
-function stopLipSync(): void {
+function stopLevelMeter(): void {
   if (_rafId !== null) {
     cancelAnimationFrame(_rafId);
     _rafId = null;
   }
-  window._live2dMouthOpen = 0;
+  liveliness.setSpeechLevel(0);
 }
 
 /**
- * 通过 WebAudio AnalyserNode 播放 AudioBuffer，同时实时驱动 Live2D 口型 + beat-sync。
- * 返回 Promise，在音频播放结束时 resolve。
+ * 播放一句，同时每帧把音量送给灵动层（口型、重读时点头挑眉都从这里来）。
+ * 在音频播放结束时 resolve。
  */
-
-/** beat-sync 峰值检测状态（模块级，跨句子保持连续性） */
-let _beatLastRms = 0;
-let _beatLastTriggerMs = 0;
-
-// RMS 升沿触发阈值：口型用 rms*10，即 rms=0.05 → 嘴开 50%。
-// 阈值必须远低于 0.1，否则 TTS 音频振幅不够时永远触发不了 beat。
-const BEAT_PEAK_THRESHOLD = 0.04;
-const BEAT_MIN_INTERVAL_MS = 220;  // 最小节拍间隔（ms），与 airi-main scheduleBeat 一致
-
 function playBufferWithLipSync(audioBuffer: AudioBuffer): Promise<void> {
   return new Promise<void>((resolve) => {
     const ctx = getAudioContext();
@@ -99,36 +91,14 @@ function playBufferWithLipSync(audioBuffer: AudioBuffer): Promise<void> {
       source.connect(analyser);
       analyser.connect(ctx.destination);
 
-      // 实时读取 RMS：① 驱动口型 ② 峰值检测驱动 beat-sync
       const loop = (): void => {
         analyser.getByteTimeDomainData(dataArray);
-        let sumSq = 0;
-        for (let i = 0; i < dataArray.length; i++) {
-          const norm = (dataArray[i] - 128) / 128; // [-1, 1]
-          sumSq += norm * norm;
-        }
-        const rms = Math.sqrt(sumSq / dataArray.length);
-        // 放大并钳制到 [0, 1]，中文 TTS 音频振幅偶尔较小，提高系数确保口型明显
-        window._live2dMouthOpen = Math.min(1, rms * 10);
-
-        const now = performance.now();
-
-        // ── beat-sync 峰值检测（RMS 升沿触发）────────────────────────────
-        if (
-          rms > BEAT_PEAK_THRESHOLD &&
-          _beatLastRms <= BEAT_PEAK_THRESHOLD &&
-          now - _beatLastTriggerMs >= BEAT_MIN_INTERVAL_MS
-        ) {
-          _beatLastTriggerMs = now;
-          getLiveModel()?.scheduleBeat(now);
-        }
-        _beatLastRms = rms;
-
+        liveliness.setSpeechLevel(rmsOfByteTimeDomain(dataArray));
         _rafId = requestAnimationFrame(loop);
       };
 
       source.onended = () => {
-        stopLipSync();
+        stopLevelMeter();
         resolve();
       };
 
@@ -201,10 +171,7 @@ async function playTTSNow(text: string, onDuration?: (ms: number, sentenceText?:
   const model = getLiveModel();
   model?._wavFileHandler.stop();
   model?.setSpeaking(false);
-  stopLipSync();
-  // 重置 beat-sync 诊断计数器
-  _beatLastRms = 0;
-  _beatLastTriggerMs = 0;
+  stopLevelMeter();
 
   const sentences = splitSpokenText(cleaned, { maxSegments: MAX_SEGMENTS });
   if (sentences.length === 0) {
@@ -226,40 +193,46 @@ async function playTTSNow(text: string, onDuration?: (ms: number, sentenceText?:
   //   3. 不会因为等待某一句超时导致整轮静默
   let prefetch: Promise<AudioBuffer | null> | null = null;
 
-  for (let i = 0; i < sentences.length; i++) {
-    // 使用上一轮已预取的 Promise，或现在才发请求
-    const fetchNow = prefetch ?? _fetchAndDecode(ttsAPI, sentences[i], audioCtx);
-    prefetch = null;
+  try {
+    for (let i = 0; i < sentences.length; i++) {
+      // 使用上一轮已预取的 Promise，或现在才发请求
+      const fetchNow = prefetch ?? _fetchAndDecode(ttsAPI, sentences[i], audioCtx);
+      prefetch = null;
 
-    // 立即开始预取下一句（与当前句推理并行，降低感知延迟）
-    if (i + 1 < sentences.length) {
-      prefetch = _fetchAndDecode(ttsAPI, sentences[i + 1], audioCtx);
+      // 立即开始预取下一句（与当前句推理并行，降低感知延迟）
+      if (i + 1 < sentences.length) {
+        prefetch = _fetchAndDecode(ttsAPI, sentences[i + 1], audioCtx);
+      }
+
+      const audioBuffer = await fetchNow;
+
+      if (!audioBuffer) {
+        console.warn(`[TTS] 第 ${i + 1} 句 buffer 为空，跳过`);
+        continue;
+      }
+
+      // 每句播放前通知当句文本+实际音频时长，让气泡与口型严格对齐
+      onDuration?.(Math.round(audioBuffer.duration * 1000), sentences[i]);
+      anyPlayed = true;
+
+      console.log(`[TTS] 第 ${i + 1}/${sentences.length} 句开始播放，时长: ${audioBuffer.duration.toFixed(2)}s`);
+      // 从真正出声开始算「在说话」：等第一句合成的那几秒里，该听歌还听歌
+      liveliness.setSpeaking(true);
+
+      try {
+        await playBufferWithLipSync(audioBuffer);
+      } catch (e) {
+        console.warn(`[TTS] 第 ${i + 1} 句 WebAudio 播放失败:`, e);
+      }
+
+      console.log(`[TTS] 第 ${i + 1} 句播放完毕`);
     }
-
-    const audioBuffer = await fetchNow;
-
-    if (!audioBuffer) {
-      console.warn(`[TTS] 第 ${i + 1} 句 buffer 为空，跳过`);
-      continue;
-    }
-
-    // 每句播放前通知当句文本+实际音频时长，让气泡与口型严格对齐
-    onDuration?.(Math.round(audioBuffer.duration * 1000), sentences[i]);
-    anyPlayed = true;
-
-    console.log(`[TTS] 第 ${i + 1}/${sentences.length} 句开始播放，时长: ${audioBuffer.duration.toFixed(2)}s`);
-
-    try {
-      await playBufferWithLipSync(audioBuffer);
-    } catch (e) {
-      console.warn(`[TTS] 第 ${i + 1} 句 WebAudio 播放失败:`, e);
-    }
-
-    console.log(`[TTS] 第 ${i + 1} 句播放完毕`);
+  } finally {
+    // 无论怎么结束都要复位：卡在「说话中」会让灵动层一直忽略音乐节拍
+    stopLevelMeter();
+    getLiveModel()?.setSpeaking(false);
+    liveliness.setSpeaking(false);
   }
-
-  stopLipSync();
-  getLiveModel()?.setSpeaking(false);
 
   ttsAPI.resumeHearing?.().catch(() => {});
   // 所有句均为空（服务器不可达），通知调用方降级处理

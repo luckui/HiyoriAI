@@ -5,6 +5,7 @@ import { refreshAvatarStudio } from './avatarStudio';
 import { initSettings } from './settings';
 import { initBeatDetector } from './beatDetector';
 import { registerTTSPlayListener } from './ttsPlayer';
+import { installDebugHooks } from './debugHooks';
 import './style.css';
 
 // ─── 打包后用相对路径：electron-vite 将 public/ 输出到 out/renderer/ ──
@@ -19,6 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initChat();
   initBeatDetector(); // 系统音频节拍检测，驱动 Live2D 随音乐弹动
   registerTTSPlayListener(); // 注册主进程推送 TTS 音频的监听器
+  installDebugHooks();       // 默认关闭，见 debugHooks.ts
 
   // ── 置顶按鈕 ──
   const pinBtn = document.getElementById('pin-btn') as HTMLButtonElement | null;
