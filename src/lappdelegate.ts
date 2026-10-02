@@ -80,6 +80,9 @@ export class LAppDelegate {
   }
 
   private release(): void {
+    // 光标位置每秒推送 60 次：不取消订阅的话，释放后下一条消息就会访问已置空的 subdelegates
+    this._unsubscribeCursor?.();
+    this._unsubscribeCursor = null;
     this.releaseEventListener();
     this.releaseSubdelegates();
     CubismFramework.dispose();
@@ -125,7 +128,7 @@ export class LAppDelegate {
    * 注册全屏光标追踪：监听主进程推送的光标坐标，转换后驱动 Live2D 目光跟随
    */
   private initializeCursorTracking(): void {
-    window.electronAPI?.onCursorPosition((pos) => {
+    this._unsubscribeCursor = window.electronAPI?.onCursorPosition((pos) => {
       const sub = this._subdelegates.at(0);
       const canvas = this._canvases.at(0);
       if (!sub || !canvas) return;
@@ -191,6 +194,7 @@ export class LAppDelegate {
   private _cubismOption: Option;
   private _canvases: csmVector<HTMLCanvasElement>;
   private _subdelegates: csmVector<LAppSubdelegate>;
+  private _unsubscribeCursor: (() => void) | null = null;
   private pointBeganEventListener: (this: Document, ev: PointerEvent) => void;
   private pointMovedEventListener: (this: Document, ev: PointerEvent) => void;
   private pointEndedEventListener: (this: Document, ev: PointerEvent) => void;

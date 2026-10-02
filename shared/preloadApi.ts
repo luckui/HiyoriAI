@@ -46,7 +46,7 @@ export interface ElectronAPI {
   togglePin(): void;
   onPinState(cb: (pinned: boolean) => void): void;
   /** 全屏光标位置（~60fps），用于 Live2D 目光追踪 */
-  onCursorPosition(cb: (pos: { x: number; y: number }) => void): void;
+  onCursorPosition(cb: (pos: { x: number; y: number }) => void): Unsubscribe;
 }
 
 export interface ChatAPI {

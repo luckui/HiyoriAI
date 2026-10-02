@@ -23,7 +23,7 @@ expose('electronAPI', {
   resizeWindow: (width, height) => ipcRenderer.send('window-resize', { width, height }),
   togglePin: () => ipcRenderer.send('window-pin'),
   onPinState: (cb) => { subscribe('window-pin-state', cb); },
-  onCursorPosition: (cb) => { subscribe('cursor-position', cb); },
+  onCursorPosition: (cb) => subscribe('cursor-position', cb),
 });
 
 expose('chatAPI', {
