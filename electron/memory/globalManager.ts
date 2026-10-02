@@ -1,16 +1,11 @@
 /**
- * 全局记忆调度层 - 唯一职责：决定「何时精炼」「如何拼接全局记忆提示词」
+ * 全局记忆调度层：决定「何时精炼」「怎么拼进提示词」。
  *
- * 改进：采用 Hermes Agent 风格的结构化记忆（USER + MEMORY 双分块）
+ * 触发点只有一个真正重要：压缩（compact）刚产生一条摘要时。
+ * 其余入口（离开对话、空闲、退出、启动追赶）都是补漏，捡上次失败或没触发到的片段。
  *
- * 依赖关系（单向）：
- *   globalManager → hermesGlobalSummarizer（调用 LLM，生成结构化记忆）
- *   globalManager → db（读写持久化）
- *   globalManager → ai.config（读取 provider）
- *
- * 外部调用方式（通过 memory/index.ts）：
- *   1. refineAsync(conversationId)         — 可 await 的精炼（供离开对话链式调用）
- *   2. buildGlobalMemoryAppend()           — 同步读取，构建 prompt 时调用（全对话通用）
+ * 所有精炼串行执行：精炼结束时会校验「期间记忆和游标没被改过」，
+ * 并发跑只会让后完成的那次白白丢掉一整个 LLM 调用。
  */
 
 import aiConfig from '../ai.config';
@@ -20,152 +15,83 @@ import {
   setStructuredGlobalMemory,
   getGlobalMemoryCursor,
   setGlobalMemoryCursor,
+  runInTransaction,
 } from '../db';
-import { refineStructuredGlobalMemory } from './hermesGlobalSummarizer';
-import { DEFAULT_GLOBAL_MEMORY_CONFIG, type GlobalMemoryConfig } from './types';
+import { refineGlobalMemory } from './globalRefiner';
+import { renderGlobalMemory } from './globalMemory';
 import { selectMemoryRefinementProvider } from './providerSelection';
 
 export class GlobalMemoryManager {
-  private readonly config: GlobalMemoryConfig;
-
-  constructor(config: Partial<GlobalMemoryConfig> = {}) {
-    this.config = { ...DEFAULT_GLOBAL_MEMORY_CONFIG, ...config };
-  }
-
-  // ── 公开接口 ─────────────────────────────────────────────
+  private queue: Promise<void> = Promise.resolve();
+  private readonly pending = new Set<string>();
 
   /**
-   * 构建全局记忆追加提示词（Hermes 风格，结构化分块显示）。
-   * 返回字符串直接 append 到角色 system prompt 末尾。
-   * 若尚无全局记忆则返回空字符串。
+   * 构建追加到 system prompt 末尾的记忆提示词；无记忆时返回空字符串。
+   * userOnly 供 chat / minecraft 模式使用：只带稳定的用户画像。
    */
-  buildGlobalMemoryAppend(): string {
-    const mem = getStructuredGlobalMemory();
-    
-    // 无任何记忆时返回空
-    if (mem.user.length === 0 && mem.memory.length === 0) return '';
-
-    const parts: string[] = [];
-
-    // USER（用户画像）分块
-    if (mem.user.length > 0) {
-      const userChars = mem.user.join('').length;
-      const userPct = Math.min(100, Math.round((userChars / 1100) * 100)); // 假设 1100 字上限
-      const separator = '═'.repeat(46);
-      
-      parts.push(
-        `\n${separator}`,
-        `USER PROFILE（用户画像）[${userPct}% — ${userChars}/1100 字]`,
-        separator,
-        mem.user.join('\n§\n')
-      );
-    }
-
-    // MEMORY（环境配置）分块
-    if (mem.memory.length > 0) {
-      const memoryChars = mem.memory.join('').length;
-      const memoryPct = Math.min(100, Math.round((memoryChars / 1800) * 100)); // 假设 1800 字上限
-      const separator = '═'.repeat(46);
-      
-      parts.push(
-        `\n${separator}`,
-        `MEMORY（环境配置和工具经验）[${memoryPct}% — ${memoryChars}/1800 字]`,
-        separator,
-        mem.memory.join('\n§\n')
-      );
-    }
-
-    return '\n\n' + parts.join('\n');
+  buildGlobalMemoryAppend(options: { userOnly?: boolean } = {}): string {
+    return renderGlobalMemory(getStructuredGlobalMemory(), options);
   }
 
   /**
-   * 构建仅包含 USER 画像的记忆提示词（Chat 模式专用）。
-   * 跳过 MEMORY（环境配置和工具经验）分块，为轻量对话节省 token。
-   */
-  buildUserProfileOnly(): string {
-    const mem = getStructuredGlobalMemory();
-    if (mem.user.length === 0) return '';
-
-    const userChars = mem.user.join('').length;
-    const userPct = Math.min(100, Math.round((userChars / 1100) * 100));
-    const separator = '═'.repeat(46);
-
-    return '\n\n' + [
-      `\n${separator}`,
-      `USER PROFILE（用户画像）[${userPct}% — ${userChars}/1100 字]`,
-      separator,
-      mem.user.join('\n§\n'),
-    ].join('\n');
-  }
-
-  /**
-   * 可 await 的全局记忆精炼。
-   * 供 memory/index.ts 的离开对话流水线链式调用，保证在本地摘要完成后执行。
-   * 若失败，日志记录但不抛出（不阻塞离开流程）。
+   * 排队精炼这个对话的新片段。失败只记日志（游标不前进，下次重试），
+   * 所以调用方可以安全地 void 掉。
    */
   async refineAsync(conversationId: string): Promise<void> {
-    try {
-      await this.doRefine(conversationId);
-    } catch (e) {
-      console.error('[GlobalMemory] 精炼失败（游标未推进，下次重试）:', (e as Error).message);
-    }
+    // 已经排在队里还没跑的，合并成一次：它跑起来时会读到最新的片段
+    if (this.pending.has(conversationId)) return this.queue;
+    this.pending.add(conversationId);
+    this.queue = this.queue.then(async () => {
+      this.pending.delete(conversationId);
+      try {
+        await this.doRefine(conversationId);
+      } catch (e) {
+        console.error('[Memory] 精炼失败（游标未前进，下次重试）:', (e as Error).message);
+      }
+    });
+    return this.queue;
   }
 
-  // ── 内部实现 ─────────────────────────────────────────────
-
   /**
-   * 核心精炼逻辑（采用 Hermes 风格的结构化记忆生成）：
-   * 1. 读取此对话的全部 memory_fragments
-   * 2. 对比全局游标，取出尚未精炼的新片段
-   * 3. 数量不足 minNewFragments 时跳过（避免频繁 LLM 调用）
-   * 4. 读取当前结构化记忆，调用 LLM 合并更新
-   * 5. 仅 LLM 判断有新内容时才写入（"无变化" 时静默跳过）
-   * 6. 无论有无新内容，都推进游标（防止对同一批片段重复精炼）
-   *    注意：LLM 调用失败时不推进游标，留待下次重试
+   * 1. 取游标之后的新摘要片段，没有就直接返回
+   * 2. 调精炼子智能体合并进当前记忆
+   * 3. 事务里确认记忆和游标没被别人改过，再写入并推进游标
+   *    —— 模型判断「无变化」时也推进游标，避免对同一批片段反复提问；
+   *       只有调用或落盘失败才不推进。
    */
   private async doRefine(conversationId: string): Promise<void> {
     const selected = selectMemoryRefinementProvider(aiConfig);
     if (!selected.provider) {
-      console.warn(
-        `[GlobalMemory] skip refinement: activeProvider=${selected.key}, reason=${selected.reason}`
-      );
+      console.warn(`[Memory] 跳过精炼：activeProvider=${selected.key}，原因=${selected.reason}`);
       return;
     }
 
     const allFragments = getMemoryFragments(conversationId);
     const cursor = getGlobalMemoryCursor(conversationId);
-    const newFragments = allFragments.slice(cursor);
+    const fragments = allFragments.slice(cursor);
+    if (!fragments.length) return;
 
-    if (newFragments.length < this.config.minNewFragments) {
-      // 无新片段或数量不足阈值，跳过
-      return;
-    }
+    const current = getStructuredGlobalMemory();
+    const updated = await refineGlobalMemory(selected.provider, current, fragments);
 
-    const currentMemory = getStructuredGlobalMemory();
+    runInTransaction(() => {
+      if (getGlobalMemoryCursor(conversationId) !== cursor ||
+          JSON.stringify(getStructuredGlobalMemory()) !== JSON.stringify(current)) {
+        throw new Error('精炼期间记忆或游标已变化，放弃旧结果，下次重试');
+      }
+      if (updated) setStructuredGlobalMemory(updated);
+      setGlobalMemoryCursor(conversationId, allFragments.length);
+    });
 
-    const updated = await refineStructuredGlobalMemory(
-      selected.provider,
-      currentMemory,
-      newFragments,
-      this.config
+    const outcome = updated
+      ? `已更新（USER ${updated.user.length} 条，MEMORY ${updated.memory.length} 条）`
+      : '模型判断无变化';
+    console.info(
+      `[Memory] ${conversationId.slice(0, 8)}… 整合 ${fragments.length} 条摘要：${outcome}`
+      + `（provider=${selected.key}）`
     );
-
-    // LLM 成功返回后推进游标（无论有无新内容）
-    setGlobalMemoryCursor(conversationId, allFragments.length);
-
-    if (updated) {
-      setStructuredGlobalMemory(updated);
-      console.info(
-        `[GlobalMemory] 对话 ${conversationId.slice(0, 8)}… 全局记忆已更新（provider=${selected.key}）` +
-        `（整合 ${newFragments.length} 条新片段，USER: ${updated.user.length} 条，MEMORY: ${updated.memory.length} 条）`
-      );
-    } else {
-      console.info(
-        `[GlobalMemory] 对话 ${conversationId.slice(0, 8)}… 模型判断“无变化”（provider=${selected.key}），仅推进游标`
-      );
-    }
   }
 }
 
-/** 全局单例，供 memory/index.ts 和 aiService 使用 */
+/** 全局单例，供 memory/index.ts、manager 和 aiService 使用 */
 export const globalMemoryManager = new GlobalMemoryManager();

@@ -265,15 +265,6 @@
           <!-- ════ Tab: LLM ════ -->
           <div id="s-tab-llm" class="s-tab-pane">
 
-            <!-- 全局设置 -->
-            <section class="s-section">
-              <h3 class="s-title">全局</h3>
-              <label class="s-label">对话记忆轮数
-                <input id="s-rounds" type="number" min="1" max="200" class="s-input" />
-                <span class="s-hint">每次请求携带最近 N 轮上下文（1轮 = 1问1答，超出部分仍存数据库）</span>
-              </label>
-            </section>
-
             <!-- 全局核心记忆 -->
             <section class="s-section">
               <h3 class="s-title">全局核心记忆</h3>
@@ -319,6 +310,10 @@
               </label>
               <label class="s-label">模型 ID
                 <input id="s-model" type="text" class="s-input" placeholder="gpt-4o-mini" />
+              </label>
+              <label class="s-label">模型上下文容量（token）
+                <input id="s-context-tokens" type="number" min="2048" max="2000000" step="1024" class="s-input" />
+                <span class="s-hint">按服务商实际容量填写（含输入和输出）。预留最大回复后，估算输入达到 80% 才压缩；原始记录保留。默认 65536，小模型请调低。</span>
               </label>
               <div class="s-row-2">
                 <label class="s-label">温度

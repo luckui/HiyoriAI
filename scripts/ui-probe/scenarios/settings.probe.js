@@ -9,7 +9,7 @@
   out.panelVisible = $('settings-panel').classList.contains('visible');
   out.llmProviders = $('s-provider-select').options.length;
   out.llmName = $('s-name').value;
-  out.llmRounds = $('s-rounds').value;
+  out.llmContextTokens = $('s-context-tokens').value;
   out.llmDeleteHidden = $('s-del-btn').style.visibility;
   out.ttsProviders = $('tts-provider-select').options.length;
   out.ttsEnabled = $('tts-enabled').checked;

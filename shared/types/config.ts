@@ -19,6 +19,8 @@ export interface LLMProviderConfig {
   model: string;
   /** 最大回复 token 数，默认 1024 */
   maxTokens?: number;
+  /** 模型上下文总容量（输入 + 输出），默认 65536；请按服务商实际配置调整。 */
+  contextWindowTokens?: number;
   /** 温度参数 0-2，默认 0.85 */
   temperature?: number;
   /**
@@ -53,12 +55,6 @@ export interface LLMProviderConfig {
 export interface AIConfig {
   /** 当前激活的 provider key */
   activeProvider: string;
-  /**
-   * 短期记忆窗口（轮数）。
-   * 1 轮 = 1 条 user + 1 条 assistant。
-   * 超出部分永久存入 SQLite，但不进入本次请求的 context。
-   */
-  contextWindowRounds: number;
   providers: Record<string, LLMProviderConfig>;
   /**
    * 用户在 UI 中主动删除的 provider key 列表。

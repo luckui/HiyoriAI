@@ -1,3 +1,4 @@
+import { normalizeContextWindowTokens } from '../../shared/contextBudget';
 import type { AIConfig } from '../ai.config';
 import type { TTSConfig } from '../tts.config';
 import type { SkillsConfig } from '../skillsConfig';
@@ -94,9 +95,7 @@ export function normalizeAppConfig(raw: unknown, defaults: AppConfigDefaults): A
     version: 1,
     llm: {
       ...base.llm,
-      ...llmInput,
       activeProvider: normalizeString(llmInput.activeProvider, base.llm.activeProvider),
-      contextWindowRounds: normalizeNumber(llmInput.contextWindowRounds, base.llm.contextWindowRounds),
       providers: llmProviders,
       deletedProviders: Array.isArray(llmInput.deletedProviders)
         ? llmInput.deletedProviders.filter((value): value is string => typeof value === 'string')
@@ -174,7 +173,7 @@ function sanitizeLlmProviders(providers: AIConfig['providers']): AIConfig['provi
   for (const [key, provider] of Object.entries(providers)) {
     // 旧版配置里每个 provider 都带 systemPrompt，从未被读取；持久化时顺手剔除
     const { systemPrompt: _legacy, ...copy } = provider as typeof provider & { systemPrompt?: string };
-    sanitized[key] = copy;
+    sanitized[key] = { ...copy, contextWindowTokens: normalizeContextWindowTokens(copy.contextWindowTokens) };
   }
   return sanitized;
 }

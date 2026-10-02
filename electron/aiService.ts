@@ -1,11 +1,14 @@
 /// <reference types="node" />
 import aiConfig, { LLMProviderConfig } from './ai.config';
-import { addMessage, getRecentContext, getMessages, renameConversation } from './db';
+import { addMessage, getMessages, renameConversation } from './db';
 import { toolRegistry } from './tools/index';
 import { getCurrentToolsets, getAgentMode, effectiveModeForTrigger, MINECRAFT_MODE } from './agentMode';
 import type { ChatMessage, ToolBatchHooks, ToolSchema } from './tools/types';
 import { toolResultText, runToolLoop } from './toolLoop';
 import { memoryManager, globalMemoryManager, recordMessageActivity } from './memory/index';
+import { compactContext } from './memory/compact';
+import { createCompactSummarizer } from './memory/summarizer';
+import { getContextInputBudget } from '../shared/contextBudget';
 import { stripThinkTags } from './utils/textUtils';
 import { fetchCompletion } from './llmClient';
 import { getSkillTopicsForPrompt } from './tools/impl/skill';
@@ -227,7 +230,16 @@ async function _callWithToolLoopInternal(
 ): Promise<string> {
   const withTools = !!toolSchemas?.length;
   // 在副本上操作，不污染调用方的数组
-  const msgBuf: ChatMessage[] = [...messages];
+  const msgBuf: ChatMessage[] = conversationId
+    ? await memoryManager.prepareContext(conversationId, messages.filter(message => message.role === 'system'), provider, toolSchemas, signal)
+    : [...messages];
+  const currentUser = [...msgBuf].reverse().find(message => message.role === 'user');
+  const completeWithBudget = async (buf: ChatMessage[], tools?: ToolSchema[], sig?: AbortSignal) => {
+    const compacted = await compactContext(buf, tools, getContextInputBudget(provider), createCompactSummarizer(provider, sig), currentUser);
+    sig?.throwIfAborted();
+    if (compacted.summary) buf.splice(0, buf.length, ...compacted.messages);
+    return fetchCompletion(provider, buf, tools, sig);
+  };
   let antiHallucinationNudgeUsed = false;
   const appendInternalInstruction = (reason: string, content: string): void => {
     msgBuf.push({ role: 'user', content });
@@ -253,7 +265,7 @@ async function _callWithToolLoopInternal(
     abortMessage: 'AI 回答已被用户中断',
     imageCaption: '（以下是截取的屏幕截图，请结合图像内容回答用户的问题）',
 
-    complete: (buf, tools, sig) => fetchCompletion(provider, buf, tools, sig),
+    complete: completeWithBudget,
 
     onResponse: (choice, round) => traceTurnEvent({
       type: 'llm-response',
@@ -351,7 +363,7 @@ async function _callWithToolLoopInternal(
           '请停止继续调用工具，用自然语言向用户总结：① 你尝试了哪些步骤，② 哪一步卡住了，③ 可能的原因是什么。',
       );
       try {
-        const fallback = await fetchCompletion(provider, msgBuf); // 不带工具，强制输出文字
+        const fallback = await completeWithBudget(msgBuf, undefined, signal); // 不带工具，强制输出文字
         return stripThinkTags(fallback.choices[0]?.message.content?.trim() ?? '（操作超出轮数，且无法生成总结）');
       } catch {
         return `（操作未完成：工具调用超过 ${maxRounds} 轮，请检查页面状态后重试）`;
@@ -365,7 +377,7 @@ async function _callWithToolLoopInternal(
 /**
  * 发送消息并返回 AI 回复。
  * - 自动保存 user / assistant 消息至 SQLite
- * - 维护 contextWindowRounds 轮短期记忆
+ * - 按 token 预算维护上下文，超预算时 compact
  * - 若 toolRegistry 注册了工具，自动启用 Function Calling 并处理多轮工具循环
  * - 第一轮对话自动以用户首句命名对话
  */
@@ -421,7 +433,7 @@ async function sendChatMessageUnlocked(
   addMessage({ conversation_id: conversationId, role: 'user', content: userContent });
 
   // 2. 构建上下文（含刚保存的 user 消息）
-  const context = getRecentContext(conversationId, aiConfig.contextWindowRounds);
+  const context = memoryManager.readContext(conversationId);
 
   // ── 模式感知的上下文工程 ─────────────────────────────────────
   // 提示词、记忆、Skills 按模式精细化注入，节省 token 但不缺功能
@@ -446,11 +458,9 @@ async function sendChatMessageUnlocked(
     : getSkillTopicsForPrompt();
 
   // Chat/Minecraft 保留会话摘要和稳定用户画像，不注入全局环境配置与工具经验。
-  const memoryAppend = memoryManager.buildMemoryAppend(conversationId) + (
-    effectiveMode === 'chat' || effectiveMode === MINECRAFT_MODE
-      ? globalMemoryManager.buildUserProfileOnly()
-      : globalMemoryManager.buildGlobalMemoryAppend()
-  );
+  const memoryAppend = globalMemoryManager.buildGlobalMemoryAppend({
+    userOnly: effectiveMode === 'chat' || effectiveMode === MINECRAFT_MODE,
+  });
 
   const sourceAppend = requestContext.sourceContext?.trim()
     ? `\n\n【当前消息来源】\n${requestContext.sourceContext.trim()}`
@@ -463,7 +473,7 @@ async function sendChatMessageUnlocked(
 
   const messages: ChatMessage[] = [
     ...(systemContent ? [{ role: 'system' as const, content: systemContent }] : []),
-    ...context.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+    ...context,
   ];
   traceTurnEvent({
     type: 'prompt-built',
@@ -551,7 +561,7 @@ async function sendChatMessageUnlocked(
     createdAt: saved.created_at,
   });
 
-  // 记录消息活跃时间（供空闲调度器判断何时触发后台总结，不再在热路径调用 LLM）
+  // 记录消息活跃时间（供空闲调度器判断何时精炼已有摘要）
   recordMessageActivity();
 
   // streamer 模式：主播在聊天界面发送消息，AI 回复同样要经过 TTS 播报给直播间

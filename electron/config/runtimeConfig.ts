@@ -95,7 +95,6 @@ export function loadPersistedConfig(): void {
     }, { getSetting: () => null, setSetting });
 
     aiConfig.activeProvider = cfg.llm.activeProvider;
-    aiConfig.contextWindowRounds = cfg.llm.contextWindowRounds;
     aiConfig.providers = cfg.llm.providers;
     aiConfig.deletedProviders = cfg.llm.deletedProviders ?? [];
     setTTSConfig(mergeBuiltinTTSProviders(cfg.tts, defaultTTSConfig));

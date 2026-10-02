@@ -1,3 +1,4 @@
+import { getContextInputBudget } from '../../shared/contextBudget';
 /**
  * 设置页：LLM 配置、Agent 模式、Skills、记忆导入导出。
  */
@@ -16,14 +17,13 @@ export function registerSettingsIpc(): void {
   // ── LLM ──────────────────────────────────────────────────
   ipcMain.handle('settings:get', () => ({
     activeProvider: aiConfig.activeProvider,
-    contextWindowRounds: aiConfig.contextWindowRounds,
     providers: aiConfig.providers,
     deletedProviders: aiConfig.deletedProviders ?? [],
   }));
 
   ipcMain.handle('settings:save', (_e, next: typeof aiConfig) => {
+    for (const provider of Object.values(next.providers)) getContextInputBudget(provider);
     aiConfig.activeProvider = next.activeProvider;
-    aiConfig.contextWindowRounds = next.contextWindowRounds;
     aiConfig.providers = next.providers; // 完全替换
     aiConfig.deletedProviders = next.deletedProviders ?? [];
     persistAppConfig();

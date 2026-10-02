@@ -1,6 +1,7 @@
 /** LLM 服务商设置：多个 provider 的增删改与"当前使用" */
 
 import type { AIConfig } from '../../shared/types/config';
+import { getContextInputBudget, normalizeContextWindowTokens } from '../../shared/contextBudget';
 import { BUILTIN_LLM_PROVIDERS } from './types';
 import { clearSettingsDirty, markSettingsDirty, registerSection } from './sections';
 import { bindPasswordToggle, button, input } from './dom';
@@ -18,8 +19,7 @@ function syncFormToCfg(): void {
   p.model = input('s-model').value.trim();
   p.temperature = parseFloat(input('s-temp').value) || 0.85;
   p.maxTokens = parseInt(input('s-tokens').value, 10) || 1024;
-  const rounds = parseInt(input('s-rounds').value, 10);
-  if (rounds > 0) cfg.contextWindowRounds = rounds;
+  p.contextWindowTokens = Number(input('s-context-tokens').value);
 }
 
 function renderForm(): void {
@@ -33,6 +33,7 @@ function renderForm(): void {
   input('s-model').value = p.model ?? '';
   input('s-temp').value = String(p.temperature ?? 0.85);
   input('s-tokens').value = String(p.maxTokens ?? 1024);
+  input('s-context-tokens').value = String(normalizeContextWindowTokens(p.contextWindowTokens));
   // 内置方案或只有一个 provider 时隐藏删除按钮
   const hideDelete = BUILTIN_LLM_PROVIDERS.includes(editKey) || Object.keys(cfg.providers).length <= 1;
   button('s-del-btn').style.visibility = hideDelete ? 'hidden' : 'visible';
@@ -62,7 +63,6 @@ function renderProviderSelect(): void {
 async function load(): Promise<void> {
   cfg = await window.settingsAPI!.get();
   editKey = cfg.activeProvider;
-  input('s-rounds').value = String(cfg.contextWindowRounds);
   renderProviderSelect();
   renderForm();
 }
@@ -72,6 +72,12 @@ async function save(): Promise<void> {
   syncFormToCfg();
   // 下拉框当前选中的即为活跃 provider
   if (editKey) cfg.activeProvider = editKey;
+  try {
+    for (const provider of Object.values(cfg.providers)) getContextInputBudget(provider);
+  } catch (error) {
+    alert((error as Error).message);
+    return;
+  }
   await window.settingsAPI!.save(cfg);
   clearSettingsDirty('llm');
 

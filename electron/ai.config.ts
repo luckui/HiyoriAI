@@ -12,7 +12,6 @@ export type { ProviderType, LLMProviderConfig, AIConfig };
 
 const aiConfig: AIConfig = {
   activeProvider: 'doubao',
-  contextWindowRounds: 6,
   providers: {
     doubao: {
       type: 'openai-compatible',
@@ -20,6 +19,7 @@ const aiConfig: AIConfig = {
       baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
       apiKey: process.env['DOUBAO_API_KEY'] ?? '',
       model: 'doubao-pro-4k',
+      contextWindowTokens: 4096,
       temperature: 0.85,
       maxTokens: 1024,
     },

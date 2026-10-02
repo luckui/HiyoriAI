@@ -4,16 +4,14 @@ import './bootstrapEnv';
 import { app, desktopCapturer, session } from 'electron';
 import { join } from 'path';
 import {
-  countNonSystemMessages,
   getGlobalMemoryCursor,
-  getMemoryCursor,
   getMemoryFragments,
   initDatabase,
   listConversations,
 } from './db';
 import { sendChatMessage } from './aiService';
 import { configureTurnTrace, traceTurnEvent } from './turnTrace';
-import { globalMemoryManager, memoryManager, runStartupCatchUp, startIdleScheduler } from './memory/index';
+import { globalMemoryManager, runStartupCatchUp, startIdleScheduler } from './memory/index';
 import { startBridges, stopBridges } from './bridges/index';
 import { getReplyTargetForConversation } from './bridges/asyncDelivery';
 import { taskManager } from './taskManager';
@@ -135,10 +133,8 @@ app.on('before-quit', (event) => {
 
   // 快速判断当前对话是否还有需要总结的内容
   const convId = getActiveConversationId();
-  const batchSize = 6; // leaveMinRounds(3) * 2，与 DEFAULT_MEMORY_CONFIG 保持一致
-  const unsummarized = convId ? countNonSystemMessages(convId) - getMemoryCursor(convId) : 0;
   const newFragments = convId ? getMemoryFragments(convId).length - getGlobalMemoryCursor(convId) : 0;
-  const hasWork = Boolean(convId) && (unsummarized >= batchSize || newFragments > 0);
+  const hasWork = Boolean(convId) && newFragments > 0;
 
   // 拦截退出：先释放目标槽、Minecraft worker 和桥接，再按需保存记忆
   event.preventDefault();
@@ -158,7 +154,6 @@ app.on('before-quit', (event) => {
     }
     if (hasWork && convId) {
       console.info('[Memory] 应用退出，执行记忆流水线...');
-      await memoryManager.forcePartialSummarize(convId);
       await globalMemoryManager.refineAsync(convId);
       console.info('[Memory] 记忆流水线完成，正常退出');
     }

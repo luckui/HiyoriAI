@@ -67,6 +67,12 @@ export function initDatabase(dbPath = join(app.getPath('userData'), 'hiyori-chat
     CREATE INDEX IF NOT EXISTS idx_memory_conv
       ON memory_fragments(conversation_id, created_at);
 
+    CREATE TABLE IF NOT EXISTS context_checkpoints (
+      conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+      covered_messages INTEGER NOT NULL,
+      summary TEXT NOT NULL
+    );
+
     -- ── 异步任务管理 ──────────────────────────────────────
     CREATE TABLE IF NOT EXISTS tasks (
       id              TEXT    PRIMARY KEY,
@@ -128,46 +134,28 @@ export function setSetting(key: string, value: string): void {
   db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
 }
 
-// ── 结构化全局记忆（Hermes 风格分块）──────────────────────
+// ── 结构化全局记忆 ────────────────────────────────────────
 
-/** 结构化记忆接口（Hermes 风格：USER + MEMORY 双文件） */
+/** 跨对话的长期记忆，分两块存放；条目之间用 § 分隔 */
 export interface StructuredGlobalMemory {
-  /** 用户画像（偏好、习惯、沟通风格） */
+  /** 用户画像（身份、偏好、习惯、反复强调的要求） */
   user: string[];
   /** 环境配置和工具经验（系统信息、工具特性、项目约定） */
   memory: string[];
 }
 
-/** 读取结构化全局记忆（返回条目数组）
- * 【兼容性】如果结构化字段为空，fallback 到旧 global_memory 字段 */
-export function getStructuredGlobalMemory(): StructuredGlobalMemory {
-  const userRaw = getSetting('global_memory_user');
-  const memoryRaw = getSetting('global_memory_main');
-  
-  const user = userRaw ? userRaw.split('§').map(s => s.trim()).filter(Boolean) : [];
-  const memory = memoryRaw ? memoryRaw.split('§').map(s => s.trim()).filter(Boolean) : [];
-  
-  // 如果结构化字段都为空，fallback 到旧的 global_memory
-  if (user.length === 0 && memory.length === 0) {
-    const legacy = getSetting('global_memory');
-    if (legacy?.trim()) {
-      // 将旧记忆临时归入 MEMORY 块（环境配置）
-      return { user: [], memory: [legacy.trim()] };
-    }
-  }
-  
-  return { user, memory };
+function readEntries(key: string): string[] {
+  const raw = getSetting(key);
+  return raw ? raw.split('§').map(s => s.trim()).filter(Boolean) : [];
 }
 
-/** 写入结构化全局记忆（条目数组）
- * 【兼容性】同时更新旧 global_memory 字段，保持 memory tool 可读性 */
+export function getStructuredGlobalMemory(): StructuredGlobalMemory {
+  return { user: readEntries('global_memory_user'), memory: readEntries('global_memory_main') };
+}
+
 export function setStructuredGlobalMemory(data: StructuredGlobalMemory): void {
   setSetting('global_memory_user', data.user.join('§'));
   setSetting('global_memory_main', data.memory.join('§'));
-  
-  // 同步写入旧字段（memory tool 兼容性）
-  const allEntries = [...data.user, ...data.memory];
-  setSetting('global_memory', allEntries.join('§'));
 }
 
 // ── 对话 CRUD ─────────────────────────────────────────────
@@ -212,7 +200,7 @@ export function deleteConversation(id: string): void {
 
 export function getMessages(conversationId: string): DBMessage[] {
   return db.prepare(
-    'SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC'
+    'SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC, rowid ASC'
   ).all(conversationId) as DBMessage[];
 }
 
@@ -228,26 +216,12 @@ export function addMessage(msg: Omit<DBMessage, 'id' | 'created_at'>): DBMessage
   return full;
 }
 
-/**
- * 获取最近 N 轮上下文消息（user + assistant，不含 system），时间升序。
- * N 轮 = 最多 N*2 条消息。
- */
-export function getRecentContext(conversationId: string, rounds: number): DBMessage[] {
-  const rows = db.prepare(`
-    SELECT * FROM messages
-    WHERE conversation_id = ? AND role != 'system'
-    ORDER BY created_at DESC
-    LIMIT ?
-  `).all(conversationId, rounds * 2) as DBMessage[];
-  return rows.reverse();
-}
-
 // ── 记忆片段 CRUD ─────────────────────────────────────────
 
 /** 获取一个对话的所有记忆片段，按时间升序（旧 → 新） */
 export function getMemoryFragments(conversationId: string): MemoryFragment[] {
   return db.prepare(
-    'SELECT * FROM memory_fragments WHERE conversation_id = ? ORDER BY created_at ASC'
+    'SELECT * FROM memory_fragments WHERE conversation_id = ? ORDER BY created_at ASC, rowid ASC'
   ).all(conversationId) as MemoryFragment[];
 }
 
@@ -408,20 +382,9 @@ export function searchMemoryFragments(query: string, limit = 20): MemoryFragment
 }
 
 /**
- * 统计一个对话中 user + assistant 消息总数（不含 system）。
- * 用于判断是否已积累足够消息触发记忆总结。
- */
-export function countNonSystemMessages(conversationId: string): number {
-  const row = db.prepare(
-    "SELECT COUNT(*) as count FROM messages WHERE conversation_id = ? AND role IN ('user', 'assistant')"
-  ).get(conversationId) as { count: number };
-  return row.count;
-}
-
-/**
  * 按偏移量获取一批 user+assistant 消息（用于送入 LLM 总结）。
  * @param offset - 跳过的消息数（= 已总结游标）
- * @param limit  - 本次获取的消息数（= summaryWindowRounds * 2）
+ * @param limit  - 本次获取的消息数（-1 表示全部）
  */
 export function getMessagesInRange(
   conversationId: string,
@@ -431,20 +394,21 @@ export function getMessagesInRange(
   return db.prepare(`
     SELECT * FROM messages
     WHERE conversation_id = ? AND role IN ('user', 'assistant')
-    ORDER BY created_at ASC
+    ORDER BY created_at ASC, rowid ASC
     LIMIT ? OFFSET ?
   `).all(conversationId, limit, offset) as DBMessage[];
 }
 
-/** 读取记忆总结游标（已总结到的消息偏移） */
-export function getMemoryCursor(conversationId: string): number {
-  const val = getSetting(`mem_cursor_${conversationId}`);
-  return val ? parseInt(val, 10) : 0;
+export interface ContextCheckpoint { covered_messages: number; summary: string }
+
+export function getContextCheckpoint(conversationId: string): ContextCheckpoint | undefined {
+  return db.prepare('SELECT covered_messages, summary FROM context_checkpoints WHERE conversation_id = ?')
+    .get(conversationId) as ContextCheckpoint | undefined;
 }
 
-/** 更新记忆总结游标 */
-export function setMemoryCursor(conversationId: string, cursor: number): void {
-  setSetting(`mem_cursor_${conversationId}`, String(cursor));
+export function setContextCheckpoint(conversationId: string, checkpoint: ContextCheckpoint): void {
+  db.prepare('INSERT OR REPLACE INTO context_checkpoints (conversation_id, covered_messages, summary) VALUES (?, ?, ?)')
+    .run(conversationId, checkpoint.covered_messages, checkpoint.summary);
 }
 
 // ── 全局核心记忆 ──────────────────────────────────────────
