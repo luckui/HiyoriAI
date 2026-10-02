@@ -91,11 +91,6 @@ export class LivelinessMotor {
   /** 自适应满刻度：系统音量千差万别，用最近 8 秒的峰值归一化 */
   private musicPeak = 0;
   private readonly groove = new Envelope(0.8, 1.2);
-  private onsetCount = 0;
-  private accentCount = 0;
-  private pendingAccent = 0;
-  /** 重拍时额外的一下：比规律律动更「冲」，交给弹簧自己弹回来 */
-  private readonly accent = new Spring(4, 0.45);
   /**
    * 画面相位相对节拍时钟的偏移。时钟每收到一个鼓点都可能校正相位（刚锁定时尤其多），
    * 直接用会让动作突然快进一下，看着像发抖。所以时钟一跳，画面先保持连续，
@@ -132,26 +127,14 @@ export class LivelinessMotor {
     this.random = options.random ?? Math.random;
   }
 
-  /** 正在放的音乐的音量（RMS），由系统音频监听每帧送进来；停止监听时送 0 */
-  setMusicLevel(rms: number): void {
-    this.musicInput = rms;
-  }
-
   /**
-   * 音乐里检测到一个 onset。strength 是相对平均鼓点的响度倍数（普通拍约 1）。
-   * 说话时忽略：系统回环会录到自己的声音，把说话的音节当鼓点会让节拍乱掉。
-   * 时钟按原速继续走，不受影响。
+   * 系统音频的一帧：起音强度（见 SpectralFlux）和音量（RMS）。停止监听时送 (0, 0)。
+   * 说话时不交给节拍时钟：系统回环会录到自己的声音，把说话的节奏当拍子会让节拍乱掉。
+   * 时钟按原速继续走，说完再接着听。
    */
-  onMusicOnset(timeMs: number, strength = 1): void {
-    if (this.speaking) return;
-    this.onsetCount++;
-    this.beat.onOnset(timeMs, strength);
-    // 明显比平时响的一下（重拍、drop，约 +6 dB）：额外加一个点头。
-    // 门槛不能太低：onset 落在分析帧里的位置不同，同样的鼓也会差出几 dB
-    if (strength > 2) {
-      this.pendingAccent = Math.min(1, (strength - 1) / 3);
-      this.accentCount++;
-    }
+  setMusicFrame(flux: number, rms: number, timeMs: number): void {
+    this.musicInput = rms;
+    if (!this.speaking) this.beat.pushFrame(flux, rms, timeMs);
   }
 
   setSpeaking(speaking: boolean): void {
@@ -177,10 +160,9 @@ export class LivelinessMotor {
     this.largestJump = 0;
     return {
       phaseJump,
-      onsets: this.onsetCount,
-      accents: this.accentCount,
       bpm: this.beat.bpm === null ? null : Math.round(this.beat.bpm),
       confidence: Number(this.beat.confidence(nowMs).toFixed(2)),
+      ...this.beat.diagnostics(),
       groove: Number(this.groove.value.toFixed(2)),
       musicPeak: Number(this.musicPeak.toFixed(3)),
       speaking: this.speaking,
@@ -205,10 +187,10 @@ export class LivelinessMotor {
     const g = music.frame;
     const params: Pose['params'] = {
       ParamAngleX: g.headYaw + drift * smoothNoise(t, 1) + 0.25 * gaze.x,
-      ParamAngleY: g.headNod + 0.3 * music.accent + 0.22 * speech.nod + 0.6 * drift * smoothNoise(t, 2) + 0.15 * gaze.y,
+      ParamAngleY: g.headNod + 0.22 * speech.nod + 0.6 * drift * smoothNoise(t, 2) + 0.15 * gaze.y,
       ParamAngleZ: g.headRoll + speech.tilt + drift * smoothNoise(t, 3),
       ParamBodyAngleX: g.torsoYaw + 0.3 * drift * smoothNoise(t, 4),
-      ParamBodyAngleY: g.torsoBend + 0.3 * music.accent,
+      ParamBodyAngleY: g.torsoBend,
       ParamBodyAngleZ: g.torsoRoll + 0.3 * drift * smoothNoise(t, 5),
       ParamShoulderY: g.shoulder,
       ParamEyeBallX: gaze.x + g.eyeX,
@@ -227,7 +209,7 @@ export class LivelinessMotor {
     this.pose = {
       params,
       offsetX: 0.004 * g.side,
-      offsetY: 0.012 * (g.bob + music.accent),
+      offsetY: 0.012 * g.bob,
       authority: music.authority,
       mouthOpen: speech.mouth,
     };
@@ -257,14 +239,9 @@ export class LivelinessMotor {
     this.lastPeriodMs = this.beat.bpm !== null ? periodMs : null;
     const beats = clockBeats + this.phaseOffset.step(dt);
     const frame = grooveFrame(beats + AUDIO_LATENCY_MS / periodMs, periodMs, groove);
-    if (this.pendingAccent) {
-      this.accent.impulse(-0.6 * this.pendingAccent * groove);
-      this.pendingAccent = 0;
-    }
     return {
       groove,
       frame,
-      accent: this.accent.step(dt),
       // 律动明显时才接管：刚开始淡入、快要停下时，让待机动画自然接回来
       authority: smoothstep(0.1, 0.5, groove),
     };

@@ -1,108 +1,175 @@
 /**
- * 节拍时钟：从零散的 onset（鼓点）推出速度和相位，然后自己按拍子走。
+ * 节拍时钟：从起音强度曲线推出速度和相位，然后自己按拍子走。
  *
- * 旧做法是「检测到一个鼓点就动一下」，动作永远落后半拍，而且漏检就停。
- * 跳舞的人是预判拍子、在拍点上落下的，所以这里做成一个锁相环：
- *   1. 用最近几秒的 onset 估计周期：候选周期里，onset 在哪个周期的网格上最整齐
- *   2. 振荡器按周期连续前进；新 onset 落在预测拍点附近时，轻轻把相位拉过去
- *   3. 没有新 onset 时继续按原速走一会儿（漏检、说话打断都不会断），再慢慢淡出
+ * 估计（每 250 ms 一次，用最近 8 秒）：
+ *   1. 速度：对起音强度曲线做自相关，拍子是曲线里最强的周期。
+ *      不挑离散鼓点 —— 真实歌曲里人声、和弦也会冒尖，离散点间隔很乱；
+ *      连续曲线里，弱一些的规律成分也算得进去。
+ *   2. 相位：按这个周期把曲线叠起来（梳状滤波），叠得最整齐的偏移就是拍点位置。
+ *   3. 把握 = 速度稳定 × 声音连续：
+ *      - 说话的重音也有一定节奏，偶尔会连续两三秒像有拍子，但很快就乱了；音乐能稳几十秒。
+ *      - 说话在词句之间有很多停顿，音乐几乎一直有声音（视频里说话配背景音乐时，
+ *        背景音乐是连续的，跟着它晃也合理）。
+ *      两样单看都有重叠，但说话「像有节奏」的时候照样有停顿，相乘就分开了。
  *
- * 一致度（coherence）同时用来区分音乐和说话：说话的 onset 不规律，对不上任何网格。
+ * 振荡器按估计的速度连续前进，估计只用来轻轻校正它：漏检、说话打断都不会断拍。
+ * 只有新速度连续几次明显更强才换速度，切分节奏造成的次要周期偶尔冒头不会把它带偏。
  */
 
-const MIN_PERIOD_MS = 300;        // 200 BPM
-const MAX_PERIOD_MS = 1000;       // 60 BPM
-const PREFERRED_PERIOD_MS = 500;  // 120 BPM：同时对得上 1 拍和 2 拍网格时，偏向常见速度
+const STEP_MS = 10;
 const WINDOW_MS = 8000;
-const MIN_ONSETS = 6;
-
-interface Onset { t: number; w: number }
-
-interface PeriodEstimate {
-  periodMs: number;
-  /** onset 落在网格上的整齐程度 [0, 1] */
-  coherence: number;
-  /**
-   * 扣掉随机也能凑出来的一致度后的显著性 [0, 1]。
-   * onset 少时，随便哪组时间点都能在一百多个候选周期里挑出一个看着整齐的，
-   * 期望值约 2/√n，所以只有明显高于这条线才算真的有拍子。
-   */
-  significance: number;
-  /** 网格偏移：拍点满足 t / periodMs - offset ∈ ℤ */
-  offset: number;
-}
+const MIN_HISTORY_MS = 4000;
+const ANALYSE_EVERY_MS = 250;
+const MIN_PERIOD_MS = 375;        // 160 BPM：再快的歌，人也是按半速跟着晃
+const MAX_PERIOD_MS = 1000;       // 60 BPM
+const PREFERRED_PERIOD_MS = 500;  // 120 BPM：同时对得上 1 拍和 2 拍时，偏向常见速度
+/** 比当前速度强这么多、并且连续出现这么多次，才换速度 */
+const SWITCH_RATIO = 1.25;
+const SWITCH_COUNT = 3;
+/** 两个周期相差在这个比例内算同一个速度 */
+const SAME_TEMPO = 0.05;
+/** 用最近多少次估计判断速度稳不稳（24 次 = 6 秒）：说话的「节奏」最多稳三四秒，音乐能稳几十秒 */
+const AGREEMENT_SPAN = 24;
+/** 曲线断开超过这么久（比如她在说话，不往里送数据），旧数据作废，重新攒 */
+const GAP_RESET_MS = 300;
+/** 声音连续度：最近 6 秒里有多少帧离「响的时候」不到 20 dB */
+const CONTINUITY_WINDOW_MS = 6000;
+const CONTINUITY_RANGE_DB = 20;
+/** 连续度换算成系数的区间：说话通常 0.55–0.73，音乐通常 0.8 以上 */
+const CONTINUITY_SPEECH = 0.68;
+const CONTINUITY_MUSIC = 0.82;
 
 const frac = (x: number): number => x - Math.floor(x);
 /** 把相位差折到 [-0.5, 0.5) */
 const wrapHalf = (x: number): number => frac(x + 0.5) - 0.5;
+const clamp01 = (x: number): number => Math.min(1, Math.max(0, x));
 
-export function estimatePeriod(onsets: Onset[]): PeriodEstimate {
-  const latest = onsets[onsets.length - 1].t;
-  let best = { periodMs: PREFERRED_PERIOD_MS, coherence: 0, offset: 0, score: -1 };
-  let sumW = 0;
-  let sumW2 = 0;
-  for (const onset of onsets) {
-    const w = onset.w * Math.exp(-(latest - onset.t) / 4000);
-    sumW += w;
-    sumW2 += w * w;
+export interface TempoEstimate {
+  periodMs: number;
+  /** 拍点所在的时刻（任一拍） */
+  beatTimeMs: number;
+  /** 自相关峰相对整条曲线中位数高出多少：峰越突出越像有拍子 */
+  contrast: number;
+  /** 打分（含速度先验），用于比较两个候选 */
+  score: number;
+}
+
+/**
+ * 在一段等间隔的起音强度曲线上估计速度和相位。
+ * @param curve 每 STEP_MS 一个点，最后一个点对应 endMs
+ * @param keepPeriodMs 当前锁定的速度：返回它的打分，用来判断要不要换
+ */
+export function estimateTempo(curve: Float32Array, endMs: number, keepPeriodMs?: number): { best: TempoEstimate; kept?: TempoEstimate } | null {
+  const n = curve.length;
+  let mean = 0;
+  for (let i = 0; i < n; i++) mean += curve[i];
+  mean /= n;
+  // 只保留高出平均的部分：起音是「冒尖」，平稳段不该参与
+  const y = new Float32Array(n);
+  for (let i = 0; i < n; i++) y[i] = Math.max(0, curve[i] - mean);
+
+  const ac = (lag: number): number => {
+    let sum = 0;
+    for (let i = lag; i < n; i++) sum += y[i] * y[i - lag];
+    return sum / (n - lag);
+  };
+  const energy = ac(0);
+  if (energy <= 1e-9) return null;
+
+  const minLag = Math.round(MIN_PERIOD_MS / STEP_MS);
+  const maxLag = Math.round(MAX_PERIOD_MS / STEP_MS);
+  const norm = new Float32Array(maxLag + 2);
+  for (let lag = minLag - 1; lag <= maxLag + 1; lag++) norm[lag] = ac(lag) / energy;
+  const sorted = Array.from(norm.slice(minLag, maxLag + 1)).sort((a, b) => a - b);
+  const median = sorted[sorted.length >> 1];
+
+  const prior = (periodMs: number) => Math.exp(-0.5 * (Math.log2(periodMs / PREFERRED_PERIOD_MS) / 0.9) ** 2);
+  const evaluate = (lag: number): TempoEstimate => {
+    // 抛物线插值：10 ms 一格太粗（120 BPM 时约 2%），用相邻两点把峰位置算准
+    const a = norm[lag - 1], b = norm[lag], c = norm[lag + 1];
+    const denominator = a - 2 * b + c;
+    const offset = denominator < 0 ? Math.max(-0.5, Math.min(0.5, 0.5 * (a - c) / denominator)) : 0;
+    const periodMs = (lag + offset) * STEP_MS;
+    return { periodMs, beatTimeMs: beatTime(y, periodMs, endMs), contrast: b - median, score: b * prior(periodMs) };
+  };
+
+  let bestLag = minLag;
+  for (let lag = minLag; lag <= maxLag; lag++) {
+    if (norm[lag] * prior(lag * STEP_MS) > norm[bestLag] * prior(bestLag * STEP_MS)) bestLag = lag;
   }
-  const chance = Math.min(0.95, 2 / Math.sqrt((sumW * sumW) / sumW2));
-  for (let period = MIN_PERIOD_MS; period <= MAX_PERIOD_MS; period *= 1.01) {
-    let re = 0;
-    let im = 0;
-    let total = 0;
-    for (const onset of onsets) {
-      // 越新的 onset 权重越大，换歌后几秒内就能跟上新速度
-      const w = onset.w * Math.exp(-(latest - onset.t) / 4000);
-      const angle = 2 * Math.PI * (onset.t / period);
-      re += w * Math.cos(angle);
-      im += w * Math.sin(angle);
-      total += w;
+  const best = evaluate(bestLag);
+  if (keepPeriodMs === undefined) return { best };
+  // 当前速度附近（±SAME_TEMPO）的局部峰
+  const lo = Math.max(minLag, Math.floor(keepPeriodMs * (1 - SAME_TEMPO) / STEP_MS));
+  const hi = Math.min(maxLag, Math.ceil(keepPeriodMs * (1 + SAME_TEMPO) / STEP_MS));
+  let keptLag = lo;
+  for (let lag = lo; lag <= hi; lag++) if (norm[lag] > norm[keptLag]) keptLag = lag;
+  return { best, kept: evaluate(keptLag) };
+}
+
+/** 梳状叠加：按周期把最近 4 秒叠起来，最整齐的偏移就是拍点 */
+function beatTime(y: Float32Array, periodMs: number, endMs: number): number {
+  const period = periodMs / STEP_MS;
+  const beats = Math.max(1, Math.floor(4000 / periodMs));
+  let bestOffset = 0;
+  let bestSum = -1;
+  for (let offset = 0; offset < period; offset++) {
+    let sum = 0;
+    for (let k = 0; k < beats; k++) {
+      const i = Math.round(y.length - 1 - offset - k * period);
+      if (i < 0) break;
+      // 相邻一格也算上，容忍几毫秒的抖动
+      sum += y[i] + 0.5 * ((y[i - 1] ?? 0) + (y[i + 1] ?? 0));
     }
-    const coherence = Math.hypot(re, im) / total;
-    const octaves = Math.log2(period / PREFERRED_PERIOD_MS);
-    const prior = Math.exp(-0.5 * (octaves / 0.6) ** 2);
-    const score = coherence * (0.6 + 0.4 * prior);
-    if (score > best.score) {
-      best = { periodMs: period, coherence, offset: frac(Math.atan2(im, re) / (2 * Math.PI)), score };
-    }
+    if (sum > bestSum) { bestSum = sum; bestOffset = offset; }
   }
-  const significance = Math.max(0, (best.coherence - chance) / (1 - chance));
-  return { periodMs: best.periodMs, coherence: best.coherence, significance, offset: best.offset };
+  return endMs - bestOffset * STEP_MS;
 }
 
 export class BeatClock {
-  private onsets: Onset[] = [];
+  private readonly curve = new Float32Array(WINDOW_MS / STEP_MS);
+  /** 与 curve 对齐的音量（dB） */
+  private readonly levels = new Float32Array(WINDOW_MS / STEP_MS);
+  /** curve 里已有多少有效点（攒够 MIN_HISTORY_MS 才开始估计） */
+  private filled = 0;
+  private lastSample: { t: number; v: number; db: number } | null = null;
+  private nextAnalysisMs = 0;
+
   private periodMs: number | null = null;
-  private significance = 0;
-  private lastOnsetMs = -Infinity;
+  private candidate: { periodMs: number; count: number } | null = null;
+  private readonly recentPeriods: number[] = [];
+  private contrast = 0;
+  private continuity = 0;
+  private confidenceValue = 0;
+  private lastAnalysisMs = -Infinity;
+
   /** 连续节拍位置：整数部分是第几拍，小数部分是拍内相位 */
   private positionValue = 0;
   private clockMs: number | null = null;
 
-  onOnset(tMs: number, strength = 1): void {
-    this.lastOnsetMs = tMs;
-    this.onsets.push({ t: tMs, w: Math.max(0.1, strength) });
-    this.onsets = this.onsets.filter(onset => tMs - onset.t <= WINDOW_MS);
-    if (this.onsets.length < MIN_ONSETS) return;
-
-    const estimate = estimatePeriod(this.onsets);
-    this.significance = estimate.significance;
-    const gridPhase = frac(tMs / estimate.periodMs - estimate.offset);
-
-    if (this.periodMs === null || Math.abs(estimate.periodMs - this.periodMs) / this.periodMs > 0.12) {
-      // 第一次锁定或换了速度：直接采用新周期，相位对齐网格
-      this.syncClock(tMs);
-      this.periodMs = estimate.periodMs;
-      this.positionValue = Math.floor(this.positionValue) + gridPhase;
+  /** 每帧送入这一帧的起音强度和音量（RMS） */
+  pushFrame(flux: number, rms: number, timeMs: number): void {
+    const db = 20 * Math.log10(rms + 1e-6);
+    if (this.lastSample && timeMs - this.lastSample.t > GAP_RESET_MS) this.clearHistory();
+    if (!this.lastSample) {
+      this.lastSample = { t: timeMs, v: flux, db };
       return;
     }
-
-    this.syncClock(tMs);
-    this.periodMs += (estimate.periodMs - this.periodMs) * 0.25;
-    const error = wrapHalf(gridPhase - this.phaseAt(tMs));
-    // 只校正落在预测拍点附近的 onset：大幅偏离的多半是反拍或误检
-    if (Math.abs(error) < 0.25) this.positionValue += error * 0.35;
+    // 帧间隔不固定（掉帧、远程桌面），线性插值到 10 ms 的等间隔网格上
+    const { t: t0, v: v0, db: db0 } = this.lastSample;
+    for (let t = Math.floor(t0 / STEP_MS) * STEP_MS + STEP_MS; t <= timeMs; t += STEP_MS) {
+      const k = (t - t0) / Math.max(1e-6, timeMs - t0);
+      this.curve.copyWithin(0, 1);
+      this.curve[this.curve.length - 1] = v0 + (flux - v0) * k;
+      this.levels.copyWithin(0, 1);
+      this.levels[this.levels.length - 1] = db0 + (db - db0) * k;
+      this.filled = Math.min(this.curve.length, this.filled + 1);
+    }
+    this.lastSample = { t: timeMs, v: flux, db };
+    if (this.filled * STEP_MS >= MIN_HISTORY_MS && timeMs >= this.nextAnalysisMs) {
+      this.nextAnalysisMs = timeMs + ANALYSE_EVERY_MS;
+      this.analyse(timeMs);
+    }
   }
 
   /** 每帧调用，让时钟走到 nowMs */
@@ -124,30 +191,105 @@ export class BeatClock {
     return this.positionValue;
   }
 
-  /** 是在放有规律的音乐的把握 [0, 1]：网格显著性 × 最近是否还有 onset */
+  /** 是在放有规律的音乐的把握 [0, 1]；几秒没有新估计（比如她一直在说话）就慢慢降下去 */
   confidence(nowMs: number): number {
-    if (!this.periodMs) return 0;
-    const recent = this.onsets.filter(onset => nowMs - onset.t <= WINDOW_MS).length;
-    const silence = nowMs - this.lastOnsetMs;
-    const grace = 2 * this.periodMs;
-    const fade = silence <= grace ? 1 : Math.exp(-(silence - grace) / 1500);
-    return recent < MIN_ONSETS ? 0 : this.significance * fade;
+    const stale = nowMs - this.lastAnalysisMs;
+    return stale <= 2000 ? this.confidenceValue : this.confidenceValue * Math.exp(-(stale - 2000) / 3000);
+  }
+
+  /** 诊断用 */
+  diagnostics() {
+    return {
+      contrast: Number(this.contrast.toFixed(3)),
+      agreement: Number(this.agreement().toFixed(2)),
+      continuity: Number(this.continuity.toFixed(2)),
+    };
   }
 
   reset(): void {
-    this.onsets = [];
+    this.clearHistory();
     this.periodMs = null;
-    this.significance = 0;
-    this.lastOnsetMs = -Infinity;
+    this.candidate = null;
+    this.recentPeriods.length = 0;
+    this.contrast = 0;
+    this.continuity = 0;
+    this.confidenceValue = 0;
+    this.lastAnalysisMs = -Infinity;
     this.positionValue = 0;
     this.clockMs = null;
   }
 
-  private phaseAt(tMs: number): number {
-    return frac(this.positionValue + (this.periodMs ? (tMs - (this.clockMs ?? tMs)) / this.periodMs : 0));
+  private clearHistory(): void {
+    this.curve.fill(0);
+    this.levels.fill(-120);
+    this.filled = 0;
+    this.lastSample = null;
   }
 
-  /** onset 事件可能比上一帧时间还早一点，所以只往前走，不倒退 */
+  /** 最近 6 秒里有多少帧离「响的时候」（90 分位）不到 20 dB */
+  private measureContinuity(): number {
+    const count = Math.min(this.filled, CONTINUITY_WINDOW_MS / STEP_MS);
+    const recent = Array.from(this.levels.subarray(this.levels.length - count));
+    const reference = [...recent].sort((a, b) => a - b)[Math.floor(count * 0.9)];
+    return recent.filter(db => db > reference - CONTINUITY_RANGE_DB).length / count;
+  }
+
+  private agreement(): number {
+    if (!this.periodMs || !this.recentPeriods.length) return 0;
+    const same = this.recentPeriods.filter(p => Math.abs(p - this.periodMs!) / this.periodMs! <= SAME_TEMPO).length;
+    return same / AGREEMENT_SPAN;
+  }
+
+  private analyse(nowMs: number): void {
+    const result = estimateTempo(this.curve, nowMs, this.periodMs ?? undefined);
+    this.lastAnalysisMs = nowMs;
+    if (!result) {
+      this.contrast = 0;
+      this.confidenceValue *= 0.7;
+      return;
+    }
+    const { best, kept } = result;
+    this.recentPeriods.push(best.periodMs);
+    if (this.recentPeriods.length > AGREEMENT_SPAN) this.recentPeriods.shift();
+
+    let chosen = kept ?? best;
+    if (!this.periodMs) {
+      this.syncClock(nowMs);
+      this.periodMs = best.periodMs;
+      chosen = best;
+      this.positionValue = Math.floor(this.positionValue) + frac((nowMs - best.beatTimeMs) / best.periodMs);
+    } else if (kept && Math.abs(best.periodMs - kept.periodMs) / kept.periodMs > SAME_TEMPO && best.score > kept.score * SWITCH_RATIO) {
+      // 另一个速度明显更强：连续出现几次才换，偶尔冒头的次要周期不理
+      const same = this.candidate && Math.abs(this.candidate.periodMs - best.periodMs) / best.periodMs <= SAME_TEMPO;
+      this.candidate = { periodMs: best.periodMs, count: same ? this.candidate!.count + 1 : 1 };
+      if (this.candidate.count >= SWITCH_COUNT) {
+        this.syncClock(nowMs);
+        this.periodMs = best.periodMs;
+        chosen = best;
+        this.candidate = null;
+        this.recentPeriods.length = 0;
+        this.positionValue = Math.floor(this.positionValue) + frac((nowMs - best.beatTimeMs) / best.periodMs);
+      }
+    } else {
+      this.candidate = null;
+    }
+
+    // 周期慢慢靠过去，相位轻轻拉过去（画面层还会再平滑一次）。刚锁定或刚换速度时这里是空操作
+    this.syncClock(nowMs);
+    this.periodMs += (chosen.periodMs - this.periodMs) * 0.3;
+    const gridPhase = frac((nowMs - chosen.beatTimeMs) / chosen.periodMs);
+    this.positionValue += 0.3 * wrapHalf(gridPhase - this.phase);
+
+    this.contrast = chosen.contrast;
+    this.continuity = this.measureContinuity();
+    const continuous = clamp01((this.continuity - CONTINUITY_SPEECH) / (CONTINUITY_MUSIC - CONTINUITY_SPEECH));
+    // 速度稳定 × 声音连续；峰太平（几乎没起伏）时再打个折
+    const target = this.agreement() * continuous * clamp01(chosen.contrast / 0.06);
+    // 升得快、降得慢：歌里短暂的安静段落不该让她停下来；说话时把握本来就升不起来
+    this.confidenceValue += (target - this.confidenceValue) * (target > this.confidenceValue ? 0.35 : 0.12);
+  }
+
+  /** 只往前走，不倒退 */
   private syncClock(nowMs: number): void {
     if (this.clockMs !== null && this.periodMs && nowMs > this.clockMs) {
       this.positionValue += (nowMs - this.clockMs) / this.periodMs;

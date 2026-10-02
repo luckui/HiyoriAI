@@ -1,11 +1,11 @@
 /**
- * 系统音频监听：给灵动层送两样东西，让模型跟着电脑上放的音乐动
- *   - 音量：每帧的 RMS，决定律动幅度（主歌轻、副歌重）
- *   - 鼓点：频谱通量检测出的 onset，喂给节拍时钟推算速度和相位
+ * 系统音频监听：每帧给灵动层送两样东西，让模型跟着电脑上放的音乐动
+ *   - 起音强度：频谱「突然变响了多少」，节拍时钟从这条曲线推算速度和相位
+ *   - 音量：RMS，决定律动幅度，也用来判断声音是否连续（区分音乐和说话）
  *
  *   getDisplayMedia(loopback) → MediaStreamSource → AnalyserNode
- *     → 每帧：时域 RMS → liveliness.setMusicLevel
- *             dB 频谱 → OnsetDetector → liveliness.onMusicOnset
+ *     → 每帧：dB 频谱 → SpectralFlux ┐
+ *             时域 RMS ──────────────┴→ liveliness.setMusicFrame
  *
  * 不与 hearing.ts 共用任何状态，完全独立的 AudioContext。
  * 自动启动：页面加载后立即尝试；若需要用户手势，则在首次点击时重试。
@@ -13,7 +13,7 @@
 
 import { liveliness } from './liveliness/motor';
 import { rmsOfByteTimeDomain } from './liveliness/dynamics';
-import { OnsetDetector } from './liveliness/onsetDetector';
+import { SpectralFlux } from './liveliness/spectralFlux';
 
 /** 1024 点 @48kHz ≈ 21 ms 窗口、47 Hz 一个频点：底鼓能分出来，时间又不至于糊 */
 const FFT_SIZE = 1024;
@@ -33,7 +33,7 @@ function stop(): void {
   try { void _audioCtx?.close(); } catch { /* noop */ }
   _stream = undefined;
   _audioCtx = undefined;
-  liveliness.setMusicLevel(0);
+  liveliness.setMusicFrame(0, 0, performance.now());
   console.log('[BeatDetector] 已停止');
 }
 
@@ -69,19 +69,17 @@ async function start(): Promise<void> {
   const ctx = new AudioContext();
   const analyser = ctx.createAnalyser();
   analyser.fftSize = FFT_SIZE;
-  // 默认 0.8 的频谱平滑会把鼓点的瞬态抹平，检测 onset 必须关掉
+  // 默认 0.8 的频谱平滑会把鼓点的瞬态抹平，算起音强度必须关掉
   analyser.smoothingTimeConstant = 0;
   ctx.createMediaStreamSource(audioStream).connect(analyser);
 
   const samples = new Uint8Array(FFT_SIZE);
   const spectrum = new Float32Array(analyser.frequencyBinCount);
-  const detector = new OnsetDetector(ctx.sampleRate / FFT_SIZE);
+  const flux = new SpectralFlux(ctx.sampleRate / FFT_SIZE);
   const tick = (): void => {
     analyser.getByteTimeDomainData(samples);
-    liveliness.setMusicLevel(rmsOfByteTimeDomain(samples));
     analyser.getFloatFrequencyData(spectrum);
-    const onset = detector.push(spectrum, performance.now());
-    if (onset) liveliness.onMusicOnset(onset.timeMs, onset.strength);
+    liveliness.setMusicFrame(flux.push(spectrum), rmsOfByteTimeDomain(samples), performance.now());
     _rafId = requestAnimationFrame(tick);
   };
 
