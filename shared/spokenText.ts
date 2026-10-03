@@ -103,8 +103,9 @@ function stripBracketAsides(text: string): string {
     .replace(/（[^（）]*）/g, '')
     .replace(/\([^()]*\)/g, '')
     .replace(/【[^【】]*】/g, '')
-    .replace(/「[^「」]*」/g, '')
-    .replace(/『[^『』]*』/g, '')
+    // 引号里多半是要读出来的话（她说「你好」），保留内容、去掉引号
+    .replace(/「([^「」]*)」/g, '$1')
+    .replace(/『([^『』]*)』/g, '$1')
     .replace(/《([^《》]*)》/g, '$1');
 }
 
@@ -119,7 +120,10 @@ function normalizeInlineText(text: string, language: Exclude<SpokenLanguage, 'au
     .replace(RE_KAOMOJI, '，')
     .replace(/[★☆♪♫☀☁❤♡♥→←↑↓]/g, '')
     .replace(/[ \t]+/g, ' ')
-    .replace(/\s*([，。！？；：.!?;:])\s*/g, '$1')
+    .replace(/\s*([，。！？；：])\s*/g, '$1')
+    // 英文标点前不留空格、后面留一个：「something. So」的空格是切句判断句号的依据
+    .replace(/\s+([.!?;:])/g, '$1')
+    .replace(/([.!?;:])\s+/g, '$1 ')
     .replace(/,\s*/g, ', ')
     .replace(/[，,]{2,}/g, '，')
     .replace(/^[，,。！？；：\s]+|[，,。！？；：\s]+$/g, '')
@@ -153,10 +157,10 @@ export function normalizeSpokenText(text: string, options: SpokenTextOptions = {
     .map(line => normalizeLine(line, language))
     .filter((line): line is string => !!line);
 
+  // 以英文标点结尾的行和下一行之间留空格，否则「line one.Line two」切不开句、英文单词也会粘在一起
   return lines
-    .join('')
+    .reduce((joined, line) => (joined && /[.!?;:]$/.test(joined) ? `${joined} ${line}` : joined + line), '')
     .replace(/\s+/g, ' ')
-    .replace(/([。！？.!?])([^\s。！？.!?])/g, '$1$2')
     .trim();
 }
 
@@ -165,22 +169,131 @@ export function hasSpeakableContent(sentence: string): boolean {
   return /[\p{L}\p{N}]/u.test(sentence);
 }
 
-export function splitSpokenText(text: string, options: SplitSpokenTextOptions = {}): string[] {
-  const maxSegments = options.maxSegments ?? 8;
-  const maxSentenceLength = options.maxSentenceLength ?? 180;
-  const normalized = text.trim();
-  if (!normalized) return [];
-  const raw = normalized.match(/[^。！？!?；;.]+[。！？!?；;.]?/g) ?? [normalized];
-  const chunks: string[] = [];
-  for (const sentence of raw.map(value => value.trim()).filter(hasSpeakableContent)) {
-    if (sentence.length <= maxSentenceLength) {
-      chunks.push(sentence);
-      continue;
-    }
-    for (let i = 0; i < sentence.length; i += maxSentenceLength) {
-      chunks.push(sentence.slice(i, i + maxSentenceLength));
+/**
+ * 切句：把一段话切成一句句送去合成。
+ *
+ * GPT-SoVITS 类模型（Genie）一次合成一句最稳，太长、太短都会出问题：
+ * - 太短（「诶？」「哈哈！」）：实测常被读错音或出一段怪声 → 并到相邻句子里；
+ * - 太长：注意力容易散，还可能超出单次生成的长度上限 → 在逗号、顿号处断开，每段 40 字左右；
+ * - 句号要认得出不是句号的点：3.14、v2.0.2、example.com 都不能在点上切开。
+ */
+
+/** 句末标点：一句话到这里结束（英文句点另行判断） */
+const SENTENCE_END = new Set(['。', '！', '？', '!', '?', '；', ';']);
+/** 紧跟在句末标点后、仍属于这一句的收尾符号（引号、括号、连续的标点） */
+const TRAILING = /[」』”’"）)】\]…～~！？!?。]/u;
+/** 长句可以断开的地方 */
+const CLAUSE_BREAK = /[，,、：:]/u;
+/** 少于这么多个可读字符的句子并到相邻句子里 */
+const MIN_SPEAKABLE_CHARS = 5;
+/** 超过这么多个可读字符的句子在逗号处断开，每段尽量不超过 TARGET */
+const LONG_SENTENCE_CHARS = 60;
+const TARGET_CLAUSE_CHARS = 40;
+
+function speakableLength(sentence: string): number {
+  return sentence.match(/[\p{L}\p{N}]/gu)?.length ?? 0;
+}
+
+function joinSentences(a: string, b: string): string {
+  return /[A-Za-z0-9][.!?,]?$/.test(a) && /^[A-Za-z0-9]/.test(b) ? `${a} ${b}` : a + b;
+}
+
+/** 英文句点是不是句末：数字中间（3.14）、后面紧跟字母（example.com、e.g.）、省略号中间都不是 */
+function isSentencePeriod(chars: string[], i: number): boolean {
+  const prev = chars[i - 1] ?? '';
+  const next = chars[i + 1] ?? '';
+  if (/\d/.test(prev) && /\d/.test(next)) return false;
+  if (/[A-Za-z0-9.]/.test(next)) return false;
+  return true;
+}
+
+function splitSentences(text: string): string[] {
+  const chars = [...text];
+  const sentences: string[] = [];
+  let current = '';
+  for (let i = 0; i < chars.length; i++) {
+    current += chars[i];
+    const ends = SENTENCE_END.has(chars[i]) || (chars[i] === '.' && isSentencePeriod(chars, i));
+    if (!ends) continue;
+    while (i + 1 < chars.length && TRAILING.test(chars[i + 1])) current += chars[++i];
+    sentences.push(current.trim());
+    current = '';
+  }
+  if (current.trim()) sentences.push(current.trim());
+  return sentences;
+}
+
+/** 长句在逗号处断开；一个分句本身就超过 hardMax（没有标点的长串）才硬切 */
+function splitLongSentence(sentence: string, hardMax: number): string[] {
+  if (speakableLength(sentence) <= LONG_SENTENCE_CHARS) return [sentence];
+  const clauses: string[] = [];
+  let current = '';
+  for (const char of sentence) {
+    current += char;
+    if (CLAUSE_BREAK.test(char)) {
+      clauses.push(current);
+      current = '';
     }
   }
-  if (chunks.length <= maxSegments) return chunks;
-  return [...chunks.slice(0, maxSegments - 1), chunks.slice(maxSegments - 1).join('')];
+  if (current) clauses.push(current);
+
+  const pieces: string[] = [];
+  let piece = '';
+  for (const clause of clauses) {
+    if (piece && speakableLength(piece) + speakableLength(clause) > TARGET_CLAUSE_CHARS) {
+      pieces.push(piece);
+      piece = '';
+    }
+    piece += clause;
+  }
+  if (piece) pieces.push(piece);
+
+  return pieces.flatMap((p) => {
+    if (p.length <= hardMax) return [p.trim()];
+    const chunks: string[] = [];
+    const chars = [...p];
+    for (let i = 0; i < chars.length; i += hardMax) chunks.push(chars.slice(i, i + hardMax).join('').trim());
+    return chunks;
+  }).filter(Boolean);
+}
+
+function mergeShortSentences(sentences: string[]): string[] {
+  const merged: string[] = [];
+  let pending = '';
+  for (const sentence of sentences) {
+    pending = pending ? joinSentences(pending, sentence) : sentence;
+    if (speakableLength(pending) >= MIN_SPEAKABLE_CHARS) {
+      merged.push(pending);
+      pending = '';
+    }
+  }
+  if (pending) {
+    if (merged.length) merged[merged.length - 1] = joinSentences(merged[merged.length - 1], pending);
+    else merged.push(pending);
+  }
+  return merged;
+}
+
+/** 句数超过上限：反复合并相邻两句里加起来最短的一对，而不是把剩下的全堆进最后一句 */
+function limitSegments(sentences: string[], maxSegments: number): string[] {
+  const list = [...sentences];
+  while (list.length > Math.max(1, maxSegments)) {
+    let best = 0;
+    for (let i = 1; i < list.length - 1; i++) {
+      if (list[i].length + list[i + 1].length < list[best].length + list[best + 1].length) best = i;
+    }
+    list.splice(best, 2, joinSentences(list[best], list[best + 1]));
+  }
+  return list;
+}
+
+export function splitSpokenText(text: string, options: SplitSpokenTextOptions = {}): string[] {
+  const maxSegments = options.maxSegments ?? 8;
+  const hardMax = options.maxSentenceLength ?? 80;
+  const normalized = text.trim();
+  if (!normalized) return [];
+  const sentences = splitSentences(normalized)
+    .filter(hasSpeakableContent)
+    .flatMap((sentence) => splitLongSentence(sentence, hardMax));
+  return limitSegments(mergeShortSentences(sentences), maxSegments);
 }
