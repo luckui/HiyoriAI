@@ -5,3 +5,5 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 pydantic>=2.0
 pyyaml>=6.0
+# 多音字模型 g2pW 推理前把句子转成繁体（g2pw.py）
+opencc>=1.1

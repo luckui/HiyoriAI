@@ -67,7 +67,8 @@
           "!.server.pid",
           "!GenieData/**",
           "!CharacterModels/**",
-          "!.cache/**"
+          "!.cache/**",
+          "!__tests__/**"
         ]
       },
       {

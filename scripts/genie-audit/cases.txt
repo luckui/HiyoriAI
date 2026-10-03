@@ -1,0 +1,169 @@
+# Genie 中文读音回归用例：句子 | 应读的拼音
+#
+# 拼音按实际该读的写：数字声调，5 = 轻声；口语儿化（一会儿、哪儿）不读「儿」，其余「儿」写成独立的 er + 前一字的声调。
+# 比对时三声变调（3↔2）和轻声的出入只算「声调出入」，不算错；声母韵母不同或其他声调不同才算读错。
+# 发现新的读错，先把句子加到这里，再修 text_frontend.py / pronunciation.txt，跑 audit.py 确认全部通过。
+
+# 多音字
+我去银行取钱。 | wo3 qu4 yin2 hang2 qu3 qian2
+这样不行。 | zhe4 yang4 bu4 xing2
+我写了一行代码。 | wo3 xie3 le5 yi4 hang2 dai4 ma3
+他在这个行业很久了。 | ta1 zai4 zhe4 ge4 hang2 ye4 hen2 jiu3 le5
+你长大了。 | ni3 zhang3 da4 le5
+这条路很长。 | zhe4 tiao2 lu4 hen3 chang2
+校长来了。 | xiao4 zhang3 lai2 le5
+这很重要。 | zhe4 hen3 zhong4 yao4
+我们重新开始吧。 | wo3 men5 chong2 xin1 kai1 shi3 ba5
+别重复了。 | bie2 chong2 fu4 le5
+你还有钱吗？ | ni2 hai2 you3 qian2 ma5
+记得还钱。 | ji4 de5 huan2 qian2
+我了解了。 | wo3 liao2 jie3 le5
+我受不了了。 | wo3 shou4 bu5 liao3 le5
+我觉得不错。 | wo3 jue2 de5 bu2 cuo4
+我得走了。 | wo3 dei3 zou3 le5
+他跑得很快。 | ta1 pao3 de5 hen3 kuai4
+你得到了什么？ | ni3 de2 dao4 le5 shen2 me5
+她慢慢地走过来。 | ta1 man4 man4 de5 zou3 guo4 lai2
+这个地方真好。 | zhe4 ge4 di4 fang1 zhen1 hao3
+别着急，慢慢来。 | bie2 zhao2 ji2 man4 man4 lai2
+他睡着了。 | ta1 shui4 zhao2 le5
+她看着我笑。 | ta1 kan4 zhe5 wo3 xiao4
+因为下雨了。 | yin1 wei4 xia4 yu3 le5
+他成为了老师。 | ta1 cheng2 wei2 le5 lao3 shi1
+北京是中国的首都。 | bei3 jing1 shi4 zhong1 guo2 de5 shou3 du1
+我们都是朋友。 | wo3 men5 dou1 shi4 peng2 you5
+今天很暖和。 | jin1 tian1 hen3 nuan3 huo5
+你的爱好是什么？ | ni3 de5 ai4 hao4 shi4 shen2 me5
+我很好奇。 | wo3 hen3 hao4 qi2
+该睡觉了。 | gai1 shui4 jiao4 le5
+我喜欢听音乐。 | wo3 xi3 huan5 ting1 yin1 yue4
+祝你快乐。 | zhu4 ni3 kuai4 le4
+这个很便宜。 | zhe4 ge4 hen3 pian2 yi5
+这样很方便。 | zhe4 yang4 hen3 fang1 bian4
+我发现了一个问题。 | wo3 fa1 xian4 le5 yi2 ge4 wen4 ti2
+你的头发好长。 | ni3 de5 tou2 fa5 hao3 chang2
+差不多就行。 | cha4 bu5 duo1 jiu4 xing2
+他去出差了。 | ta1 qu4 chu1 chai1 le5
+我只有一只猫。 | wo3 zhi3 you3 yi4 zhi1 mao1
+房间很干净。 | fang2 jian1 hen3 gan1 jing4
+我们去干活吧。 | wo3 men5 qu4 gan4 huo2 ba5
+春天适合种树。 | chun1 tian1 shi4 he2 zhong4 shu4
+把音量调大一点。 | ba3 yin1 liang4 tiao2 da4 yi4 dian3
+你有空吗？ | ni3 you3 kong4 ma5
+他是教数学的。 | ta1 shi4 jiao1 shu4 xue2 de5
+这是一个好处。 | zhe4 shi4 yi2 ge4 hao3 chu4
+我来处理。 | wo3 lai2 chu2 li3
+像小孩子似的。 | xiang4 xiao3 hai2 zi5 shi4 de5
+我把书给你。 | wo3 ba3 shu1 gei2 ni3
+这个模型很大。 | zhe4 ge4 mo2 xing2 hen3 da4
+她的角色很可爱。 | ta1 de5 jue2 se4 hen2 ke3 ai4
+我会尽力的。 | wo3 hui4 jin4 li4 de5
+你应该休息。 | ni3 ying1 gai1 xiu1 xi5
+我背着书包。 | wo3 bei1 zhe5 shu1 bao1
+那你呢？ | na4 ni3 ne5
+还是算了吧。 | hai2 shi4 suan4 le5 ba5
+我一个人在家。 | wo3 yi2 ge4 ren2 zai4 jia1
+我们一起去吧。 | wo3 men5 yi4 qi3 qu4 ba5
+他是第一名。 | ta1 shi4 di4 yi1 ming2
+你看一看。 | ni3 kan4 yi5 kan4
+这不是我的。 | zhe4 bu2 shi4 wo3 de5
+对不起。 | dui4 bu5 qi3
+你好呀。 | ni2 hao3 ya5
+这个东西很漂亮。 | zhe4 ge4 dong1 xi5 hen3 piao4 liang5
+数一数有几个。 | shu3 yi5 shu3 you2 ji3 ge4
+这个大夫很好。 | zhe4 ge4 dai4 fu5 hen2 hao3
+我们要相互帮助。 | wo3 men5 yao4 xiang1 hu4 bang1 zhu4
+她弹钢琴。 | ta1 tan2 gang1 qin2
+子弹飞过来了。 | zi3 dan4 fei1 guo4 lai2 le5
+我没有什么要说的。 | wo3 mei2 you3 shen2 me5 yao4 shuo1 de5
+她笑得合不拢嘴。 | ta1 xiao4 de5 he2 bu5 long2 zui3
+这首歌真好听。 | zhe4 shou3 ge1 zhen1 hao3 ting1
+我的系统出问题了。 | wo3 de5 xi4 tong3 chu1 wen4 ti2 le5
+别把衣服弄脏了。 | bie2 ba3 yi1 fu5 nong4 zang1 le5
+心脏跳得很快。 | xin1 zang4 tiao4 de5 hen3 kuai4
+今天的任务完成了。 | jin1 tian1 de5 ren4 wu5 wan2 cheng2 le5
+我们得想想办法。 | wo3 men5 dei3 xiang2 xiang5 ban4 fa3
+这件事说来话长。 | zhe4 jian4 shi4 shuo1 lai2 hua4 chang2
+他长得很高。 | ta1 zhang3 de5 hen3 gao1
+答应我好吗？ | da1 ying5 wo3 hao3 ma5
+给我答案。 | gei2 wo3 da2 an4
+这个剧的结局很好。 | zhe4 ge4 ju4 de5 jie2 ju2 hen2 hao3
+我结婚了。 | wo3 jie2 hun1 le5
+我们一会儿见。 | wo3 men5 yi2 hui4 jian4
+你在哪儿？ | ni3 zai4 na3
+我的女儿很可爱。 | wo3 de5 nv3 er2 hen2 ke3 ai4
+
+# 数字、符号、日期
+我有2个苹果。 | wo3 you3 liang3 ge4 ping2 guo3
+今年是2026年。 | jin1 nian2 shi4 er4 ling2 er4 liu4 nian2
+圆周率是3.14。 | yuan2 zhou1 lv4 shi4 san1 dian3 yi1 si4
+完成了50%。 | wan2 cheng2 le5 bai3 fen1 zhi1 wu3 shi2
+现在是10:30。 | xian4 zai4 shi4 shi2 dian3 ban4
+今天-5℃。 | jin1 tian1 ling2 xia4 wu3 du4
+他考了第2名。 | ta1 kao3 le5 di4 er4 ming2
+一共1000块。 | yi2 gong4 yi4 qian1 kuai4
+我今年18岁。 | wo3 jin1 nian2 shi2 ba1 sui4
+价格是2.5倍。 | jia4 ge2 shi4 er4 dian3 wu3 bei4
+还剩1/2。 | hai2 sheng4 er4 fen1 zhi1 yi1
+2026年10月3日。 | er4 ling2 er4 liu4 nian2 shi2 yue4 san1 ri4
+我跑了5km。 | wo3 pao3 le5 wu3 qian1 mi3
+等我5分钟。 | deng3 wo3 wu3 fen1 zhong1
+第12章。 | di4 shi2 er4 zhang1
+排名第1。 | pai2 ming2 di4 yi1
+有20多个人。 | you3 er4 shi2 duo1 ge4 ren2
+大约2万人。 | da4 yue1 liang3 wan4 ren2
+打电话给10086。 | da3 dian4 hua4 gei3 yao1 ling2 ling2 ba1 liu4
+
+# 语气词、拟声
+嗯，好的。 | en1 hao3 de5
+诶，你来了？ | ei4 ni3 lai2 le5
+哈哈，太好了。 | ha1 ha1 tai4 hao3 le5
+哇，好厉害！ | wa1 hao3 li4 hai5
+嘿嘿，被你发现了。 | hei1 hei1 bei4 ni3 fa1 xian4 le5
+呜呜，好难过。 | wu1 wu1 hao3 nan2 guo4
+唔，让我想想。 | wu2 rang4 wo3 xiang2 xiang5
+哼，不理你了。 | heng1 bu4 li3 ni3 le5
+好啦好啦。 | hao3 la5 hao3 la5
+喔，原来是这样。 | o1 yuan2 lai2 shi4 zhe4 yang4
+哎呀，我忘了。 | ai1 ya1 wo3 wang4 le5
+唉，真累啊。 | ai4 zhen1 lei4 a5
+嘛，也没办法。 | ma5 ye3 mei2 ban4 fa3
+呀，下雨了。 | ya1 xia4 yu3 le5
+欸，等等我。 | ei4 deng2 deng3 wo3
+
+# 网络、口语
+这个bug修好了。 | zhe4 ge4 xiu1 hao3 le5
+太卷了。 | tai4 juan3 le5
+
+# 体检（DeepSeek 生成的 Hiyori 回复）里发现的
+弹幕都在刷礼物。 | dan4 mu4 dou1 zai4 shua1 li3 wu4
+你在循环里调用了阻塞函数。 | ni3 zai4 xun2 huan2 li3 diao4 yong4 le5 zu3 se4 han2 shu4
+功率是1000瓦。 | gong1 lv4 shi4 yi4 qian1 wa3
+把8000端口关掉。 | ba3 ba1 qian1 duan1 kou3 guan1 diao4
+我有点睡不着。 | wo3 you2 dian3 shui4 bu5 zhao2
+早餐得吃好。 | zao2 can1 dei3 chi1 hao3
+走了这么长的路。 | zou3 le5 zhe4 me5 chang2 de5 lu4
+先把声音调小一点。 | xian1 ba3 sheng1 yin1 tiao2 xiao3 yi4 dian3
+重构之前先写测试。 | chong2 gou4 zhi1 qian2 xian1 xie3 ce4 shi4
+好喽，出发喽！ | hao3 lou5 chu1 fa1 lou5
+我们一行人去爬山。 | wo3 men5 yi4 xing2 ren2 qu4 pa2 shan1
+这关卡太难了。 | zhe4 guan1 qia3 tai4 nan2 le5
+缓存是不是只增不减？ | huan3 cun2 shi4 bu2 shi4 zhi3 zeng1 bu4 jian3
+你别只说不做。 | ni3 bie2 zhi3 shuo1 bu2 zuo4
+你别背着我背单词。 | ni3 bie2 bei4 zhe5 wo3 bei4 dan1 ci2
+陪你说会儿话。 | pei2 ni3 shuo1 hui4 hua4
+这会儿又来了。 | zhe4 hui4 you4 lai2 le5
+尽管你尽了力。 | jin2 guan3 ni3 jin4 le5 li4
+花种是你种的。 | hua1 zhong3 shi4 ni3 zhong4 de5
+房间很干净，我们去干活吧。 | fang2 jian1 hen3 gan1 jing4 wo3 men5 qu4 gan4 huo2 ba5
+不要着急。 | bu2 yao4 zhao2 ji2
+我们去数羊吧。 | wo3 men5 qu4 shu3 yang2 ba5
+不行我教你。 | bu4 xing2 wo3 jiao1 ni3
+别一个人闷着。 | bie2 yi2 ge4 ren2 men1 zhe5
+温度下分子几乎不动。 | wen1 du4 xia4 fen1 zi3 ji1 hu1 bu2 dong4
+验证码是4096。 | yan4 zheng4 ma3 shi4 si4 ling2 jiu3 liu4
+报错404了。 | bao4 cuo4 si4 bai3 ling2 si4 le5
+我们去打卡吧。 | wo3 men5 qu4 da3 ka3 ba5
+这个人好帅。 | zhe4 ge4 ren2 hao3 shuai4
+我的女儿很可爱，儿子也是。 | wo3 de5 nv3 er2 hen2 ke3 ai4 er2 zi5 ye3 shi4
+再吃一点儿吧。 | zai4 chi1 yi4 dian3 ba5

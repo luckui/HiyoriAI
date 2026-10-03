@@ -9,6 +9,7 @@ snapshot_download 会自动读取该环境变量走国内镜像）。
                   与官方 genie.download_genie_data() 行为完全一致
   2. feibi 模型 — CharacterModels/v2ProPlus/feibi (~320 MB)
                   官方 genie.load_predefined_character('feibi') 中内置的幂等下载
+  3. g2pW       — GenieData/G2PWModel (~590 MB)，中文多音字预测（见 g2pw.py）
 """
 import os
 import sys
@@ -53,9 +54,9 @@ def download_genie_data() -> None:
     """下载 GenieData（HuBERT + G2P + speaker_encoder），与官方行为一致。"""
     target = THIS_DIR / "GenieData"
     if (target / "speaker_encoder.onnx").exists():
-        _step(1, 3, "GenieData 已存在，跳过。")
+        _step(1, 4, "GenieData 已存在，跳过。")
         return
-    _step(1, 3, f"下载 GenieData → {target}")
+    _step(1, 4, f"下载 GenieData → {target}")
     _snapshot_with_retry(
         repo_id=GENIE_REPO,
         repo_type="model",
@@ -70,9 +71,9 @@ def download_roberta() -> None:
     """下载 Chinese RoBERTa（官方 download_genie_data() 的默认行为）。"""
     roberta_dir = THIS_DIR / "GenieData" / "roberta-wwm-ext-large-onnx"
     if (roberta_dir / "model.onnx").exists():
-        _step(2, 3, "Chinese RoBERTa 已存在，跳过。")
+        _step(2, 4, "Chinese RoBERTa 已存在，跳过。")
         return
-    _step(2, 3, f"下载 Chinese RoBERTa → {roberta_dir}")
+    _step(2, 4, f"下载 Chinese RoBERTa → {roberta_dir}")
     roberta_dir.mkdir(parents=True, exist_ok=True)
     _snapshot_with_retry(
         repo_id=ROBERTA_REPO,
@@ -89,9 +90,9 @@ def download_feibi() -> None:
     target = THIS_DIR / "CharacterModels" / "v2ProPlus" / "feibi"
     # 以核心模型文件为幂等检查依据
     if (target / "tts_models" / "t2s_shared_fp16.bin").exists():
-        _step(3, 3, "feibi 模型已存在，跳过。")
+        _step(3, 4, "feibi 模型已存在，跳过。")
         return
-    _step(3, 3, f"下载 feibi 模型 → {target}")
+    _step(3, 4, f"下载 feibi 模型 → {target}")
     _snapshot_with_retry(
         repo_id=GENIE_REPO,
         repo_type="model",
@@ -102,9 +103,31 @@ def download_feibi() -> None:
     print("  feibi ✓", flush=True)
 
 
+def download_g2pw() -> None:
+    """下载中文多音字模型 g2pW。"""
+    from g2pw import download_model, model_ready
+
+    target = THIS_DIR / "GenieData" / "G2PWModel"
+    if model_ready(target):
+        _step(4, 4, "g2pW 已存在，跳过。")
+        return
+    _step(4, 4, f"下载 g2pW 多音字模型 → {target}")
+    for attempt in range(1, 6):
+        try:
+            download_model(target)
+            break
+        except Exception as exc:
+            if attempt == 5:
+                raise
+            print(f"  ⚠ 第 {attempt} 次失败：{exc!r}，10s 后重试…", flush=True)
+            time.sleep(10)
+    print("  g2pW ✓", flush=True)
+
+
 if __name__ == "__main__":
     print("=== Genie-TTS 模型下载 ===", flush=True)
     download_genie_data()
     download_roberta()
     download_feibi()
+    download_g2pw()
     print("✅ 所有模型下载完毕。", flush=True)

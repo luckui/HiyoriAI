@@ -10,7 +10,7 @@ API:
   GET  /health        → 健康检查
 
 speaker 字段即角色名（如 "feibi"）。
-language 字段目前只用于日志：genie-tts 2.0.x 按角色模型自己的语言合成。
+language 字段目前只用于日志：文本里的中文、日文、英文自动识别、混读（text_frontend.py）。
 
 长文本在这里切句、逐句合成后拼接（规则同 shared/spokenText.ts）；读不了的句子跳过，
 整段都读不了返回 422。genie-tts 2.0.2 解码器的问题在下方「T2S 解码修正」里处理。
@@ -44,6 +44,7 @@ os.environ.setdefault("GENIE_DATA_DIR", str(THIS_DIR / "GenieData"))
 import numpy as np  # noqa: E402
 import genie_tts as genie  # noqa: E402
 from genie_tts.Core import Inference as _genie_inference  # noqa: E402
+import text_frontend  # noqa: E402
 
 # ── Logging ──────────────────────────────────────────────────────────
 
@@ -61,13 +62,6 @@ CHAR_MODELS_DIR = THIS_DIR / "CharacterModels"
 # genie-tts 2.0.x 加载角色时必须指定模型语言（Chinese / Japanese / English），不支持 "auto"。
 # 可在 config.yaml 的 genie.character_language 中修改。
 DEFAULT_CHARACTER_LANGUAGE = "Chinese"
-
-
-# genie-tts 2.0.2 的中文 G2P 对一些语气词处理不了，合成前换成读音接近的字
-# （已逐字验证替换后转出的音素正确）：
-# - 没有韵母的字（嗯 ń / 呣 ḿ / 噷 hm）会在变调处理里 IndexError，整句静默产出空音频；
-# - 词典里没有的音节（诶 ēi、喽 lou）会退化成 pan5，「诶？」被读成「谭」「台」。
-_G2P_UNSAFE_CHARS = str.maketrans({"嗯": "恩", "呣": "姆", "噷": "哼", "诶": "欸", "喽": "楼"})
 
 
 # ── genie-tts 2.0.2 的 T2S 解码修正 ──────────────────────────────────
@@ -130,14 +124,11 @@ def _t2s_guarded(self, ref_seq, ref_bert, text_seq, text_bert, ssl_content,
 
 _genie_inference.GENIE.t2s_cpu = _t2s_guarded
 
-# 中文音色读不了纯外文（英文、假名）或纯标点：音素几乎为空，结果只会是杂音
-_READABLE_BY_CHINESE_VOICE = re.compile(r"[\u4e00-\u9fff0-9]")
+# ── 文本前端 ─────────────────────────────────────────────────────────
+#
+# 多语言混读、中文多音字（g2pW）、读音修正表、数字规范化修正，见 text_frontend.py
 
-
-def _readable(text: str, character_language: str) -> bool:
-    if character_language.lower().startswith("chinese"):
-        return bool(_READABLE_BY_CHINESE_VOICE.search(text))
-    return bool(re.search(r"\w", text))
+text_frontend.install(Path(os.environ["GENIE_DATA_DIR"]))
 
 
 # ── 切句 ─────────────────────────────────────────────────────────────
@@ -453,14 +444,13 @@ async def tts_generate(request: Request, req: TTSRequest):
             + (f"（该角色加载失败：{reason}）" if reason else ""),
         )
 
-    # genie-tts 按角色模型的语言合成；请求里的 language（auto / zh / en…）仅用于日志
+    # 文本语言由前端自动识别；请求里的 language（auto / zh / en…）仅用于日志
     language = req.language.strip() or "auto"
-    character_language = _characters[char_name].ref_language
-    sentences = [s for s in split_for_synthesis(req.text.strip().translate(_G2P_UNSAFE_CHARS))
-                 if _readable(s, character_language)]
+    sentences = [s for s in split_for_synthesis(text_frontend.preprocess(req.text.strip()))
+                 if text_frontend.readable(s)]
     if not sentences:
         # 422：客户端按「这句不读」处理，跳过而不是播一段杂音
-        raise HTTPException(status_code=422, detail=f"该音色读不了这段文本：{req.text[:40]}")
+        raise HTTPException(status_code=422, detail=f"这段文本没有能读出来的字：{req.text[:40]}")
 
     log.info("TTS 排队: speaker=%s lang=%s sentences=%d text=%s", char_name, language, len(sentences), req.text[:60])
 
