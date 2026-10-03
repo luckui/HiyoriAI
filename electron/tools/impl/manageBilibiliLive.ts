@@ -23,7 +23,6 @@ interface ManageBilibiliLiveParams {
   /** update_config: 是否自动 TTS */
   auto_tts?: boolean;
   /** update_config: 是否自动 Live2D */
-  auto_live2d?: boolean;
 }
 
 function formatStatus() {
@@ -101,7 +100,6 @@ const manageBilibiliLiveTool: ToolDefinition<ManageBilibiliLiveParams> = {
           limit: { type: 'integer', description: 'replies 返回条数，默认 10' },
           idle_threshold_ms: { type: 'integer', description: 'update_config: 暗场阈值（毫秒）。改小让 AI 更积极尝试开口，改大让 AI 更安静。例如 60000 表示 1 分钟暗场触发一次。' },
           auto_tts: { type: 'boolean', description: 'update_config: 是否自动 TTS 朗读回复' },
-          auto_live2d: { type: 'boolean', description: 'update_config: 是否自动控制 Live2D 情绪/动作' },
         },
         required: ['action'],
       },
@@ -194,15 +192,13 @@ const manageBilibiliLiveTool: ToolDefinition<ManageBilibiliLiveParams> = {
         const patch: Record<string, unknown> = {};
         if (params.idle_threshold_ms !== undefined) patch.idleThresholdMs = params.idle_threshold_ms;
         if (params.auto_tts !== undefined) patch.autoTTS = params.auto_tts;
-        if (params.auto_live2d !== undefined) patch.autoLive2D = params.auto_live2d;
         if (Object.keys(patch).length === 0) {
-          return '请至少提供一个要更新的配置项（idle_threshold_ms / auto_tts / auto_live2d）。';
+          return '请至少提供一个要更新的配置项（idle_threshold_ms / auto_tts）。';
         }
         (await getStreamerController()).updateConfig(patch);
         const updated: string[] = [];
         if (params.idle_threshold_ms !== undefined) updated.push(`暗场阈值 = ${params.idle_threshold_ms / 1000}秒`);
         if (params.auto_tts !== undefined) updated.push(`自动TTS = ${params.auto_tts ? '开' : '关'}`);
-        if (params.auto_live2d !== undefined) updated.push(`自动Live2D = ${params.auto_live2d ? '开' : '关'}`);
         return `配置已更新：${updated.join('，')}。无需重启即生效。`;
       }
       default:

@@ -14,7 +14,6 @@ import { EventEmitter } from 'events';
 import { streamerSession } from './streamerSession';
 import type { StreamerReply } from './types';
 import { playTTSAudio } from '../ttsRuntime';
-import { sendLive2DCommand } from '../live2dBridge';
 import aiConfig from '../ai.config';
 import { fetchCompletion } from '../llmClient';
 import { giftCreditLedger } from './giftCreditLedger';
@@ -38,10 +37,8 @@ export interface StreamerControllerConfig {
   idleThresholdMs?: number;
   /** 检查间隔（毫秒），默认 3 秒 */
   checkIntervalMs?: number;
-  /** 是否自动朗读回复（默认 true） */
+  /** 是否自动朗读回复（默认 true）。朗读时的表情由表情导演按句自动选 */
   autoTTS?: boolean;
-  /** 是否自动控制 Live2D（默认 true） */
-  autoLive2D?: boolean;
 }
 
 /** 从 .env 读取数值，解析失败则用 fallback */
@@ -72,7 +69,6 @@ class StreamerControllerManager extends EventEmitter {
     idleThresholdMs: envInt('STREAMER_IDLE_THRESHOLD_MS', 300_000),
     checkIntervalMs: envInt('STREAMER_CHECK_INTERVAL_MS', 3_000),
     autoTTS:         envBool('STREAMER_AUTO_TTS', true),
-    autoLive2D:      envBool('STREAMER_AUTO_LIVE2D', true),
   };
 
   /**
@@ -139,7 +135,6 @@ class StreamerControllerManager extends EventEmitter {
    * 运行时更新主控配置（不需要重启）
    * - idleThresholdMs: 暖场阈值，改小让 AI 更积极开口，改大让 AI 更安静
    * - autoTTS: 是否自动 TTS 朗读回复
-   * - autoLive2D: 是否自动控制 Live2D
    * checkIntervalMs 不支持热更新（需要重启计时器），忽略该字段
    */
   updateConfig(patch: Omit<Partial<StreamerControllerConfig>, 'checkIntervalMs'>): void {
@@ -215,10 +210,6 @@ class StreamerControllerManager extends EventEmitter {
         await this.speakText(reply.reply);
       } else if (!reply.reply) {
         console.warn('[StreamerController] Reply text is empty, skipping TTS');
-      }
-
-      if (this.config.autoLive2D) {
-        this.controlLive2D(reply);
       }
 
       this.emit('reply', reply);
@@ -351,10 +342,6 @@ class StreamerControllerManager extends EventEmitter {
         await this.speakText(finalText);
       }
 
-      if (this.config.autoLive2D) {
-        sendLive2DCommand({ type: 'emotion', emotion: 'happy', playMotion: true });
-      }
-
       reply.reply = finalText;
       this.emit('reply', reply);
 
@@ -397,10 +384,6 @@ class StreamerControllerManager extends EventEmitter {
 
         if (this.config.autoTTS) {
           await this.speakText(proactiveText);
-        }
-
-        if (this.config.autoLive2D) {
-          this.setRandomExpression();
         }
 
         this.emit('proactive', proactiveText);
@@ -459,43 +442,6 @@ class StreamerControllerManager extends EventEmitter {
     } catch (err) {
       console.error('[StreamerController] TTS error:', err);
     }
-  }
-
-  /**
-   * 控制 Live2D（根据回复内容）
-   */
-  private controlLive2D(reply: StreamerReply): void {
-    try {
-      // 根据回复类型设置情绪
-      switch (reply.kind) {
-        case 'gift_thanks':
-          // 礼物感谢：开心表情
-          sendLive2DCommand({ type: 'emotion', emotion: 'happy', playMotion: true });
-          break;
-
-        case 'danmu_single':
-        case 'danmu_batch':
-          // 普通弹幕：随机表情
-          this.setRandomExpression();
-          break;
-
-        case 'topic_control':
-          // 控场：专注表情
-          sendLive2DCommand({ type: 'emotion', emotion: 'neutral' });
-          break;
-      }
-    } catch (err) {
-      console.error('[StreamerController] Live2D control error:', err);
-    }
-  }
-
-  /**
-   * 设置随机表情
-   */
-  private setRandomExpression(): void {
-    const emotions: Array<'neutral' | 'happy' | 'shy' | 'surprised'> = ['neutral', 'happy', 'shy', 'surprised'];
-    const random = emotions[Math.floor(Math.random() * emotions.length)];
-    sendLive2DCommand({ type: 'emotion', emotion: random });
   }
 }
 

@@ -12,11 +12,11 @@
 import { LAppDelegate } from './lappdelegate';
 import type { LAppModel } from './lappmodel';
 import { shouldShowTypewriterBubble, showTypewriterBubble } from './chat/typewriter';
-import { normalizeSpokenText, splitSpokenText } from '../shared/spokenText';
 import { createTypewriterPlaybackCallback } from './typewriterPlayback';
 import { SerialPlaybackQueue } from './ttsPlaybackQueue';
 import { liveliness } from './liveliness/motor';
 import { rmsOfByteTimeDomain } from './liveliness/dynamics';
+import { performWithoutVoice, spokenSentences, startPerformance } from './speechPerformance';
 
 // ── 获取当前 Live2D 模型实例 ───────────────────────────────────────
 
@@ -27,11 +27,6 @@ function getLiveModel(): LAppModel | null {
     return null;
   }
 }
-
-// ── 句子切分（清洗与切分由 shared/spokenText 负责） ─────────────────
-
-/** 单次并发请求上限，避免短文本产生过多分片 */
-const MAX_SEGMENTS = 8;
 
 // ── base64 → ArrayBuffer ─────────────────────────────────────────
 
@@ -156,13 +151,10 @@ async function playTTSNow(text: string, onDuration?: (ms: number, sentenceText?:
     return;
   }
 
-  // 前置检查：TTS 未启用时静默返回，不发起任何 IPC 请求
+  // TTS 未启用：不发起任何语音请求，但表情照样按阅读进度一句句演
   const enabled = await ttsAPI.isEnabled();
-  if (!enabled) return;
-
-  const cleaned = normalizeSpokenText(text, { language: 'auto' });
-  if (!cleaned) {
-    console.warn('[TTS] 跳过：清洗后文本为空');
+  if (!enabled) {
+    performWithoutVoice(text);
     return;
   }
 
@@ -173,12 +165,15 @@ async function playTTSNow(text: string, onDuration?: (ms: number, sentenceText?:
   model?.setSpeaking(false);
   stopLevelMeter();
 
-  const sentences = splitSpokenText(cleaned, { maxSegments: MAX_SEGMENTS });
+  const sentences = spokenSentences(text);
   if (sentences.length === 0) {
     console.warn('[TTS] 跳过：没有可朗读的内容（如纯标点“……”）');
+    liveliness.setConversationState('idle');
     return;
   }
   console.log(`[TTS] 切分为 ${sentences.length} 句:`, sentences);
+  // 表情导演和第一句语音合成同时开始：合成本来就要一两秒，表情基本不增加等待
+  const performance = startPerformance(sentences);
 
   getLiveModel()?.setSpeaking(true);
   ttsAPI.pauseHearing?.().catch(() => {});
@@ -218,6 +213,7 @@ async function playTTSNow(text: string, onDuration?: (ms: number, sentenceText?:
       console.log(`[TTS] 第 ${i + 1}/${sentences.length} 句开始播放，时长: ${audioBuffer.duration.toFixed(2)}s`);
       // 从真正出声开始算「在说话」：等第一句合成的那几秒里，该听歌还听歌
       liveliness.setSpeaking(true);
+      performance.enter(i);
 
       try {
         await playBufferWithLipSync(audioBuffer);
@@ -232,6 +228,7 @@ async function playTTSNow(text: string, onDuration?: (ms: number, sentenceText?:
     stopLevelMeter();
     getLiveModel()?.setSpeaking(false);
     liveliness.setSpeaking(false);
+    performance.finish();
   }
 
   ttsAPI.resumeHearing?.().catch(() => {});

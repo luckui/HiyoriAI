@@ -44,132 +44,21 @@ import { LAppWavFileHandler } from './lappwavfilehandler';
 import { CubismMoc } from '@framework/model/cubismmoc';
 import { LAppSubdelegate } from './lappsubdelegate';
 import { BODY_PARAMS, FACE_PARAMS, PARAM_ALIASES, PROGRAM_OWNED_PARAMS, liveliness, type Pose, type PoseParam } from './liveliness/motor';
+import type { Expression } from '../shared/expressions';
 
-// ── 情绪预设参数表（Hiyori_pro 无 exp3，用直接参数注入实现情绪）──────────────
-// 参数来源：hiyori_pro_t11.cdi3.json 确认存在的参数 ID
-// 分层原则（参考 airi-main expression-controller）：
-//   · 此处参数均不含 ParamMouthOpenY —— 口型由 TTS 口型同步层独立控制
-//   · 表情层在 motion 更新之后、model.update() 之前执行，用 setParameterValueById 覆写
-export const EMOTION_PRESETS: Record<string, Record<string, number>> = {
-  neutral: {
-    ParamMouthForm:   0,
-    ParamBrowLY:      0,    ParamBrowRY:      0,
-    ParamBrowLAngle:  0,    ParamBrowRAngle:  0,
-    ParamBrowLForm:   0,    ParamBrowRForm:   0,
-    ParamEyeLSmile:   0,    ParamEyeRSmile:   0,
-    ParamCheek:       0,
-  },
-  happy: {
-    // 开心：嘴角上扬 + 眉毛上抬 + 眼睛笑形 + 淡淡腮红
-    ParamMouthForm:   1.0,
-    ParamBrowLY:      0.5,  ParamBrowRY:      0.5,
-    ParamBrowLAngle:  0,    ParamBrowRAngle:  0,
-    ParamBrowLForm:   0.3,  ParamBrowRForm:   0.3,
-    ParamEyeLSmile:   1.0,  ParamEyeRSmile:   1.0,
-    ParamCheek:       0.4,
-  },
-  sad: {
-    // 悲伤：嘴角下垂 + 眉毛倾斜（八字眉）+ 眼睛无笑意
-    ParamMouthForm:  -0.8,
-    ParamBrowLY:     -0.3,  ParamBrowRY:     -0.3,
-    ParamBrowLAngle: -1.0,  ParamBrowRAngle: -1.0,
-    ParamBrowLForm:  -0.5,  ParamBrowRForm:  -0.5,
-    ParamEyeLSmile:   0,    ParamEyeRSmile:   0,
-    ParamCheek:       0,
-  },
-  angry: {
-    // 愤怒：嘴角轻压 + 眉毛压下 + 眉形皱起
-    ParamMouthForm:  -0.5,
-    ParamBrowLY:     -0.6,  ParamBrowRY:     -0.6,
-    ParamBrowLAngle:  1.0,  ParamBrowRAngle:  1.0,
-    ParamBrowLForm:  -0.8,  ParamBrowRForm:  -0.8,
-    ParamEyeLSmile:   0,    ParamEyeRSmile:   0,
-    ParamCheek:       0,
-  },
-  surprised: {
-    // 惊讶：嘴微张形 + 眉毛高扬 + 眼睛睁大（默认眼开量由 motion 控制，此处不重写）
-    ParamMouthForm:   0.3,
-    ParamBrowLY:      1.0,  ParamBrowRY:      1.0,
-    ParamBrowLAngle:  0,    ParamBrowRAngle:  0,
-    ParamBrowLForm:   0,    ParamBrowRForm:   0,
-    ParamEyeLSmile:   0,    ParamEyeRSmile:   0,
-    ParamCheek:       0,
-  },
-  thinking: {
-    // 思考：嘴角轻压 + 左眉微蹙 + 右眉微降（不对称）
-    ParamMouthForm:  -0.2,
-    ParamBrowLY:      0.3,  ParamBrowRY:     -0.2,
-    ParamBrowLAngle:  0.5,  ParamBrowRAngle: -0.3,
-    ParamBrowLForm:   0.3,  ParamBrowRForm:  -0.2,
-    ParamEyeLSmile:   0,    ParamEyeRSmile:   0,
-    ParamCheek:       0,
-  },
-  shy: {
-    // 害羞：嘴角微扬 + 眉毛上抬 + 眼睛半笑形 + 强腮红
-    ParamMouthForm:   0.6,
-    ParamBrowLY:      0.5,  ParamBrowRY:      0.5,
-    ParamBrowLAngle:  0,    ParamBrowRAngle:  0,
-    ParamBrowLForm:   0.2,  ParamBrowRForm:   0.2,
-    ParamEyeLSmile:   0.5,  ParamEyeRSmile:   0.5,
-    ParamCheek:       1.0,
-  },
-  embarrassed: {
-    // 尴尬：嘴角轻扬 + 眉毛微压 + 腮红最强
-    ParamMouthForm:   0.2,
-    ParamBrowLY:      0.2,  ParamBrowRY:      0.2,
-    ParamBrowLAngle: -0.5,  ParamBrowRAngle: -0.5,
-    ParamBrowLForm:  -0.3,  ParamBrowRForm:  -0.3,
-    ParamEyeLSmile:   0.3,  ParamEyeRSmile:   0.3,
-    ParamCheek:       1.0,
-  },
-};
-
-/** neutral 复位参数 */
-const EMOTION_NEUTRAL_PARAMS = EMOTION_PRESETS.neutral;
-
-// ── 行为状态机 ──────────────────────────────────────────────────────────────
-// 参考 airi-main 的 motion-manager 插件分层思路，但针对原生 SDK 实现
+// ── 动作状态机：只决定播哪组待机动画 ────────────────────────────────────────
+// 表情、对话神态由灵动层（src/liveliness）负责，这里不再管
 //
 //   IDLE_CALM   →（超时 60 s）→  IDLE_BORED
-//   IDLE_*      →（情绪触发）  →  REACTING
 //   IDLE_*      →（TTS 开始）  →  SPEAKING
-//   REACTING    →（动作播完）  →  IDLE_CALM
-//   SPEAKING    →（TTS 结束）  →  POST_SPEAK（保持当前表情 2 s 再淡出）
-//   POST_SPEAK  →（计时器到）  →  IDLE_CALM
+//   SPEAKING    →（TTS 结束）  →  IDLE_CALM
 //   任何状态    →（收到消息）  →  IDLE_CALM（重置 bored 计时器）
 //
 enum AvatarState {
   IDLE_CALM,    // 平静待机，随机 Idle 动作
   IDLE_BORED,   // 无聊，60 s 无交互后进入
-  REACTING,     // 情绪响应，播一次情绪动作后回到 IDLE_CALM
-  SPEAKING,     // TTS 播放中，循环 Tap/Flick
-  POST_SPEAK,   // TTS 刚结束，保持表情余韵
+  SPEAKING,     // TTS 播放中
 }
-
-// ── 情绪对应的动作组（Hiyori_pro 语义映射）────────────────────────────────
-const EMOTION_TO_MOTION_GROUP: Record<string, string> = {
-  happy:       'Tap',
-  surprised:   'Flick',
-  sad:         'FlickDown',
-  angry:       'FlickUp',
-  shy:         'Tap@Body',
-  embarrassed: 'Tap@Body',
-  thinking:    'Idle',
-  neutral:     'Idle',
-};
-
-// ── 情绪持续时长建议表（毫秒）──────────────────────────────────────────────
-// 原则：惊讶短（瞬间性），快乐/思考中等，悲伤/害羞长（余味绵长）
-export const EMOTION_DURATION_MS: Record<string, number> = {
-  happy:       4000,
-  surprised:   1800,
-  sad:         8000,
-  angry:       3000,
-  thinking:    0,     // 持续到下一个情绪（TTS 回复前整段思考期）
-  shy:         6000,
-  embarrassed: 6000,
-  neutral:     0,     // 永久
-};
 
 enum LoadStep {
   LoadAssets,
@@ -646,17 +535,6 @@ export class LAppModel extends CubismUserModel {
       this._avatarState = AvatarState.IDLE_BORED;
     }
 
-    // POST_SPEAK 计时器
-    if (this._avatarState === AvatarState.POST_SPEAK) {
-      this._postSpeakElapsedSec += deltaTimeSeconds;
-      if (this._postSpeakElapsedSec >= LAppModel.POST_SPEAK_LINGER_SEC) {
-        this._avatarState = AvatarState.IDLE_CALM;
-        this._postSpeakElapsedSec = 0;
-        // 表情淡出到 neutral
-        this.setEmotionParams(EMOTION_NEUTRAL_PARAMS, 500, 0);
-      }
-    }
-
     this._model.loadParameters(); // 前回セーブされた状態をロード
 
     if (this._motionManager.isFinished()) {
@@ -664,12 +542,6 @@ export class LAppModel extends CubismUserModel {
       switch (this._avatarState) {
         case AvatarState.SPEAKING: {
           // 说话时继续循环 Idle 作为身体的动态基线，说话的细节动作由灵动层叠加
-          this.startRandomMotion(this._idleGroup, LAppDefine.PriorityIdle);
-          break;
-        }
-        case AvatarState.REACTING: {
-          // 情绪动作已播完 → 回到平静待机
-          this._avatarState = AvatarState.IDLE_CALM;
           this.startRandomMotion(this._idleGroup, LAppDefine.PriorityIdle);
           break;
         }
@@ -683,7 +555,6 @@ export class LAppModel extends CubismUserModel {
           }
           break;
         }
-        case AvatarState.POST_SPEAK:
         case AvatarState.IDLE_CALM:
         default:
           this.startRandomMotion(this._idleGroup, LAppDefine.PriorityIdle);
@@ -702,6 +573,9 @@ export class LAppModel extends CubismUserModel {
     // 之后眨眼、表情、鼠标跟随、呼吸照常叠加
     const pose = liveliness.update(deltaTimeSeconds, performance.now());
     this._yieldToProgram(pose.authority);
+    // 表情明显时配一个手势（手臂、身体）；头和脸已经交给灵动层，动作里的那部分不会生效
+    const gesture = pose.gesture ? this._gestures[pose.gesture] : undefined;
+    if (gesture) this.startRandomMotion(gesture, LAppDefine.PriorityNormal);
 
     // まばたき
     if (!motionUpdated) {
@@ -715,24 +589,15 @@ export class LAppModel extends CubismUserModel {
       this._expressionManager.updateMotion(this._model, deltaTimeSeconds); // 表情でパラメータ更新（相対変化）
     }
 
-    // ドラッグによる変化
-    // ドラッグによる顔の向きの調整
-    this._model.addParameterValueById(this._idParamAngleX, this._dragX * 30); // -30から30の値を加える
-    this._model.addParameterValueById(this._idParamAngleY, this._dragY * 30);
-    this._model.addParameterValueById(
-      this._idParamAngleZ,
-      this._dragX * this._dragY * -30
-    );
-
-    // ドラッグによる体の向きの調整
-    this._model.addParameterValueById(
-      this._idParamBodyAngleX,
-      this._dragX * 10
-    ); // -10から10の値を加える
-
-    // ドラッグによる目の向きの調整
-    this._model.addParameterValueById(this._idParamEyeBallX, this._dragX); // -1から1の値を加える
-    this._model.addParameterValueById(this._idParamEyeBallY, this._dragY);
+    // 目光跟随鼠标（拖拽 / 全屏光标）。对话、律动时由灵动层减弱：那时她看着你，不是盯着鼠标
+    const followX = this._dragX * pose.cursorFollow;
+    const followY = this._dragY * pose.cursorFollow;
+    this._model.addParameterValueById(this._idParamAngleX, followX * 30); // -30から30の値を加える
+    this._model.addParameterValueById(this._idParamAngleY, followY * 30);
+    this._model.addParameterValueById(this._idParamAngleZ, followX * followY * -30);
+    this._model.addParameterValueById(this._idParamBodyAngleX, followX * 10); // -10から10の値を加える
+    this._model.addParameterValueById(this._idParamEyeBallX, followX); // -1から1の値を加える
+    this._model.addParameterValueById(this._idParamEyeBallY, followY);
 
     // 呼吸など
     if (this._breath != null) {
@@ -774,10 +639,7 @@ export class LAppModel extends CubismUserModel {
       this._pose.updateParameters(this._model, deltaTimeSeconds);
     }
 
-    // 情绪参数过渡（直接参数控制，用于无 exp3 文件的模型）
-    this._updateEmotionTransition(deltaTimeSeconds);
-
-    // 灵动层的眉眼在表情之后叠加：表情定住的脸上也还有挑眉、眯眼这些细节
+    // 灵动层的表情最后叠加：眨眼、动画里的面部细节都保留，表情加在上面
     this._applyPose(pose, FACE_PARAMS);
 
     this._model.update();
@@ -908,16 +770,12 @@ export class LAppModel extends CubismUserModel {
   private _avatarState: AvatarState = AvatarState.IDLE_CALM;
   /** 无交互计时（秒），用于判断进入 BORED */
   private _avatarIdleElapsedSec = 0;
-  /** POST_SPEAK 余韵计时（秒） */
-  private _postSpeakElapsedSec = 0;
 
   /** 无聊阈值：60 秒无交互 */
   private static readonly BORED_THRESHOLD_SEC = 60;
-  /** POST_SPEAK 余韵时长：2 秒 */
-  private static readonly POST_SPEAK_LINGER_SEC = 2;
   // ── 灵动层的落地：把归一化偏移换算成本模型的参数值 ─────────────────────
 
-  private _poseParamInfo = new Map<PoseParam, { index: number; halfRange: number; defaultValue: number } | null>();
+  private _poseParamInfo = new Map<PoseParam, { index: number; up: number; down: number; defaultValue: number } | null>();
   private _poseOffsetX = 0;
   private _poseOffsetY = 0;
   /** 随拍的整体平移只在半身构图用：全身时脚也离地，像在原地跳 */
@@ -927,7 +785,10 @@ export class LAppModel extends CubismUserModel {
     this._poseTranslation = enabled;
   }
 
-  /** 本模型对应参数的下标、半幅和默认值；先找标准名再找别名，都没有就是 null（跳过） */
+  /**
+   * 本模型对应参数的下标、默认值，以及默认值到最大 / 最小值的距离（偏移 ±1 的换算）。
+   * 先找标准名再找别名，都没有就是 null（跳过）
+   */
   private _poseParam(id: PoseParam) {
     let info = this._poseParamInfo.get(id);
     if (info !== undefined) return info;
@@ -937,7 +798,8 @@ export class LAppModel extends CubismUserModel {
       if (index >= this._model.getParameterCount()) continue;
       const min = this._model.getParameterMinimumValue(index);
       const max = this._model.getParameterMaximumValue(index);
-      info = { index, halfRange: (max - min) / 2, defaultValue: this._model.getParameterDefaultValue(index) };
+      const defaultValue = this._model.getParameterDefaultValue(index);
+      info = { index, up: max - defaultValue, down: defaultValue - min, defaultValue };
       break;
     }
     this._poseParamInfo.set(id, info);
@@ -949,7 +811,7 @@ export class LAppModel extends CubismUserModel {
       const value = pose.params[id];
       if (!value) continue;
       const info = this._poseParam(id);
-      if (info) this._model.addParameterValueByIndex(info.index, value * info.halfRange);
+      if (info) this._model.addParameterValueByIndex(info.index, value * (value > 0 ? info.up : info.down));
     }
   }
 
@@ -969,47 +831,20 @@ export class LAppModel extends CubismUserModel {
   }
 
   /**
-   * 设置 TTS 讲话状态（状态机版本）。
-   * - true  → 进入 SPEAKING，立即打断 Idle 播放 Tap 动作
-   * - false → 进入 POST_SPEAK，2 s 后自动回 IDLE_CALM，表情淡出
+   * 设置 TTS 讲话状态。
+   * - true  → 进入 SPEAKING
+   * - false → 回到 IDLE_CALM；表情的余韵由灵动层负责
+   * 开口时不再固定播一个 Tap 动作：它自带的眯眼、脸红曲线会和表情打架，
+   * 手势改为按表情触发（见 setGestures）
    */
   public setSpeaking(speaking: boolean): void {
     if (speaking) {
       if (this._avatarState === AvatarState.SPEAKING) return;
       this._avatarState = AvatarState.SPEAKING;
       this._avatarIdleElapsedSec = 0; // 重置 bored 计时器
-      // 立即打断 Idle，产生「开口说话」的视觉信号（直接用 Tap 开场）
-      this.startRandomMotion('Tap', LAppDefine.PriorityNormal);
     } else {
-      if (
-        this._avatarState !== AvatarState.SPEAKING &&
-        this._avatarState !== AvatarState.POST_SPEAK
-      ) return;
-      this._avatarState = AvatarState.POST_SPEAK;
-      this._postSpeakElapsedSec = 0;
+      if (this._avatarState === AvatarState.SPEAKING) this._avatarState = AvatarState.IDLE_CALM;
     }
-  }
-
-  /**
-   * 触发情绪反应（状态机版本）。
-   * 会：① 设置表情参数过渡 ② 进入 REACTING 状态播放一次对应动作
-   * 动作播完后状态机自动回到 IDLE_CALM。
-   *
-   * @param emotionName 情绪名（需在 EMOTION_PRESETS 中存在）
-   * @param durationMs  表情持续时长（ms），默认 0 = 永久
-   * @param transitionMs 表情过渡时长（ms），默认 300
-   */
-  public triggerReaction(emotionName: string, durationMs = 0, transitionMs = 300): void {
-    const params = EMOTION_PRESETS[emotionName] ?? EMOTION_PRESETS.neutral;
-    this.setEmotionParams(params, transitionMs, durationMs);
-    this._avatarIdleElapsedSec = 0; // 任何交互都重置 bored 计时器
-
-    // 若正在说话，不打断（表情生效，动作继续 SPEAKING 循环）
-    if (this._avatarState === AvatarState.SPEAKING) return;
-
-    const group = EMOTION_TO_MOTION_GROUP[emotionName] ?? 'Idle';
-    this._avatarState = AvatarState.REACTING;
-    this.startRandomMotion(group, LAppDefine.PriorityNormal);
   }
 
   /**
@@ -1022,52 +857,6 @@ export class LAppModel extends CubismUserModel {
     }
   }
 
-  // ── Live2D 情绪参数直控（Hiyori 无 exp3，用参数映射代替）──────────────
-
-  /** 当前情绪过渡目标值（参数ID → 目标值） */
-  private _emotionTarget: Map<string, number> = new Map();
-  /** 过渡起点值（参数ID → 触发时的快照值），避免从 motion 动态值开始插值导致抖动 */
-  private _emotionStart: Map<string, number> = new Map();
-  /** 情绪过渡剩余时间（ms） */
-  private _emotionTransitionMs = 0;
-  /** 情绪过渡总时间（ms） */
-  private _emotionTransitionTotal = 300;
-  /** 情绪持续定时器（ms），0 = 永久 */
-  private _emotionDurationMs = 0;
-  /** 情绪持续已过时间（ms） */
-  private _emotionElapsedMs = 0;
-
-  /**
-   * 设置情绪参数（直接操作 Live2D 参数，用于无 exp3 文件的模型）。
-   * 情绪会在 transitionMs 内平滑插值，若 durationMs > 0 则自动复位到 neutral。
-   *
-   * @param params      参数ID → 目标值映射
-   * @param transitionMs 过渡时间（ms），默认 300
-   * @param durationMs  持续时间（ms），0 = 永久，默认 0
-   */
-  public setEmotionParams(
-    params: Record<string, number>,
-    transitionMs = 300,
-    durationMs = 0,
-  ): void {
-    // 快照当前模型参数值作为过渡起点。
-    // 关键：在 motion 更新之后读取（即在 update() 中调用时已经有 motion 值了），
-    // 但 setEmotionParams 是从 IPC 命令触发的，此时 model 可能刚更新过一帧。
-    // 用快照而非每帧读取 current，保证过渡曲线稳定，不受 motion 曲线抖动影响。
-    this._emotionStart = new Map();
-    if (this._model) {
-      for (const paramId of Object.keys(params)) {
-        const handle = CubismFramework.getIdManager().getId(paramId);
-        this._emotionStart.set(paramId, this._model.getParameterValueById(handle) as number);
-      }
-    }
-    this._emotionTarget = new Map(Object.entries(params));
-    this._emotionTransitionMs = transitionMs;
-    this._emotionTransitionTotal = transitionMs;
-    this._emotionDurationMs = durationMs;
-    this._emotionElapsedMs = 0;
-  }
-
   /**
    * 直接以立即方式设置单个模型参数（供 manage_live2d set_param 使用）。
    *
@@ -1078,44 +867,6 @@ export class LAppModel extends CubismUserModel {
     if (!this._model) return;
     const handle = CubismFramework.getIdManager().getId(parameterId);
     this._model.setParameterValueById(handle, value);
-  }
-
-  /** 每帧推进情绪过渡（由 update() 调用，在 motion/物理之后、model.update() 之前执行） */
-  private _updateEmotionTransition(deltaTimeSeconds: number): void {
-    if (this._emotionTarget.size === 0) return;
-    if (!this._model) return;
-
-    const dtMs = deltaTimeSeconds * 1000;
-
-    if (this._emotionTransitionMs > 0) {
-      // 用已过时间计算 alpha（0→1），从快照起点线性插值到目标值。
-      // 参考 airi-main expression-controller：表情参数在 final 阶段用 setParameterValueById
-      // 覆盖 motion 曲线，保证表情层不受待机动画扰动影响。
-      const elapsed = this._emotionTransitionTotal - this._emotionTransitionMs;
-      const alpha = Math.min(1, elapsed / this._emotionTransitionTotal);
-      this._emotionTarget.forEach((targetVal, paramId) => {
-        const handle = CubismFramework.getIdManager().getId(paramId);
-        const startVal = this._emotionStart.get(paramId) ?? 0;
-        const blended = startVal + (targetVal - startVal) * alpha;
-        this._model.setParameterValueById(handle, blended);
-      });
-      this._emotionTransitionMs -= dtMs;
-    } else {
-      // 过渡完成，每帧覆写目标值（确保 motion 曲线不会把表情参数拉回）
-      this._emotionTarget.forEach((targetVal, paramId) => {
-        const handle = CubismFramework.getIdManager().getId(paramId);
-        this._model.setParameterValueById(handle, targetVal);
-      });
-
-      // 持续时间倒计时
-      if (this._emotionDurationMs > 0) {
-        this._emotionElapsedMs += dtMs;
-        if (this._emotionElapsedMs >= this._emotionDurationMs) {
-          // 自动复位到 neutral
-          this.setEmotionParams(EMOTION_NEUTRAL_PARAMS, 500, 0);
-        }
-      }
-    }
   }
 
   /**
@@ -1356,6 +1107,13 @@ export class LAppModel extends CubismUserModel {
 
   public setIdleGroup(group: string): void {
     this._idleGroup = group;
+  }
+
+  /** 表情 → 手势动作组，由 LAppLive2DManager 根据 ModelConfig 设置 */
+  private _gestures: Partial<Record<Expression, string>> = {};
+
+  public setGestures(gestures: Partial<Record<Expression, string>>): void {
+    this._gestures = gestures;
   }
 
   public constructor() {

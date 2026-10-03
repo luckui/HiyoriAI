@@ -183,6 +183,7 @@ export class LAppLive2DManager {
     const instance = new LAppModel();
     instance.setSubdelegate(this._subdelegate);
     instance.setIdleGroup(cfg.motionIdle);
+    instance.setGestures(cfg.gestures ?? {});
     instance.loadAssets(modelPath, cfg.jsonName);
     this._models.pushBack(instance);
   }

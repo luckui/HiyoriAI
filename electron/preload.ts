@@ -132,6 +132,7 @@ expose('hearingAPI', {
 
 expose('live2dAPI', {
   onCommand: (cb) => subscribe('live2d:cmd', cb),
+  directExpressions: (sentences, context) => ipcRenderer.invoke('live2d:direct-expressions', sentences, context),
 });
 
 expose('skillsAPI', {

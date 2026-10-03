@@ -6,6 +6,8 @@
 import { LogLevel } from '@framework/live2dcubismframework';
 
 // Canvas 大小（auto = 跟随容器）
+import type { Expression } from '../shared/expressions';
+
 export const CanvasSize: { width: number; height: number } | 'auto' = 'auto';
 // 视图参数
 export const ViewScale = 1.0;
@@ -46,6 +48,11 @@ export interface ModelConfig {
   // 碰撞区域名（'' 表示该模型无此区域）
   hitHead: string;
   hitBody: string;
+  /**
+   * 表情手势：表情明显时顺带播放的动作组（手臂、身体的动作；头和脸仍由灵动层控制）。
+   * 没有对应动作的表情不放手势
+   */
+  gestures?: Partial<Record<Expression, string>>;
 }
 
 export const Models: ModelConfig[] = [
@@ -61,6 +68,8 @@ export const Models: ModelConfig[] = [
     motionFlickBody: 'Flick@Body',
     hitHead: '',      // Hiyori_pro 无 Head 碰撞区
     hitBody: 'Body',
+    // m09 低头、脸红、手臂收拢；m06 抬手笑；m08 手臂动作加眯眼
+    gestures: { shy: 'Tap@Body', excited: 'FlickUp', happy: 'Tap' },
   },
 ];
 

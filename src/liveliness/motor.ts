@@ -1,20 +1,22 @@
 /**
- * 灵动层：把「正在放的音乐」和「自己说话的声音」变成头、身体、眼神和眉眼的细小动作。
+ * 灵动层：把音乐、自己说话的声音、对话的进展变成头、身体、眼神和表情的动作。
  *
- * 三条通道，各管各的，最后叠加：
+ * 三部分，各管各的，最后叠加：
  * - 音乐：节拍时钟驱动一条身体链（见 groove.ts）：躯干带头、头带眼睛，按时间差错开。
- *         律动起来时从待机动画手里接过头和躯干的控制权（authority），停下来再还回去。
  *         强度随「确定是音乐」的把握和响度淡入淡出。
- * - 说话：重读的音节点一下头、挑一下眉、眼睛睁大一点；句间停顿时歪头；
+ * - 说话的声音：重读的音节点一下头、挑一下眉、眼睛睁大一点；句间停顿时歪头；
  *         说话越起劲，头的漂移越大。口型也在这里做平滑。
- * - 视线：待机时眼神小幅游移；说话时偶尔看向别处再看回来，头跟着转一点。
+ * - 对话（见 conversation.ts）：在听 / 在想 / 在说时的神态和眼神，以及每句话的表情表演。
  *
- * 输出是按「半个参数范围」归一化的偏移，只用 Cubism 标准参数名，
- * 由模型按各自的参数范围换算后叠加 —— 换模型不用重新调。
- * 这里不碰 Cubism，全部是纯计算，可以单测。
+ * 律动或对话进行时，程序从待机动画手里接过头和躯干的控制权（authority），结束后再还回去。
+ *
+ * 输出是归一化的偏移，只用 Cubism 标准参数名，由模型按各自的参数范围换算后叠加 ——
+ * 换模型不用重新调。这里不碰 Cubism，全部是纯计算，可以单测。
  */
 
+import type { Expression, ExpressionCue } from '../../shared/expressions';
 import { BeatClock } from './beatClock';
+import { Conversation, type ConversationState } from './conversation';
 import { Envelope, Spring, clamp, smoothNoise } from './dynamics';
 import { grooveFrame } from './groove';
 
@@ -27,13 +29,17 @@ export const BODY_PARAMS = [
 ] as const;
 
 /**
- * 律动时由程序接管的参数：待机动画在这些参数上的影响按 authority 淡出。
- * 手臂、手这些程序还不管的部位不在里面，继续由动画驱动。
+ * 律动、对话时由程序接管的参数：待机动画（以及开口时的 Tap 动作）在这些参数上的影响
+ * 按 authority 淡出。动画里自带的表情（比如 Hiyori 的动作会眯眼、脸红）不淡出的话，
+ * 惊讶的脸上也会挂着笑眯眼。
+ * 不接管：手臂、手（程序还不管）、睁眼（眨眼靠它）。
  */
 export const PROGRAM_OWNED_PARAMS = [
   'ParamAngleX', 'ParamAngleY', 'ParamAngleZ',
   'ParamBodyAngleX', 'ParamBodyAngleY', 'ParamBodyAngleZ',
   'ParamShoulderY',
+  'ParamBrowLY', 'ParamBrowRY', 'ParamBrowLAngle', 'ParamBrowRAngle', 'ParamBrowLForm', 'ParamBrowRForm',
+  'ParamEyeLSmile', 'ParamEyeRSmile', 'ParamMouthForm', 'ParamCheek',
 ] as const;
 
 /** 有些模型没按标准命名，模型里找不到标准名时依次试这些 */
@@ -41,18 +47,22 @@ export const PARAM_ALIASES: Partial<Record<string, readonly string[]>> = {
   ParamShoulderY: ['ParamShoulder'],
 };
 
-/** 表情层之后叠加：表情定住的脸上也还有细微变化 */
+/** 眨眼、待机动画之后叠加：表情加在脸上，眨眼和动画里的细节照样保留 */
 export const FACE_PARAMS = [
-  'ParamBrowLY', 'ParamBrowRY',
+  'ParamBrowLY', 'ParamBrowRY', 'ParamBrowLAngle', 'ParamBrowRAngle', 'ParamBrowLForm', 'ParamBrowRForm',
   'ParamEyeLSmile', 'ParamEyeRSmile',
   'ParamEyeLOpen', 'ParamEyeROpen',
-  'ParamMouthForm',
+  'ParamMouthForm', 'ParamCheek',
 ] as const;
 
 export type PoseParam = typeof BODY_PARAMS[number] | typeof FACE_PARAMS[number];
 
 export interface Pose {
-  /** 参数偏移：1 表示从中点推到极值，模型按自己的参数范围换算 */
+  /**
+   * 参数偏移，模型按自己的参数换算：1 = 从默认值推到最大值，-1 = 推到最小值。
+   * 以默认值为基准是因为各模型的「平常脸」不同：Hiyori 的嘴型默认就在最大值（微笑），
+   * 对她来说「再笑一点」没有余地，「撇嘴」要往下推整个范围
+   */
   params: Partial<Record<PoseParam, number>>;
   /**
    * 整个模型的平移（模型坐标）：随拍的起伏。只适合半身构图 ——
@@ -62,8 +72,15 @@ export interface Pose {
   offsetY: number;
   /** 程序对 PROGRAM_OWNED_PARAMS 的控制权 [0, 1]：0 完全交给动画，1 完全由程序驱动 */
   authority: number;
+  /**
+   * 目光跟随鼠标的权重 [0, 1]。待机时她盯着你的鼠标看；对话、律动时她看着你（正前方），
+   * 鼠标只轻轻带一下 —— 否则鼠标离窗口远时，头会一直被拉到极限
+   */
+  cursorFollow: number;
   /** 说话时的口型开合 [0, 1]；不在说话时为 null，交还给模型自己的口型逻辑 */
   mouthOpen: number | null;
+  /** 刚换上一个明显的表情：模型若有对应的手势动作就播一次（只在这一帧给出） */
+  gesture: Expression | null;
 }
 
 /**
@@ -83,7 +100,7 @@ export class LivelinessMotor {
   private readonly random: () => number;
   private timeSec = 0;
   private lastNowMs: number | null = null;
-  private pose: Pose = { params: {}, offsetX: 0, offsetY: 0, authority: 0, mouthOpen: null };
+  private pose: Pose = { params: {}, offsetX: 0, offsetY: 0, authority: 0, cursorFollow: 1, mouthOpen: null, gesture: null };
 
   // ── 音乐 ──
   private musicInput = 0;
@@ -118,13 +135,14 @@ export class LivelinessMotor {
   private readonly eyeWiden = new Spring(5, 0.6);
   private readonly pauseTilt = new Spring(1.4, 0.8);
 
-  // ── 视线 ──
-  private readonly gazeX = new Spring(7, 0.85);
-  private readonly gazeY = new Spring(7, 0.85);
-  private nextGazeSec = 0;
+  // ── 对话 ──
+  private readonly conversation: Conversation;
+  /** 上一帧的动作幅度倍数（表情决定）：重读点头的力度要在算点头之前就知道 */
+  private energy = 1;
 
   constructor(options: { random?: () => number } = {}) {
     this.random = options.random ?? Math.random;
+    this.conversation = new Conversation(this.random);
   }
 
   /**
@@ -139,11 +157,46 @@ export class LivelinessMotor {
 
   setSpeaking(speaking: boolean): void {
     this.speaking = speaking;
+    this.conversation.setState(speaking ? 'speaking' : 'idle');
     if (!speaking) {
       this.speechInput = 0;
       this.pauseTilt.target = 0;
     }
   }
+
+  /** 对话进展：用户发出消息后是 thinking；说话由 setSpeaking 管 */
+  setConversationState(state: ConversationState): void {
+    this.conversation.setState(state);
+  }
+
+  /** 指定表情；holdMs 之后回到当前状态自带的神态，不给就一直保持。传 null 清除 */
+  setExpression(cue: ExpressionCue | null, holdMs?: number): void {
+    this.conversation.setExpression(cue, holdMs);
+  }
+
+  /** TTS 开始说新的一句 */
+  beginSentence(): void {
+    this.conversation.beginSentence();
+  }
+
+  /** 麦克风音量（用户在说话），停止收听时送 0 */
+  setListenLevel(rms: number): void {
+    this.conversation.setListenLevel(rms);
+  }
+
+  /** 用户在输入框里打字 */
+  noteTyping(): void {
+    this.conversation.noteTyping();
+  }
+
+  /**
+   * 诊断用：把某些参数钉在给定的偏移上（±1 = 推到极值），用来给新模型做参数图谱。
+   * 传 null 取消。只经调试开关（debugHooks）调用
+   */
+  setDebugOverride(params: Partial<Record<PoseParam, number>> | null): void {
+    this.debugOverride = params;
+  }
+  private debugOverride: Partial<Record<PoseParam, number>> | null = null;
 
   /** 自己说话的音量（RMS），由 TTS 播放器每帧送进来 */
   setSpeechLevel(rms: number): void {
@@ -166,6 +219,8 @@ export class LivelinessMotor {
       groove: Number(this.groove.value.toFixed(2)),
       musicPeak: Number(this.musicPeak.toFixed(3)),
       speaking: this.speaking,
+      state: this.conversation.state,
+      expression: this.conversation.expression,
     };
   }
 
@@ -179,39 +234,50 @@ export class LivelinessMotor {
 
     const music = this.updateMusic(dt, nowMs);
     const speech = this.updateSpeech(dt);
-    const gaze = this.updateGaze(dt);
+    const talk = this.conversation.update(dt);
+    this.energy = talk.energy;
     const t = this.timeSec;
 
-    // 一直存在的细微漂移：完全静止的头最显得假。说话越起劲漂得越多
-    const drift = 0.04 + 0.12 * speech.activity;
+    // 一直存在的细微漂移：完全静止的头最显得假。说话越起劲漂得越多，表情决定劲儿有多大
+    const drift = (0.04 + 0.12 * speech.activity) * talk.energy;
     const g = music.frame;
+    const f = talk.face;
     const params: Pose['params'] = {
-      ParamAngleX: g.headYaw + drift * smoothNoise(t, 1) + 0.25 * gaze.x,
-      ParamAngleY: g.headNod + 0.22 * speech.nod + 0.6 * drift * smoothNoise(t, 2) + 0.15 * gaze.y,
-      ParamAngleZ: g.headRoll + speech.tilt + drift * smoothNoise(t, 3),
-      ParamBodyAngleX: g.torsoYaw + 0.3 * drift * smoothNoise(t, 4),
+      ParamAngleX: g.headYaw + talk.yaw + drift * smoothNoise(t, 1) + 0.25 * talk.gazeX,
+      ParamAngleY: g.headNod + talk.pitch + 0.22 * speech.nod + 0.6 * drift * smoothNoise(t, 2) + 0.15 * talk.gazeY,
+      ParamAngleZ: g.headRoll + talk.roll + speech.tilt + drift * smoothNoise(t, 3),
+      ParamBodyAngleX: g.torsoYaw + talk.bodyYaw + 0.3 * drift * smoothNoise(t, 4),
       ParamBodyAngleY: g.torsoBend,
-      ParamBodyAngleZ: g.torsoRoll + 0.3 * drift * smoothNoise(t, 5),
+      ParamBodyAngleZ: g.torsoRoll + talk.bodyRoll + 0.3 * drift * smoothNoise(t, 5),
       ParamShoulderY: g.shoulder,
-      ParamEyeBallX: gaze.x + g.eyeX,
-      ParamEyeBallY: gaze.y,
-      ParamBrowLY: 0.35 * speech.brow,
-      ParamBrowRY: 0.35 * speech.brow,
+      ParamEyeBallX: talk.gazeX + g.eyeX,
+      ParamEyeBallY: talk.gazeY,
+      ParamBrowLY: (f.ParamBrowLY ?? 0) + 0.35 * speech.brow,
+      ParamBrowRY: (f.ParamBrowRY ?? 0) + 0.35 * speech.brow,
+      ParamBrowLAngle: f.ParamBrowLAngle ?? 0,
+      ParamBrowRAngle: f.ParamBrowRAngle ?? 0,
+      ParamBrowLForm: f.ParamBrowLForm ?? 0,
+      ParamBrowRForm: f.ParamBrowRForm ?? 0,
       // 听歌听得投入时眯眼微笑
-      ParamEyeLSmile: 0.7 * music.groove,
-      ParamEyeRSmile: 0.7 * music.groove,
-      ParamEyeLOpen: 0.2 * speech.widen,
-      ParamEyeROpen: 0.2 * speech.widen,
-      ParamMouthForm: 0.2 * music.groove,
+      ParamEyeLSmile: (f.ParamEyeLSmile ?? 0) + 0.7 * music.groove,
+      ParamEyeRSmile: (f.ParamEyeRSmile ?? 0) + 0.7 * music.groove,
+      ParamEyeLOpen: (f.ParamEyeLOpen ?? 0) + 0.6 * speech.widen,
+      ParamEyeROpen: (f.ParamEyeROpen ?? 0) + 0.6 * speech.widen,
+      ParamMouthForm: (f.ParamMouthForm ?? 0) + 0.2 * music.groove,
+      ParamCheek: f.ParamCheek ?? 0,
     };
     for (const key of Object.keys(params) as PoseParam[]) params[key] = clamp(params[key] ?? 0, -1, 1);
+    if (this.debugOverride) Object.assign(params, this.debugOverride);
 
     this.pose = {
       params,
       offsetX: 0.004 * g.side,
       offsetY: 0.012 * g.bob,
-      authority: music.authority,
+      authority: Math.max(music.authority, talk.authority),
+      // 正在和你说话的人看着你，不会一直盯着你的鼠标
+      cursorFollow: 1 - 0.9 * Math.max(music.authority, talk.authority),
       mouthOpen: speech.mouth,
+      gesture: talk.gesture,
     };
     return this.pose;
   }
@@ -256,7 +322,7 @@ export class LivelinessMotor {
     // 所以小声说话和大声说话都能找出各自的重音
     const accented = this.speaking && env > Math.max(0.01, avg * 1.25);
     if (accented && !this.wasAccented && this.timeSec - this.lastEmphasisSec > 0.28) {
-      const strength = clamp(env / Math.max(avg, 0.005) - 1, 0.2, 1);
+      const strength = clamp(env / Math.max(avg, 0.005) - 1, 0.2, 1) * this.energy;
       this.emphasisNod.impulse(-0.8 * strength);
       this.browLift.impulse(0.9 * strength);
       if (strength > 0.6) this.eyeWiden.impulse(0.8 * strength);
@@ -283,27 +349,6 @@ export class LivelinessMotor {
       tilt: this.pauseTilt.step(dt),
       mouth: this.speaking ? mouth : null,
     };
-  }
-
-  private updateGaze(dt: number) {
-    if (this.timeSec >= this.nextGazeSec) {
-      const r = this.random;
-      if (this.speaking && r() < 0.45) {
-        // 说着说着看向一边（像在想词），很快再看回来
-        this.gazeX.target = (r() < 0.5 ? -1 : 1) * (0.3 + 0.3 * r());
-        this.gazeY.target = -0.1 + 0.45 * r();
-        this.nextGazeSec = this.timeSec + 0.4 + 0.7 * r();
-      } else if (this.speaking) {
-        this.gazeX.target = 0.1 * (r() - 0.5);
-        this.gazeY.target = 0.1 * (r() - 0.5);
-        this.nextGazeSec = this.timeSec + 1.2 + 1.8 * r();
-      } else {
-        this.gazeX.target = 0.5 * (r() - 0.5);
-        this.gazeY.target = 0.3 * (r() - 0.5);
-        this.nextGazeSec = this.timeSec + 1.5 + 3 * r();
-      }
-    }
-    return { x: this.gazeX.step(dt), y: this.gazeY.step(dt) };
   }
 }
 

@@ -53,7 +53,6 @@
   out.typingGone = !document.querySelector('.typing-indicator');
   const ai = [...document.querySelectorAll('#messages .ai-message .message-bubble p')].map((p) => p.textContent);
   out.aiReplied = ai.length >= 2 && !ai[ai.length - 1].startsWith('（出错了');
-  out.emotionTagStripped = !ai[ai.length - 1].includes('[emotion:');
   out.inputFocused = document.activeElement === input;
 
   $('sessions-btn').click();

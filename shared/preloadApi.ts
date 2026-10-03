@@ -22,6 +22,7 @@ import type {
   VoicePresetItem,
   WeChatConfig,
 } from './types/config';
+import type { ExpressionCue } from './expressions';
 import type {
   ChatReply,
   ConversationWithPreview,
@@ -199,6 +200,8 @@ export interface Live2DCommand {
 
 export interface Live2DAPI {
   onCommand(cb: (cmd: Live2DCommand) => void): Unsubscribe;
+  /** 表情导演：为要说的每一句选表情；无法判断时为 null（渲染层改用即时线索） */
+  directExpressions(sentences: string[], context?: string): Promise<ExpressionCue[] | null>;
 }
 
 export interface SkillsAPI {

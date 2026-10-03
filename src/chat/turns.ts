@@ -6,7 +6,9 @@
  */
 
 import { playTTS } from '../ttsPlayer';
-import { extractEmotionTag, notifyInteraction, triggerEmotion } from '../live2dController';
+import { notifyInteraction } from '../live2dController';
+import { liveliness } from '../liveliness/motor';
+import { setPerformanceContext } from '../speechPerformance';
 import { addMessage, addTypingIndicator } from './messages';
 import { getCurrentConversationId, refreshConvTitle } from './conversations';
 import { showEstimatedTypewriterWhenTTSDisabled, typewriterPlayback } from './typewriter';
@@ -44,6 +46,9 @@ async function runTurn(req: TurnRequest): Promise<void> {
   setSendButton('stop');
   if (req.showUserMessage) addMessage('user', req.text);
   const typing = addTypingIndicator();
+  // 等回复的这段时间她在「想」：眼神移开、眉头微皱。用户的话留给表情导演判断语气
+  liveliness.setConversationState('thinking');
+  if (req.showUserMessage) setPerformanceContext(req.text);
 
   try {
     const result = await window.chatAPI!.send(
@@ -53,17 +58,16 @@ async function runTurn(req: TurnRequest): Promise<void> {
       req.trigger === undefined ? undefined : { trigger: req.trigger },
     );
     typing?.remove();
-    // 回复开头的 [emotion:xxx] 交给状态机：换表情并播放对应动作（说话中只换表情）
-    const { emotion, cleaned } = extractEmotionTag(result.content);
-    if (emotion) triggerEmotion(emotion);
-    addMessage('ai', cleaned, true, result.created_at);
+    addMessage('ai', result.content, true, result.created_at);
     // 折叠时显示打字机气泡（TTS 开启时由播放器按真实时长驱动，避免重播两遍）
-    await showEstimatedTypewriterWhenTTSDisabled(cleaned);
-    playTTS(cleaned, typewriterPlayback(cleaned)).catch((e) => console.error('[TTS] playTTS error:', e));
+    await showEstimatedTypewriterWhenTTSDisabled(result.content);
+    // 说出来（表情按句由表情导演选）；TTS 关闭时只演表情
+    playTTS(result.content, typewriterPlayback(result.content)).catch((e) => console.error('[TTS] playTTS error:', e));
     // 首轮回复后主进程会自动给对话起标题
     await refreshConvTitle(req.conversationId);
   } catch (e) {
     typing?.remove();
+    liveliness.setConversationState('idle');
     const errMsg = (e as Error).message;
     const stopped = errMsg.includes('aborted') || errMsg.includes('stopped');
     if (!stopped) addMessage('ai', `（${req.errorLabel}：${errMsg}）`);
@@ -135,6 +139,8 @@ export function initTurns(): void {
     }
   });
   input?.addEventListener('mousedown', (e) => e.stopPropagation());
+  // 用户在打字：她在听
+  input?.addEventListener('input', () => liveliness.noteTyping());
 
   // 后台任务 / 定时提醒完成 → 唤醒主对话 AI 开启新一轮；进行中则排队
   window.chatAPI?.onWakeup?.((payload) => {

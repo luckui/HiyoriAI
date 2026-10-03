@@ -8,18 +8,18 @@
  */
 
 import { BrowserWindow } from 'electron';
+import type { Expression } from '../shared/expressions';
 
 // ── 命令类型定义 ─────────────────────────────────────────────────
 
-/** 情绪命令：设置情绪（自动映射到参数 + 可选动作） */
+/** 表情命令：让灵动层演一个表情（脸、姿态、眼神一起变） */
 export interface Live2DCmdEmotion {
   type: 'emotion';
-  /** 情绪名 */
-  emotion: 'neutral' | 'happy' | 'sad' | 'angry' | 'surprised' | 'thinking' | 'shy' | 'embarrassed';
-  /** 持续时间（ms），0 = 永久直到下次情绪切换 */
+  emotion: Expression;
+  /** 0–1，默认 0.7 */
+  intensity?: number;
+  /** 持续时间（ms），0 或不填 = 保持到下次切换 */
   durationMs?: number;
-  /** 是否同时播放对应动作 */
-  playMotion?: boolean;
 }
 
 /** 动作命令：直接触发模型动作组 */

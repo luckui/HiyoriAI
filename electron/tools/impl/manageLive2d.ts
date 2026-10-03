@@ -1,36 +1,24 @@
 /**
  * Skill: manage_live2d
  *
- * 让 AI Agent 控制 Live2D 模型的表情、动作和参数。
- * 支持：情绪设置、动作播放、参数直控、当前状态查询。
+ * 让 AI Agent 主动控制 Live2D 模型：表情、动作、参数、状态查询。
  *
- * 情绪 → 参数映射（Hiyori 无 exp3 文件，使用直接参数注入）：
- *   happy / sad / angry / surprised / thinking / shy / embarrassed / neutral
+ * 说话时的表情不需要调用这个工具：表情导演会按句自动选（electron/expressionDirector.ts）。
+ * 这里用于不说话时的主动表现，比如听到好消息时先露出一个表情。
  */
 
 import type { ToolDefinition, ToolExecuteResult } from '../types';
 import { sendLive2DCommand } from '../../live2dBridge';
-
-// ── 情绪 → 动作组映射（Hiyori_pro 可用动作）───────────────────────
-const EMOTION_MOTION: Record<string, { group: string; no?: number }> = {
-  happy:       { group: 'Tap',       no: 0 },
-  surprised:   { group: 'Flick',     no: 0 },
-  sad:         { group: 'FlickDown', no: 0 },
-  angry:       { group: 'FlickUp',   no: 0 },
-  shy:         { group: 'Tap@Body',  no: 0 },
-  embarrassed: { group: 'Tap@Body',  no: 0 },
-  thinking:    { group: 'Idle'                },
-  neutral:     { group: 'Idle'                },
-};
+import { EXPRESSIONS, EXPRESSION_GUIDE, isExpression } from '../../../shared/expressions';
 
 interface ManageLive2DParams {
   action: 'set_emotion' | 'play_motion' | 'set_param' | 'query';
   /** set_emotion：情绪名 */
   emotion?: string;
-  /** set_emotion：持续时间 ms（0=永久） */
+  /** set_emotion：强度 0–1 */
+  intensity?: number;
+  /** set_emotion：持续时间 ms（0=保持到下次切换） */
   duration_ms?: number;
-  /** set_emotion：是否同时触发对应动作（默认 true） */
-  play_motion?: boolean;
   /** play_motion：动作组名 */
   motion_group?: string;
   /** play_motion：组内序号（省略=随机） */
@@ -51,11 +39,10 @@ const manageLive2dTool: ToolDefinition<ManageLive2DParams> = {
     function: {
       name: 'manage_live2d',
       description:
-        '控制桌面 Live2D 宠物的表情和动作。\n' +
-        '当你想要表达情感、回应用户情绪、表现角色个性时使用此工具。\n\n' +
-        '可用情绪（emotion）：\n' +
-        '  neutral（平静）/ happy（开心）/ sad（难过）/ angry（生气）\n' +
-        '  surprised（惊讶）/ thinking（思考）/ shy（害羞）/ embarrassed（尴尬）\n\n' +
+        '控制桌面 Live2D 角色的表情和动作。说话时的表情会按句自动选，不需要调用；\n' +
+        '这里用于不说话时的主动表现。\n\n' +
+        '可用表情（emotion）：\n' +
+        EXPRESSIONS.map(e => `  ${e}：${EXPRESSION_GUIDE[e]}`).join('\n') + '\n\n' +
         '可用动作组（motion_group，Hiyori_pro 模型）：\n' +
         '  Idle / Tap / TapBody / Flick / FlickUp / FlickDown / Flick@Body',
       parameters: {
@@ -68,16 +55,16 @@ const manageLive2dTool: ToolDefinition<ManageLive2DParams> = {
           },
           emotion: {
             type: 'string',
-            enum: ['neutral', 'happy', 'sad', 'angry', 'surprised', 'thinking', 'shy', 'embarrassed'],
-            description: '（set_emotion 必填）目标情绪',
+            enum: [...EXPRESSIONS],
+            description: '（set_emotion 必填）表情',
+          },
+          intensity: {
+            type: 'number',
+            description: '（set_emotion）强度 0–1，默认 0.7',
           },
           duration_ms: {
             type: 'number',
-            description: '（set_emotion）情绪持续时间（ms），0 或省略 = 永久',
-          },
-          play_motion: {
-            type: 'boolean',
-            description: '（set_emotion）是否同时触发对应动作，默认 true',
+            description: '（set_emotion）持续时间（ms），省略 = 4000，0 = 保持到下次切换',
           },
           motion_group: {
             type: 'string',
@@ -119,36 +106,17 @@ const manageLive2dTool: ToolDefinition<ManageLive2DParams> = {
       }
 
       case 'set_emotion': {
-        const emotion = (params.emotion ?? 'neutral') as string;
-        const validEmotions = ['neutral', 'happy', 'sad', 'angry', 'surprised', 'thinking', 'shy', 'embarrassed'];
-        if (!validEmotions.includes(emotion)) {
-          return `错误：未知情绪 "${emotion}"，可用值：${validEmotions.join(' / ')}`;
+        const emotion = params.emotion ?? 'neutral';
+        if (!isExpression(emotion)) {
+          return `错误：未知表情 "${emotion}"，可用值：${EXPRESSIONS.join(' / ')}`;
         }
-
-        // 类型安全写法
-        const emotionCmd = {
-          type: 'emotion' as const,
-          emotion: emotion as 'neutral' | 'happy' | 'sad' | 'angry' | 'surprised' | 'thinking' | 'shy' | 'embarrassed',
-          durationMs: params.duration_ms ?? 0,
-          playMotion: params.play_motion ?? true,
-        };
-        const ok = sendLive2DCommand(emotionCmd);
-        if (!ok) return 'Live2D 渲染层未就绪，命令未送达';
-
-        // 如果需要触发对应动作
-        if (emotionCmd.playMotion) {
-          const motionInfo = EMOTION_MOTION[emotion];
-          if (motionInfo) {
-            sendLive2DCommand({
-              type: 'motion',
-              group: motionInfo.group,
-              no: motionInfo.no,
-              priority: 2,
-            });
-          }
-        }
-
-        return `已设置情绪：${emotion}`;
+        const ok = sendLive2DCommand({
+          type: 'emotion',
+          emotion,
+          intensity: params.intensity ?? 0.7,
+          durationMs: params.duration_ms ?? 4000,
+        });
+        return ok ? `已设置表情：${emotion}` : 'Live2D 渲染层未就绪，命令未送达';
       }
 
       case 'play_motion': {

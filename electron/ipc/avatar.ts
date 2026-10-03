@@ -15,6 +15,7 @@ import {
 } from '../avatar/avatarManager';
 import { builtinAvatarModelDir, getAvatarConfig, persistAppConfig, setAvatarConfig } from '../config/runtimeConfig';
 import { broadcastToWindows, dialogParentWindow } from '../mainWindow';
+import { directExpressions } from '../expressionDirector';
 
 /** 需在 app ready 之前调用 */
 export function registerAvatarScheme(): void {
@@ -42,6 +43,10 @@ function commitAvatarConfig(next: AvatarConfig): AvatarConfig {
 
 export function registerAvatarIpc(): void {
   ipcMain.handle('avatar:get', () => cloneAvatarConfig(getAvatarConfig()));
+
+  // 表情导演：渲染层开始说一段话时请求，按句返回表情
+  ipcMain.handle('live2d:direct-expressions', (_e, sentences: string[], context?: string) =>
+    directExpressions(Array.isArray(sentences) ? sentences.map(String) : [], typeof context === 'string' ? context : undefined));
 
   ipcMain.handle('avatar:import-folder', async () => {
     const result = await dialog.showOpenDialog(dialogParentWindow(), {

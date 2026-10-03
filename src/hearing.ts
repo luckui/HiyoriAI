@@ -9,6 +9,7 @@
  *   5. 接收转写结果，显示到聊天界面
  */
 
+import { liveliness } from './liveliness/motor';
 import type { TranscriptionResult } from '../shared/types/chat';
 
 // ── 状态 ────────────────────────────────────────────────────────────
@@ -83,10 +84,17 @@ export async function startCapture(wsUrl: string, source: 'mic' | 'system' | 'bo
   processorNode = audioContext.createScriptProcessor(4096, 1, 1);
 
   let pcmFrameCount = 0;
+  // 只有麦克风里才是对方的声音：系统回环里多半是视频、音乐
+  const listeningToPerson = source === 'mic';
   processorNode.onaudioprocess = (e) => {
     if (!isCapturing || !ws || ws.readyState !== WebSocket.OPEN) return;
 
     const inputData = e.inputBuffer.getChannelData(0);
+    if (listeningToPerson) {
+      let energy = 0;
+      for (let i = 0; i < inputData.length; i++) energy += inputData[i] * inputData[i];
+      liveliness.setListenLevel(Math.sqrt(energy / inputData.length));
+    }
     // float32 → int16
     const pcm16 = new Int16Array(inputData.length);
     for (let i = 0; i < inputData.length; i++) {
@@ -124,6 +132,7 @@ export async function startCapture(wsUrl: string, source: 'mic' | 'system' | 'bo
  */
 export function stopCapture(): void {
   isCapturing = false;
+  liveliness.setListenLevel(0);
 
   // 停止 WebSocket
   if (ws) {
