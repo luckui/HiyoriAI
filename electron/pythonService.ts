@@ -207,6 +207,7 @@ export class PythonService {
     log(this.spec.requirementsLabel ?? '安装依赖…');
     const pip = await run(`"${uv}" pip install -r requirements.txt --python "${pythonExe}" --index-url ${PYPI_INDEX}`, 600_000);
     if (pip.code !== 0) return { ok: false, detail: `依赖安装失败:\n${pip.stderr.slice(0, 1000)}` };
+    this.markRequirementsInstalled();
 
     // 3. 服务特有的步骤（引擎包、模型权重等）
     const extra = await this.spec.afterRequirements?.({ uv, pythonExe, serverDir, log, run });
@@ -227,6 +228,7 @@ export class PythonService {
 
     // 终止残留的旧进程
     await this.stop();
+    await this.syncRequirements();
 
     const serverDir = this.serverDir;
     return new Promise((resolve) => {
@@ -288,6 +290,41 @@ export class PythonService {
     // 等待端口释放
     await new Promise((r) => setTimeout(r, 500));
     return { ok: true, detail: '已停止' };
+  }
+
+  /** 上次装好依赖时 requirements.txt 的内容 */
+  private get requirementsStamp(): string {
+    return join(this.venvDir, '.requirements-installed');
+  }
+
+  private markRequirementsInstalled(): void {
+    try {
+      writeFileSync(this.requirementsStamp, readFileSync(join(this.serverDir, 'requirements.txt')));
+    } catch { /* 下次启动再同步一次而已 */ }
+  }
+
+  /**
+   * 应用升级后 requirements.txt 可能多了依赖，而安装只在第一次执行：启动前对一下，变了就增量安装。
+   * 失败不阻止启动（服务对可选依赖缺失有退路），下次启动再试
+   */
+  private async syncRequirements(): Promise<void> {
+    const requirements = join(this.serverDir, 'requirements.txt');
+    if (!existsSync(requirements)) return;
+    try {
+      if (readFileSync(requirements, 'utf-8') === readFileSync(this.requirementsStamp, 'utf-8')) return;
+    } catch { /* 没有记录：老版本装的环境 */ }
+    try {
+      const uv = await ensureAppUv();
+      const result = await runShellCommand(
+        `"${uv}" pip install -r requirements.txt --python "${this.pythonExe}" --index-url ${PYPI_INDEX}`,
+        this.serverDir,
+        600_000,
+      );
+      if (result.code === 0) this.markRequirementsInstalled();
+      else console.warn(`[${this.spec.label}] 依赖同步失败，先按原环境启动:\n${result.stderr.slice(0, 500)}`);
+    } catch (error) {
+      console.warn(`[${this.spec.label}] 依赖同步失败，先按原环境启动:`, error);
+    }
   }
 
   private readPid(): number | null {
