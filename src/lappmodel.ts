@@ -46,6 +46,11 @@ import { LAppSubdelegate } from './lappsubdelegate';
 import { BODY_PARAMS, FACE_PARAMS, PARAM_ALIASES, PROGRAM_OWNED_PARAMS, liveliness, type Pose, type PoseParam } from './liveliness/motor';
 import type { Expression } from '../shared/expressions';
 
+/** 画布像素坐标下的矩形 */
+export interface AnchorRect { x: number; y: number; w: number; h: number }
+/** 漫符的落点：脸、脸颊（两颊合在一个框里）、头顶 */
+export interface ModelAnchors { face: AnchorRect; cheeks: AnchorRect | null; headTop: number }
+
 // ── 动作状态机：只决定播哪组待机动画 ────────────────────────────────────────
 // 表情、对话神态由灵动层（src/liveliness）负责，这里不再管
 //
@@ -1064,6 +1069,7 @@ export class LAppModel extends CubismUserModel {
       if (this._poseTranslation && (this._poseOffsetX || this._poseOffsetY)) {
         matrix.translateRelative(this._poseOffsetX, this._poseOffsetY);
       }
+      this._updateAnchors(matrix);
 
       this.getRenderer().setMvpMatrix(matrix);
 
@@ -1114,6 +1120,84 @@ export class LAppModel extends CubismUserModel {
 
   public setGestures(gestures: Partial<Record<Expression, string>>): void {
     this._gestures = gestures;
+  }
+
+  // ── 漫符定位：脸、脸颊、头顶此刻在画布上的位置 ──────────────────────
+
+  /**
+   * 按部件名找到的网格。用的是 Cubism 官方样例的命名（PartFace、PartCheek、PartHair…），
+   * 多数模型沿用；找不到脸就退回到整个模型上部的估计
+   */
+  private _anchorDrawables: { face: number[]; cheek: number[]; hair: number[]; all: number[] } | null = null;
+  private _anchors: ModelAnchors | null = null;
+
+  /** 设备像素坐标（与 Live2D 画布的 width/height 一致）；模型未加载时为 null */
+  public getAnchors(): ModelAnchors | null {
+    return this._anchors;
+  }
+
+  private _findAnchorDrawables() {
+    const model = this._model;
+    const partIndex = new Map<string, number>();
+    for (let i = 0; i < model.getPartCount(); i++) partIndex.set(model.getPartId(i).getString().s, i);
+    const parents = model.getPartParentPartIndices();
+    const under = (names: string[]): number[] => {
+      const roots = new Set(names.map((n) => partIndex.get(n)).filter((i): i is number => i !== undefined));
+      if (!roots.size) return [];
+      const list: number[] = [];
+      for (let d = 0; d < model.getDrawableCount(); d++) {
+        for (let p = model.getDrawableParentPartIndex(d); p >= 0; p = parents[p]) {
+          if (roots.has(p)) { list.push(d); break; }
+        }
+      }
+      return list;
+    };
+    const all = Array.from({ length: model.getDrawableCount() }, (_, i) => i);
+    return { face: under(['PartFace']), cheek: under(['PartCheek']), hair: under(['PartHairFront', 'PartHairBack', 'PartHairSide']), all };
+  }
+
+  /** 网格顶点在模型空间的包围盒，经 MVP 变换到画布像素 */
+  private _projectBounds(drawables: number[], mvp: Float32Array, width: number, height: number): AnchorRect | null {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const d of drawables) {
+      if (this._model.getDrawableOpacity(d) <= 0) continue;
+      const v = this._model.getDrawableVertices(d);
+      for (let i = 0; i < v.length; i += 2) {
+        if (v[i] < minX) minX = v[i];
+        if (v[i] > maxX) maxX = v[i];
+        if (v[i + 1] < minY) minY = v[i + 1];
+        if (v[i + 1] > maxY) maxY = v[i + 1];
+      }
+    }
+    if (minX === Infinity) return null;
+    // 只有缩放和平移（正交投影），变换角点即可
+    const px = (x: number) => ((mvp[0] * x + mvp[12] + 1) / 2) * width;
+    const py = (y: number) => ((1 - (mvp[5] * y + mvp[13])) / 2) * height;
+    const x0 = px(minX), x1 = px(maxX), y0 = py(maxY), y1 = py(minY);
+    return { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
+  }
+
+  private _updateAnchors(mvpMatrix: CubismMatrix44): void {
+    const canvas = this._subdelegate?.getCanvas();
+    if (!canvas || !this._model) return;
+    this._anchorDrawables ??= this._findAnchorDrawables();
+    const mvp = mvpMatrix.getArray();
+    const { width, height } = canvas;
+    const groups = this._anchorDrawables;
+    let face = this._projectBounds(groups.face, mvp, width, height);
+    const hair = this._projectBounds(groups.hair, mvp, width, height);
+    if (!face) {
+      // 没有标准命名的模型：取整个模型的上部，按头约占身高的 1/7 估计
+      const body = this._projectBounds(groups.all, mvp, width, height);
+      if (!body) { this._anchors = null; return; }
+      const size = body.h / 7;
+      face = { x: body.x + body.w / 2 - size / 2, y: body.y + size * 0.4, w: size, h: size };
+    }
+    this._anchors = {
+      face,
+      cheeks: this._projectBounds(groups.cheek, mvp, width, height),
+      headTop: hair ? Math.min(hair.y, face.y) : face.y - face.h * 0.35,
+    };
   }
 
   public constructor() {

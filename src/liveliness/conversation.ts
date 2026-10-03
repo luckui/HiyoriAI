@@ -63,6 +63,7 @@ export class Conversation {
   private explicit: { cue: ExpressionCue; untilSec: number } | null = null;
   private acting: Acting = ACTING.neutral;
   private actingName: Expression = 'neutral';
+  private expressionSince = 0;
   private intensity = 0;
   /** 歪头、侧视朝哪边：每次换表情随机选，否则永远歪向同一边很假 */
   private side = 1;
@@ -133,6 +134,11 @@ export class Conversation {
 
   get expression(): Expression {
     return this.actingName;
+  }
+
+  /** 当前表情、强度，以及换上它多久了（秒）：漫符按它弹出、淡出 */
+  get expressionState(): { expression: Expression; intensity: number; ageSec: number } {
+    return { expression: this.actingName, intensity: this.intensity, ageSec: this.timeSec - this.expressionSince };
   }
 
   /** 说到新的一句：换一个头部姿态；有时先移开视线（像在组织语言），再看回来 */
@@ -239,6 +245,7 @@ export class Conversation {
     this.acting = ACTING[cue.expression];
     this.intensity = clamp(cue.intensity, 0, 1);
     if (!changed) return;
+    this.expressionSince = this.timeSec;
     this.side = this.random() < 0.5 ? -1 : 1;
     if (this.acting.onset) this.onset.impulse(this.acting.onset.pitch * this.intensity);
     // 只给显式指定、足够明显的表情配手势；状态自带的淡淡神态不配

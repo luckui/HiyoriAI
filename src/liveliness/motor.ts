@@ -90,6 +90,12 @@ export interface Pose {
  */
 export const AUDIO_LATENCY_MS = 130;
 
+/**
+ * 平常的腮红（相对模型默认值）。实拍：Hiyori 的脸红参数 -1 时腮红完全消失、0 是贴图自带的常驻腮红。
+ * 没有负方向的模型这一项不起作用
+ */
+const BASE_CHEEK = -0.6;
+
 const smoothstep = (edge0: number, edge1: number, x: number): number => {
   const t = clamp((x - edge0) / (edge1 - edge0), 0, 1);
   return t * t * (3 - 2 * t);
@@ -189,6 +195,11 @@ export class LivelinessMotor {
     this.conversation.noteTyping();
   }
 
+  /** 当前表情、强度和持续时间，供漫符层使用 */
+  get expressionState() {
+    return this.conversation.expressionState;
+  }
+
   /**
    * 诊断用：把某些参数钉在给定的偏移上（±1 = 推到极值），用来给新模型做参数图谱。
    * 传 null 取消。只经调试开关（debugHooks）调用
@@ -264,7 +275,8 @@ export class LivelinessMotor {
       ParamEyeLOpen: (f.ParamEyeLOpen ?? 0) + 0.6 * speech.widen,
       ParamEyeROpen: (f.ParamEyeROpen ?? 0) + 0.6 * speech.widen,
       ParamMouthForm: (f.ParamMouthForm ?? 0) + 0.2 * music.groove,
-      ParamCheek: f.ParamCheek ?? 0,
+      // 平常只留一点腮红，害羞时才红起来：Hiyori 的贴图自带腮红，不压下去的话害羞前后差别很小
+      ParamCheek: BASE_CHEEK + (f.ParamCheek ?? 0) * (1 - BASE_CHEEK),
     };
     for (const key of Object.keys(params) as PoseParam[]) params[key] = clamp(params[key] ?? 0, -1, 1);
     if (this.debugOverride) Object.assign(params, this.debugOverride);

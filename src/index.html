@@ -14,6 +14,8 @@
       <!-- ===== Live2D 画布区域（可拖动窗口） ===== -->
       <div id="canvas-container" class="drag-region">
         <canvas id="live2d-canvas"></canvas>
+        <!-- 漫符层：表情明显时画在头上的符号（见 src/mangaMarks.ts） -->
+        <canvas id="manga-overlay"></canvas>
         <!-- 打字机气泡（仅展示在折叠模式下） -->
         <div id="typewriter-overlay">
           <div id="typewriter-text"></div>

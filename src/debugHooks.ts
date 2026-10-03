@@ -38,6 +38,8 @@ export function installDebugHooks(): void {
     liveliness,
     say: (text: string) => playTTS(text),
     params: readParams,
+    /** 漫符的落点（设备像素）：脸、脸颊、头顶 */
+    anchors: () => LAppDelegate.getInstance().getFirstSubdelegate()?.getLive2DManager().getFirstModel()?.getAnchors() ?? null,
   };
   setInterval(() => {
     console.log('[Liveliness]', JSON.stringify(liveliness.status(performance.now())));
