@@ -25,10 +25,15 @@ export function stripThinkTags(text: string): string {
   return result.trim();
 }
 
+/**
+ * 模型是否接受 thinking 开关（用于后台小调用关闭思考，省 token、省时间）。
+ * DeepSeek 现在的模型（deepseek-flash、deepseek-v4-pro）都是混合推理，不关就会先想一大段。
+ */
 export function modelSupportsThinking(model?: string): boolean {
   const modelName = (model ?? '').toLowerCase();
   return (
     modelName.includes('seed') ||
+    modelName.includes('deepseek') ||
     modelName.includes('reasoner') ||
     modelName.includes('r1') ||
     modelName.includes('thinking')
