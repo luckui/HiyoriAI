@@ -14,6 +14,7 @@
 
 import type { Expression, ExpressionCue } from '../../shared/expressions';
 import { ACTING, type Acting, type FaceParam } from './acting';
+import { SPEECH_SCALE } from './amplitude';
 import { Envelope, Spring, clamp } from './dynamics';
 
 export type ConversationState = 'idle' | 'listening' | 'thinking' | 'speaking';
@@ -144,9 +145,9 @@ export class Conversation {
   /** 说到新的一句：换一个头部姿态；有时先移开视线（像在组织语言），再看回来 */
   beginSentence(): void {
     const r = this.random;
-    this.phraseYaw.target = (r() < 0.5 ? -1 : 1) * (0.04 + 0.1 * r());
-    this.phraseRoll.target = (r() < 0.5 ? -1 : 1) * (0.03 + 0.07 * r());
-    this.phrasePitch.target = -0.04 + 0.1 * r();
+    this.phraseYaw.target = (r() < 0.5 ? -1 : 1) * (0.06 + 0.16 * r()) * SPEECH_SCALE;
+    this.phraseRoll.target = (r() < 0.5 ? -1 : 1) * (0.05 + 0.1 * r()) * SPEECH_SCALE;
+    this.phrasePitch.target = (-0.06 + 0.14 * r()) * SPEECH_SCALE;
     if (r() < 0.4) {
       this.glanceUntilSec = this.timeSec + 0.5 + 0.5 * r();
       this.gazeX.target = (r() < 0.5 ? -1 : 1) * (0.3 + 0.25 * r());

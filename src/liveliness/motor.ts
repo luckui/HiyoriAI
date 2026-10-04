@@ -15,6 +15,7 @@
  */
 
 import type { Expression, ExpressionCue } from '../../shared/expressions';
+import { GROOVE_SCALE, SPEECH_SCALE } from './amplitude';
 import { BeatClock } from './beatClock';
 import { Conversation, type ConversationState } from './conversation';
 import { Envelope, Spring, clamp, smoothNoise } from './dynamics';
@@ -70,6 +71,12 @@ export interface Pose {
    */
   offsetX: number;
   offsetY: number;
+  /**
+   * 上半身绕腰的倾斜（弧度，正 = 和 ParamBodyAngleZ 正方向同侧）：模型以腰为支点整体转一点。
+   * 模型自己的身体参数幅度有限（Hiyori 只有 ±10°），头在画面里挪不了多远；绕腰转则腰不动、
+   * 头走一段弧线，像人歪着上身说话。和平移一样只适合半身构图（全身时脚会跟着转）
+   */
+  lean: number;
   /** 程序对 PROGRAM_OWNED_PARAMS 的控制权 [0, 1]：0 完全交给动画，1 完全由程序驱动 */
   authority: number;
   /**
@@ -96,6 +103,11 @@ export const AUDIO_LATENCY_MS = 130;
  */
 const BASE_CHEEK = -0.6;
 
+/** 绕腰倾斜（弧度）：律动摆到一侧时、说话换重心到一侧时（各自的总开关已经乘在里面） */
+const GROOVE_LEAN_RAD = 0.025;
+const SPEECH_LEAN_RAD = 0.04;
+
+
 const smoothstep = (edge0: number, edge1: number, x: number): number => {
   const t = clamp((x - edge0) / (edge1 - edge0), 0, 1);
   return t * t * (3 - 2 * t);
@@ -106,7 +118,7 @@ export class LivelinessMotor {
   private readonly random: () => number;
   private timeSec = 0;
   private lastNowMs: number | null = null;
-  private pose: Pose = { params: {}, offsetX: 0, offsetY: 0, authority: 0, cursorFollow: 1, mouthOpen: null, gesture: null };
+  private pose: Pose = { params: {}, offsetX: 0, offsetY: 0, lean: 0, authority: 0, cursorFollow: 1, mouthOpen: null, gesture: null };
 
   // ── 音乐 ──
   private musicInput = 0;
@@ -136,10 +148,35 @@ export class LivelinessMotor {
   private lastEmphasisSec = -Infinity;
   private silenceSec = 0;
   private voicedSec = 0;
-  private readonly emphasisNod = new Spring(4.5, 0.4);
+  private readonly emphasisNod = new Spring(3, 0.6);
+  /**
+   * 重音时头换一个朝向并停在那儿（说话的「打拍子」手势）。不是偏出去再弹回来：
+   * 那样一个重音就是一来一回，一秒几个重音，头看着在抖
+   */
+  private readonly strokeYaw = new Spring(1.4, 1);
+  private readonly strokeRoll = new Spring(1.4, 1);
+  private strokeSide = 1;
+  private lastStrokeSec = -Infinity;
+  /**
+   * 说话时上半身的重心 [-1, 1]：绕着腰往一侧倾，停一会儿再换边（下半身不动，整个人不平移）。
+   * 临界阻尼的慢弹簧：倾过去就停住，不来回弹
+   */
+  private readonly sway = new Spring(0.9, 1);
+  private swaySide = 1;
+  private lastSwaySec = -Infinity;
   private readonly browLift = new Spring(4, 0.5);
   private readonly eyeWiden = new Spring(5, 0.6);
   private readonly pauseTilt = new Spring(1.4, 0.8);
+  /** 身体比头晚一点跟上说话的动作 */
+  private readonly bodyFollowYaw = new Spring(1.3, 0.85);
+  private readonly bodyFollowRoll = new Spring(1.3, 0.85);
+  /** 漂移的「时间」：说得越起劲走得越快，头的游动跟着说话的劲头变快 */
+  private driftTime = 0;
+  /**
+   * 说话的投入程度：音量包络再平滑到秒级。漂移按它放大 —— 直接用音量的话，
+   * 幅度每个音节一起一落，头一秒抖四五下
+   */
+  private readonly engagement = new Envelope(0.5, 1.5);
 
   // ── 对话 ──
   private readonly conversation: Conversation;
@@ -172,6 +209,9 @@ export class LivelinessMotor {
     if (!speaking) {
       this.speechInput = 0;
       this.pauseTilt.target = 0;
+      this.sway.target = 0;
+      this.strokeYaw.target = 0;
+      this.strokeRoll.target = 0;
     }
   }
 
@@ -252,19 +292,29 @@ export class LivelinessMotor {
     const speech = this.updateSpeech(dt);
     const talk = this.conversation.update(dt);
     this.energy = talk.energy;
-    const t = this.timeSec;
 
-    // 一直存在的细微漂移：完全静止的头最显得假。说话越起劲漂得越多，表情决定劲儿有多大
-    const drift = (0.04 + 0.12 * speech.activity) * talk.energy;
+    // 一直存在的漂移：完全静止的头最显得假。说话越起劲漂得越多、越快，表情决定劲儿有多大
+    const engaged = this.engagement.step(speech.activity, dt);
+    const drift = (0.04 + 0.12 * SPEECH_SCALE * engaged) * talk.energy;
+    this.driftTime += dt * (1 + 1.2 * engaged);
+    const n = this.driftTime;
+    // 说话带出来的头部动作（每句的姿态 + 重音时的偏转 + 漂移），身体晚一点跟着走一部分：
+    // 只动头、身子僵着，看着像脖子上装了轴
+    const talkYaw = talk.yaw + speech.strokeYaw + drift * smoothNoise(n, 1);
+    const talkRoll = talk.roll + speech.tilt + speech.strokeRoll + drift * smoothNoise(n, 3);
+    this.bodyFollowYaw.target = 0.8 * talkYaw;
+    this.bodyFollowRoll.target = 0.6 * talkRoll;
     const g = music.frame;
     const f = talk.face;
     const params: Pose['params'] = {
-      ParamAngleX: g.headYaw + talk.yaw + drift * smoothNoise(t, 1) + 0.25 * talk.gazeX,
-      ParamAngleY: g.headNod + talk.pitch + 0.22 * speech.nod + 0.6 * drift * smoothNoise(t, 2) + 0.15 * talk.gazeY,
-      ParamAngleZ: g.headRoll + talk.roll + speech.tilt + drift * smoothNoise(t, 3),
-      ParamBodyAngleX: g.torsoYaw + talk.bodyYaw + 0.3 * drift * smoothNoise(t, 4),
-      ParamBodyAngleY: g.torsoBend,
-      ParamBodyAngleZ: g.torsoRoll + talk.bodyRoll + 0.3 * drift * smoothNoise(t, 5),
+      ParamAngleX: g.headYaw + talkYaw + 0.25 * talk.gazeX,
+      ParamAngleY: g.headNod + talk.pitch + 0.4 * SPEECH_SCALE * speech.nod + 0.6 * drift * smoothNoise(n, 2) + 0.15 * talk.gazeY,
+      // 上半身倾过去时头往回找正一点：人歪着身子说话，头不会跟着歪那么多
+      ParamAngleZ: g.headRoll + talkRoll - 0.04 * speech.sway,
+      ParamBodyAngleX: g.torsoYaw + talk.bodyYaw + this.bodyFollowYaw.step(dt) + 0.25 * speech.sway + 0.3 * drift * smoothNoise(n, 4),
+      // 重音时上身也顺势往前送一点
+      ParamBodyAngleY: g.torsoBend + 0.2 * SPEECH_SCALE * speech.nod,
+      ParamBodyAngleZ: g.torsoRoll + talk.bodyRoll + this.bodyFollowRoll.step(dt) + 0.6 * speech.sway + 0.3 * drift * smoothNoise(n, 5),
       ParamShoulderY: g.shoulder,
       ParamEyeBallX: talk.gazeX + g.eyeX,
       ParamEyeBallY: talk.gazeY,
@@ -289,7 +339,8 @@ export class LivelinessMotor {
     this.pose = {
       params,
       offsetX: 0.004 * g.side,
-      offsetY: 0.012 * g.bob,
+      offsetY: 0.016 * g.bob,
+      lean: GROOVE_LEAN_RAD * g.side + SPEECH_LEAN_RAD * speech.sway,
       authority: Math.max(music.authority, talk.authority),
       // 正在和你说话的人看着你，不会一直盯着你的鼠标
       cursorFollow: 1 - 0.9 * Math.max(music.authority, talk.authority),
@@ -321,7 +372,8 @@ export class LivelinessMotor {
     this.lastClockBeats = clockBeats;
     this.lastPeriodMs = this.beat.bpm !== null ? periodMs : null;
     const beats = clockBeats + this.phaseOffset.step(dt);
-    const frame = grooveFrame(beats + AUDIO_LATENCY_MS / periodMs, periodMs, groove);
+    const raw = grooveFrame(beats + AUDIO_LATENCY_MS / periodMs, periodMs, groove);
+    const frame = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, v * GROOVE_SCALE])) as typeof raw;
     return {
       groove,
       frame,
@@ -335,12 +387,27 @@ export class LivelinessMotor {
     const avg = this.speechAvg.step(env, dt);
     const activity = this.speaking ? clamp(env * 8, 0, 1) : 0;
 
-    // 重读：快包络从下方越过慢均值的 1.25 倍。慢均值跟着整句的音量走，
+    // 重读：快包络从下方越过慢均值的 1.2 倍。慢均值跟着整句的音量走，
     // 所以小声说话和大声说话都能找出各自的重音
-    const accented = this.speaking && env > Math.max(0.01, avg * 1.25);
-    if (accented && !this.wasAccented && this.timeSec - this.lastEmphasisSec > 0.28) {
+    const accented = this.speaking && env > Math.max(0.01, avg * 1.2);
+    if (accented && !this.wasAccented && this.timeSec - this.lastEmphasisSec > 0.25) {
       const strength = clamp(env / Math.max(avg, 0.005) - 1, 0.2, 1) * this.energy;
-      this.emphasisNod.impulse(-0.8 * strength);
+      // 点头只给明显的重音：每个音节都点，就成了啄米
+      if (strength > 0.45) this.emphasisNod.impulse(-0.6 * strength);
+      if (this.timeSec - this.lastStrokeSec > 0.5) {
+        // 多数时候换一边，偶尔同一边连着来：完全交替像钟摆
+        if (this.random() < 0.7) this.strokeSide = -this.strokeSide;
+        const stroke = this.strokeSide * (0.5 * this.energy + 0.5 * strength);
+        this.strokeYaw.target = 0.12 * SPEECH_SCALE * stroke;
+        this.strokeRoll.target = 0.06 * SPEECH_SCALE * stroke;
+        this.lastStrokeSec = this.timeSec;
+      }
+      // 上半身换边：至少停留 0.9 秒，免得一句话里左右来回晃
+      if (this.timeSec - this.lastSwaySec > 0.9) {
+        this.swaySide = -this.swaySide;
+        this.sway.target = this.swaySide * (0.5 + 0.5 * strength) * this.energy * SPEECH_SCALE;
+        this.lastSwaySec = this.timeSec;
+      }
       this.browLift.impulse(0.9 * strength);
       if (strength > 0.6) this.eyeWiden.impulse(0.8 * strength);
       this.lastEmphasisSec = this.timeSec;
@@ -352,7 +419,7 @@ export class LivelinessMotor {
     this.silenceSec = this.speaking && !voiced ? this.silenceSec + dt : 0;
     this.voicedSec = this.speaking && voiced ? this.voicedSec + dt : 0;
     if (this.silenceSec > 0.35 && this.pauseTilt.target === 0) {
-      this.pauseTilt.target = (this.random() < 0.5 ? -1 : 1) * (0.1 + 0.12 * this.random());
+      this.pauseTilt.target = (this.random() < 0.5 ? -1 : 1) * (0.1 + 0.12 * this.random()) * SPEECH_SCALE;
     } else if (this.voicedSec > 0.4) {
       this.pauseTilt.target = 0;
     }
@@ -361,6 +428,9 @@ export class LivelinessMotor {
     return {
       activity,
       nod: this.emphasisNod.step(dt),
+      strokeYaw: this.strokeYaw.step(dt),
+      strokeRoll: this.strokeRoll.step(dt),
+      sway: this.sway.step(dt),
       brow: this.browLift.step(dt) + 0.4 * activity,
       widen: this.eyeWiden.step(dt),
       tilt: this.pauseTilt.step(dt),

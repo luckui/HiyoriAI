@@ -19,8 +19,8 @@ import { clamp } from './dynamics';
 const HEAD_LAG_MS = 70;
 /** 点头晚于躯干下沉多少 */
 const NOD_LAG_MS = 45;
-/** 两侧停留的程度：越大越「挂」在两侧，经过中间越快 */
-const SIDE_HANG = 1.6;
+/** 两侧停留的程度：越大越「挂」在两侧，经过中间越快。太大像挂在弹簧上来回荡 */
+const SIDE_HANG = 0.9;
 
 export interface GrooveFrame {
   /** 重心左右 [-1, 1]，拍点上为 0 */
@@ -48,6 +48,17 @@ function bobAt(beats: number): number {
 }
 
 /**
+ * 摇滚式的一下：拍点前快速沉下去（最后 0.3 拍），拍点上最低，之后慢慢抬回来（0.7 拍）。
+ * 对称的起伏像在水里浮，快下慢上才有「砸在拍子上」的劲儿
+ */
+function pumpAt(beats: number): number {
+  const u = beats - Math.floor(beats);
+  return u < 0.7
+    ? -(Math.cos((Math.PI / 2) * (u / 0.7)) ** 2)
+    : -(Math.sin((Math.PI / 2) * ((u - 0.7) / 0.3)) ** 2);
+}
+
+/**
  * @param beats   连续节拍位置（整数为拍点，已含延迟补偿）
  * @param periodMs 一拍多长
  * @param energy  律动强度 [0, 1]
@@ -68,14 +79,15 @@ export function grooveFrame(beats: number, periodMs: number, energy: number): Gr
   return {
     side: swing * side,
     bob: e * bob,
-    torsoRoll: 0.5 * swing * side,
-    torsoYaw: 0.15 * swing * side,
-    torsoBend: 0.3 * e * bob,
-    shoulder: 0.5 * e * bob,
+    // 左右只是带一点，主轴是上下：上身每拍往前送，头晚一点更狠地点下去，再慢慢抬起
+    torsoRoll: 0.4 * swing * side,
+    torsoYaw: 0.12 * swing * side,
+    torsoBend: 0.38 * e * pumpAt(beats),
+    shoulder: 0.6 * e * bob,
     // 头比躯干多歪一点（跟随时的过冲），并且朝倾斜的一侧略转
-    headRoll: 0.4 * swing * headSide,
-    headYaw: 0.12 * swing * headSide,
-    headNod: 0.3 * e * bobAt(beats - nodLag),
+    headRoll: 0.3 * swing * headSide,
+    headYaw: 0.1 * swing * headSide,
+    headNod: 0.45 * e * pumpAt(beats - nodLag),
     // 头往一边转，眼珠往回转，视线留在观众身上
     eyeX: -0.35 * swing * headSide,
   };

@@ -613,6 +613,7 @@ export class LAppModel extends CubismUserModel {
     this._applyPose(pose, BODY_PARAMS);
     this._poseOffsetX = pose.offsetX;
     this._poseOffsetY = pose.offsetY;
+    this._poseLean = pose.lean;
 
     // 物理演算の設定
     if (this._physics != null) {
@@ -783,6 +784,9 @@ export class LAppModel extends CubismUserModel {
   private _poseParamInfo = new Map<PoseParam, { index: number; up: number; down: number; defaultValue: number } | null>();
   private _poseOffsetX = 0;
   private _poseOffsetY = 0;
+  private _poseLean = 0;
+  /** 绕腰倾斜的支点（模型坐标），第一次用到时按脸的位置推算 */
+  private _waistPivot: { x: number; y: number } | null = null;
   /** 随拍的整体平移只在半身构图用：全身时脚也离地，像在原地跳 */
   private _poseTranslation = false;
 
@@ -1065,10 +1069,11 @@ export class LAppModel extends CubismUserModel {
     // 各読み込み終了後
     if (this._state == LoadStep.CompleteSetup) {
       matrix.multiplyByMatrix(this._modelMatrix);
-      // 随拍起伏：平移整个模型，不依赖模型有没有对应参数（只在半身构图）
+      // 随拍起伏、上半身绕腰倾斜：变换整个模型，不依赖模型有没有对应参数（只在半身构图）
       if (this._poseTranslation && (this._poseOffsetX || this._poseOffsetY)) {
         matrix.translateRelative(this._poseOffsetX, this._poseOffsetY);
       }
+      if (this._poseTranslation && this._poseLean) this._leanAroundWaist(matrix, this._poseLean);
       this._updateAnchors(matrix);
 
       this.getRenderer().setMvpMatrix(matrix);
@@ -1157,6 +1162,42 @@ export class LAppModel extends CubismUserModel {
   }
 
   /** 网格顶点在模型空间的包围盒，经 MVP 变换到画布像素 */
+  /**
+   * 以腰为支点旋转整个模型：腰不动、头走一段弧线。
+   * 矩阵是行向量约定，xxxRelative 先作用在模型坐标上：先移到支点、转、再移回去
+   */
+  private _leanAroundWaist(matrix: CubismMatrix44, radians: number): void {
+    const pivot = this._waistPivot ??= this._findWaistPivot();
+    if (!pivot) return;
+    // 正方向和 ParamBodyAngleZ 正方向一致（实测 Hiyori：参数为正时上身往画面右边倒）。
+    // 下面的矩阵按正角是逆时针（往左倒），所以取反
+    const c = Math.cos(radians), s = -Math.sin(radians);
+    matrix.translateRelative(pivot.x, pivot.y);
+    const rotation = new Float32Array([c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    CubismMatrix44.multiply(rotation, matrix.getArray(), matrix.getArray());
+    matrix.translateRelative(-pivot.x, -pivot.y);
+  }
+
+  /** 腰的位置（模型坐标，y 向上）：脸中心往下约 2.8 个脸高；找不到脸就取整个模型从上往下 45% 处 */
+  private _findWaistPivot(): { x: number; y: number } | null {
+    this._anchorDrawables ??= this._findAnchorDrawables();
+    const bounds = (drawables: number[]) => {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const d of drawables) {
+        const v = this._model.getDrawableVertices(d);
+        for (let i = 0; i < v.length; i += 2) {
+          minX = Math.min(minX, v[i]); maxX = Math.max(maxX, v[i]);
+          minY = Math.min(minY, v[i + 1]); maxY = Math.max(maxY, v[i + 1]);
+        }
+      }
+      return minX === Infinity ? null : { minX, minY, maxX, maxY };
+    };
+    const face = bounds(this._anchorDrawables.face);
+    if (face) return { x: (face.minX + face.maxX) / 2, y: (face.minY + face.maxY) / 2 - 2.8 * (face.maxY - face.minY) };
+    const all = bounds(this._anchorDrawables.all);
+    return all ? { x: (all.minX + all.maxX) / 2, y: all.maxY - 0.45 * (all.maxY - all.minY) } : null;
+  }
+
   private _projectBounds(drawables: number[], mvp: Float32Array, width: number, height: number): AnchorRect | null {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const d of drawables) {
@@ -1170,11 +1211,14 @@ export class LAppModel extends CubismUserModel {
       }
     }
     if (minX === Infinity) return null;
-    // 只有缩放和平移（正交投影），变换角点即可
-    const px = (x: number) => ((mvp[0] * x + mvp[12] + 1) / 2) * width;
-    const py = (y: number) => ((1 - (mvp[5] * y + mvp[13])) / 2) * height;
-    const x0 = px(minX), x1 = px(maxX), y0 = py(maxY), y1 = py(minY);
-    return { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
+    // 正交投影，可能带绕腰的旋转：变换四个角，取包围盒
+    const xs: number[] = [], ys: number[] = [];
+    for (const [x, y] of [[minX, minY], [minX, maxY], [maxX, minY], [maxX, maxY]]) {
+      xs.push(((mvp[0] * x + mvp[4] * y + mvp[12] + 1) / 2) * width);
+      ys.push(((1 - (mvp[1] * x + mvp[5] * y + mvp[13])) / 2) * height);
+    }
+    const x0 = Math.min(...xs), y0 = Math.min(...ys);
+    return { x: x0, y: y0, w: Math.max(...xs) - x0, h: Math.max(...ys) - y0 };
   }
 
   private _updateAnchors(mvpMatrix: CubismMatrix44): void {
