@@ -372,3 +372,14 @@ body {
   line-height: 1.6;
 }
 .show-summary b { color: var(--text); }
+
+/* ── 主人按键说话 ───────────────────────────────────── */
+
+.ptt { user-select: none; }
+.ptt.talking {
+  border-color: var(--accent);
+  background: rgba(255, 126, 179, 0.25);
+  color: var(--accent);
+  font-weight: 700;
+}
+.ptt.transcribing { opacity: 0.6; }

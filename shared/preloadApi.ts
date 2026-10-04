@@ -162,6 +162,8 @@ export interface TtsAPI {
   onPlay(cb: (text: string, id?: number) => void): void;
   /** 回报主进程：这段朗读已经播完（或放弃） */
   playDone(id: number): void;
+  /** 主进程要她立刻闭嘴（主人开口）：停掉正在说的，排队的也不说了 */
+  onInterrupt(cb: () => void): void;
   /** TTS 播放期间暂停 / 恢复听觉，防止 AI 的声音被麦克风听到 */
   pauseHearing(): Promise<void>;
   resumeHearing(): Promise<void>;
@@ -313,6 +315,16 @@ export interface LiveAPI {
   stopAi(): Promise<LiveStageState>;
   /** 主播在控制台对她说话（观众只听得到她的回答） */
   ownerSay(text: string): Promise<{ ok: boolean; reply?: string; detail?: string }>;
+  /** 主人麦克风（按键说话）开关：会确保本地语音识别服务在跑 */
+  setOwnerMic(on: boolean): Promise<{ ok: boolean; detail?: string; wsUrl?: string }>;
+  /** 按下说话键：她立刻停下 */
+  pttDown(): Promise<boolean>;
+  /** 松开：把转写结果交给她 */
+  pttUp(text: string): Promise<boolean>;
+  /** 全局热键（F8）切换说话 */
+  onPttToggle(cb: () => void): Unsubscribe;
+  /** 主人正在说 / 说了什么（舞台字幕条） */
+  onOwnerVoice(cb: (voice: { state: 'listening' | 'heard' | 'idle'; text: string }) => void): Unsubscribe;
   /** 直播记忆：记了多少观众、场次、梗、口味 */
   getMemoryStats(): Promise<{ viewers: number; streams: number; memes: number; tastes: number } | null>;
   /** 清空直播记忆（说过「别记我」的名单保留） */

@@ -18,6 +18,8 @@ import type {
   LiveUser,
 } from '../../shared/types/live';
 
+import { disablePtt, enablePtt, pttDown, pttState, pttToggle, pttUp, type PttState } from './ptt';
+
 const MAX_ROWS = 300;
 const STICK_THRESHOLD_PX = 40;
 
@@ -482,6 +484,56 @@ function bindRundown(): void {
   });
 }
 
+// ── 主人按键说话 ───────────────────────────────────────
+
+const PTT_LABEL: Record<PttState, string> = { off: '🎙 按住说话', ready: '🎙 按住说话', talking: '🔴 松开结束', transcribing: '… 识别中' };
+
+function bindPtt(): void {
+  const toggle = document.getElementById('ctl-mic')!;
+  const btn = document.getElementById('ptt') as HTMLButtonElement;
+  const render = (s: PttState) => {
+    toggle.classList.toggle('on', s !== 'off');
+    btn.hidden = s === 'off';
+    btn.textContent = PTT_LABEL[s];
+    btn.classList.toggle('talking', s === 'talking');
+    btn.classList.toggle('transcribing', s === 'transcribing');
+  };
+  const up = async () => {
+    const text = await pttUp();
+    if (text) ownerRow('你（语音）：', text);
+  };
+  toggle.addEventListener('click', async () => {
+    if (pttState() !== 'off') {
+      await disablePtt();
+      return;
+    }
+    toggle.textContent = '🎙 准备中…';
+    const error = await enablePtt(render);
+    toggle.textContent = '🎙 主人麦克风';
+    if (error) showNotice(error);
+  });
+  btn.addEventListener('pointerdown', (e) => { btn.setPointerCapture(e.pointerId); pttDown(); });
+  btn.addEventListener('pointerup', () => void up());
+  btn.addEventListener('pointercancel', () => void up());
+  // 空格：不在输入框里时按住说话
+  const typing = () => document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLSelectElement;
+  document.addEventListener('keydown', (e) => {
+    if (e.code !== 'Space' || e.repeat || typing() || pttState() !== 'ready') return;
+    e.preventDefault();
+    pttDown();
+  });
+  document.addEventListener('keyup', (e) => {
+    if (e.code !== 'Space' || pttState() !== 'talking') return;
+    e.preventDefault();
+    void up();
+  });
+  // F8（全局）：按一下开始，再按一下说完
+  window.liveAPI.onPttToggle(() => {
+    if (pttState() === 'talking') void up();
+    else pttToggle();
+  });
+}
+
 async function reload(): Promise<void> {
   rows.clear();
   feed.replaceChildren(el('div', 'empty', '还没有弹幕'));
@@ -493,6 +545,7 @@ async function init(): Promise<void> {
   bindControls();
   bindConsole();
   bindRundown();
+  bindPtt();
   window.liveAPI.onUpdate((update) => {
     addEvents(update.events);
     renderStatus(update.status);

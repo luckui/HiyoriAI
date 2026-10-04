@@ -518,12 +518,35 @@ export function injectStageFocus(eventIds: string[]): void {
   onFocus({ kind: 'chat', eventIds });
 }
 
+// ── 主人语音：舞台上方的「主人」字幕条 ──────────────────
+
+let ownerTimer: number | null = null;
+
+function onOwnerVoice(voice: { state: 'listening' | 'heard' | 'idle'; text: string }): void {
+  const bar = $('stage-owner');
+  if (ownerTimer !== null) clearTimeout(ownerTimer);
+  ownerTimer = null;
+  if (voice.state === 'idle') {
+    bar.hidden = true;
+    return;
+  }
+  bar.hidden = false;
+  bar.replaceChildren(el('span', 'so-tag', '🎙 主人'), el('span', voice.state === 'listening' ? 'so-text so-listening' : 'so-text', voice.state === 'listening' ? '说话中…' : voice.text));
+  if (voice.state === 'listening') {
+    // 她稍微侧过头听（主人在镜头外）
+    liveliness.lookAt(0.4, 0.1, 2500);
+  } else {
+    ownerTimer = window.setTimeout(() => { bar.hidden = true; }, 7000);
+  }
+}
+
 export function initStage(): void {
   const api = window.liveAPI;
   if (!api) return;
   api.onStage(apply);
   api.onFocus(onFocus);
   api.onPanel(renderPanel);
+  api.onOwnerVoice(onOwnerVoice);
   void api.getPanel().then(renderPanel);
   api.onUpdate((update) => {
     if (!isStageMode()) return;

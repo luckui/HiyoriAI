@@ -154,6 +154,16 @@ function topicBody(topic: Topic, ctx: TopicContext): { what: string[]; how: stri
         maxChars: topic.beat.length === 'short' ? 40 : 90,
       };
     }
+    case 'owner':
+      return {
+        what: [
+          '主人（你的搭档，也是你的开发者）正在直播间当面跟你说话，观众也听得到他：',
+          `<主人>${cleanText(topic.text)}</主人>`,
+          ...(topic.interrupted ? [`你刚才正说到「${cleanText(topic.interrupted).slice(0, 60)}」，被他打断了。`] : []),
+        ],
+        how: '像搭档一样直接回他：可以吐槽、接梗、反驳或者撒娇。不要把他当观众，不要说「这位观众」，也不用谢他发弹幕；需要的话最后把话头拉回直播间。',
+        maxChars: 70,
+      };
     case 'transition':
       return topic.to
         ? {
@@ -188,7 +198,7 @@ function topicBody(topic: Topic, ctx: TopicContext): { what: string[]; how: stri
 export function topicPrompt(topic: Topic, ctx: TopicContext): string {
   const body = topicBody(topic, ctx);
   // 开场、谢幕不是从弹幕里挑出来的，不提弹幕快慢
-  const heat = ['opening', 'ending', 'transition'].includes(topic.kind) ? '' : `${HEAT_TEXT[topic.heat]}。`;
+  const heat = ['opening', 'ending', 'transition', 'owner'].includes(topic.kind) ? '' : `${HEAT_TEXT[topic.heat]}。`;
   const parts = [
     `本场主题：${ctx.streamTopic || '自由聊天'}。${heat}${ctx.today ? `今天是${ctx.today}。` : ''}`,
   ];

@@ -7,7 +7,7 @@
 
 import { EventEmitter } from 'events';
 import { streamerSession } from './streamerSession';
-import { speakAndWait } from '../ttsRuntime';
+import { interruptPlayback, speakAndWait } from '../ttsRuntime';
 import type { StreamerReply } from './types';
 import type { Topic, TopicBody } from './attention/topics';
 
@@ -49,6 +49,13 @@ class StreamerControllerManager extends EventEmitter {
   private busy = false;
   /** 正在播的朗读段数（话题、主播对话、定时播报都算） */
   private speaking = 0;
+  /** 主人按着说话键：她不开新话题 */
+  private floorHeld = false;
+  /** 打断计数：话题想完回来发现变了，就不说了 */
+  private epoch = 0;
+  /** 她正在说的那句（被打断时告诉 LLM 她说到哪了） */
+  private currentLine = '';
+  private interruptedLine = '';
   private config: Required<StreamerControllerConfig> = {
     idleThresholdMs: envInt('STREAMER_IDLE_THRESHOLD_MS', 45_000),
     autoTTS: envBool('STREAMER_AUTO_TTS', true),
@@ -103,6 +110,35 @@ class StreamerControllerManager extends EventEmitter {
     await this.handle(topic);
   }
 
+  /**
+   * 主人开口（按下说话键）：立刻停下她正在说的、扔掉排队和正在想的，在主人说完之前不开新话题。
+   */
+  ownerStarted(): void {
+    this.floorHeld = true;
+    this.epoch += 1;
+    if (this.speaking > 0 || this.busy) this.interruptedLine = this.currentLine;
+    interruptPlayback();
+  }
+
+  /** 主人说完：text 是转写结果，空的就当没说（把话筒还给她） */
+  async ownerFinished(text: string): Promise<void> {
+    const said = text.trim();
+    if (!said || !this.running) {
+      this.floorHeld = false;
+      this.interruptedLine = '';
+      return;
+    }
+    // 被打断的那个话题收尾很快（朗读已经停了）
+    while (this.busy) await new Promise((r) => setTimeout(r, 30));
+    const topic: Topic = {
+      kind: 'owner', text: said, interrupted: this.interruptedLine || undefined,
+      id: `owner-${Date.now()}`, priority: 300, heat: 'quiet', createdAt: Date.now(),
+    };
+    this.interruptedLine = '';
+    this.floorHeld = false;
+    await this.handle(topic);
+  }
+
   /** 手动触发一次：不管自动回复开没开，挑一个话题说出来 */
   async flushOnce(): Promise<StreamerReply | null> {
     const topic = streamerSession.nextTopic();
@@ -110,7 +146,7 @@ class StreamerControllerManager extends EventEmitter {
   }
 
   private async tick(): Promise<void> {
-    if (!this.running || this.busy || this.speaking > 0) return;
+    if (!this.running || this.busy || this.speaking > 0 || this.floorHeld) return;
     if (!streamerSession.running || !streamerSession.autoReply) return;
     const topic = streamerSession.nextTopic();
     if (topic) await this.handle(topic);
@@ -118,12 +154,15 @@ class StreamerControllerManager extends EventEmitter {
 
   private async handle(topic: Topic): Promise<StreamerReply> {
     this.busy = true;
+    const epoch = this.epoch;
     this.emit('topic', topic);
     try {
       console.log(`[StreamerController] 话题 ${topic.kind}（${topic.heat}，优先级 ${topic.priority.toFixed(0)}）`);
       const reply = await streamerSession.compose(topic);
       let said = '';
-      if (reply.reply) {
+      // 想的时候主人开口了：这句不说了
+      if (epoch !== this.epoch) console.log(`[StreamerController] 话题 ${topic.kind} 被主人打断，不说了`);
+      else if (reply.reply) {
         this.emit('reply', reply);
         said = await this.say(reply.reply, { kind: topic.kind, segment: topic.kind === 'segment' ? topic.segmentId : undefined });
       }
@@ -141,6 +180,7 @@ class StreamerControllerManager extends EventEmitter {
     if (!text) return '';
     if (this.speaking++ === 0) streamerSession.speechStarted();
     const startedAt = Date.now();
+    this.currentLine = text;
     try {
       if (!this.config.autoTTS || !(await speakAndWait(text))) {
         await new Promise((r) => setTimeout(r, text.length * MS_PER_CHAR));
@@ -148,7 +188,10 @@ class StreamerControllerManager extends EventEmitter {
     } catch (err) {
       console.error('[StreamerController] TTS error:', err);
     } finally {
-      if (--this.speaking === 0) streamerSession.speechEnded();
+      if (--this.speaking === 0) {
+        streamerSession.speechEnded();
+        this.currentLine = '';
+      }
       this.emit('spoken', { ...meta, text, startedAt, endedAt: Date.now() } satisfies SpokenLine);
     }
     return text;

@@ -126,6 +126,11 @@ export function speakAndWait(text: string): Promise<boolean> {
   });
 }
 
+/** 立刻停下她正在说的话，排队还没说的也不说了（主人开口时） */
+export function interruptPlayback(): void {
+  sendToRenderer('tts:interrupt');
+}
+
 /** 渲染进程回报某段朗读播完 */
 export function notifyPlayDone(id: number): void {
   pendingPlays.get(id)?.();

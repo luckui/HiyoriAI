@@ -11,7 +11,7 @@
 
 import { LAppDelegate } from './lappdelegate';
 import type { LAppModel } from './lappmodel';
-import { typewriterPlayback } from './chat/typewriter';
+import { dismissTypewriterBubble, typewriterPlayback } from './chat/typewriter';
 import { estimateSpeechMs, mapWordsToChars, type TimedWord, type TypewriterPlaybackCallback } from './typewriterPlayback';
 import { SerialPlaybackQueue } from './ttsPlaybackQueue';
 import { liveliness } from './liveliness/motor';
@@ -73,6 +73,17 @@ export function stopTTS(): void {
   _current?.abort();
 }
 
+/** 打断代数：排队时记下，轮到时发现变了就不说 */
+let _generation = 0;
+
+/** 立刻停下，排队还没开始的也都不说了（直播中主人开口） */
+export function interruptTTS(): void {
+  _generation += 1;
+  stopTTS();
+  // 说到一半的字幕也收掉
+  dismissTypewriterBubble();
+}
+
 // ── 主入口 ───────────────────────────────────────────────────────
 
 export function playTTS(text: string, onDuration?: TypewriterPlaybackCallback): Promise<void> {
@@ -81,7 +92,12 @@ export function playTTS(text: string, onDuration?: TypewriterPlaybackCallback): 
   const queuedAhead = _playbackQueue.pendingCount;
   console.log(`[TTS Queue] queued id=${playbackId} ahead=${queuedAhead} text=${JSON.stringify(text.slice(0, 50))}`);
 
+  const generation = _generation;
   return _playbackQueue.enqueue(async () => {
+    if (generation !== _generation) {
+      console.log(`[TTS Queue] skip id=${playbackId}（被打断）`);
+      return;
+    }
     const startedAt = performance.now();
     console.log(`[TTS Queue] start id=${playbackId} waited=${Math.round(startedAt - queuedAt)}ms`);
     try {
@@ -269,6 +285,11 @@ export function registerTTSPlayListener(): void {
       .catch((e) => console.error('[TTS] playTTS error:', e))
       // 主进程（直播节奏）在等她说完
       .finally(() => { if (id !== undefined) ttsAPI.playDone(id); });
+  });
+
+  ttsAPI.onInterrupt?.(() => {
+    console.log('[TTS] 被打断：停下正在说的，清掉排队的');
+    interruptTTS();
   });
 
   console.log('[TTS] tts:play 监听器已注册');

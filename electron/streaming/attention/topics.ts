@@ -43,6 +43,8 @@ export type TopicBody =
   | { kind: 'ending'; summary: string }
   /** 环节的一拍：按素材说一件事；recap 是她在这个环节里刚说过的几句，接着往下说 */
   | { kind: 'segment'; segmentId: string; segmentTitle: string; beat: SegmentBeat; recap: string[] }
+  /** 主人（搭档）开口跟她说话：interrupted 是她被打断时正在说的那句 */
+  | { kind: 'owner'; text: string; interrupted?: string }
   /** 换环节的口播：to 为空表示节目单走完了，接下来自由聊 */
   | { kind: 'transition'; from?: { id: string; title: string }; to?: { id: string; title: string; description: string } };
 

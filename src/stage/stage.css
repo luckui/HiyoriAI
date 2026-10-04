@@ -600,3 +600,49 @@ body.stage-mode[data-stage-segment="game"] #stage-panel {
 body.stage-mode[data-stage-segment="game"] #stage-panel-body {
   display: none;
 }
+
+/* ── 主人语音字幕条 ─────────────────────────────────── */
+
+#stage-owner {
+  position: absolute;
+  top: 26px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 560px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 18px 8px 10px;
+  border-radius: 999px;
+  background: var(--st-sub-bg);
+  border: 3px solid var(--st-panel-border);
+  box-shadow: 0 6px 18px var(--st-sub-shadow);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--st-ink);
+  animation: sp-pop 0.4s cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+#stage-owner[hidden],
+body:not(.stage-phase-live) #stage-owner {
+  display: none;
+}
+.so-tag {
+  flex: none;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--st-seg-grad);
+  color: #fff;
+  font-size: 15px;
+}
+.so-text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.so-listening {
+  color: var(--st-muted);
+  animation: so-blink 1.2s ease-in-out infinite;
+}
+@keyframes so-blink {
+  50% { opacity: 0.4; }
+}

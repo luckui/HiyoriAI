@@ -6,7 +6,8 @@
  * - 弹幕姬窗口兼做控制台，开播时主播在这里操作和打字，不会出现在画面里。
  */
 
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, shell } from 'electron';
+import * as sttServerManager from '../sttServerManager';
 import { join } from 'path';
 import {
   LIVE_SEGMENTS,
@@ -195,6 +196,35 @@ function stopAi(): LiveStageState {
   return broadcastStage();
 }
 
+// ── 主人语音同台（按键说话）──────────────────────────────
+// 控制台窗口采麦克风、连本地 faster-whisper 转写；这里只管打断她、让出话筒、把转写交给发言出口。
+
+/** 全局热键：在游戏里也能按（按一下开始说，再按一下说完） */
+const PTT_HOTKEY = 'F8';
+
+async function setOwnerMic(on: boolean): Promise<{ ok: boolean; detail?: string; wsUrl?: string }> {
+  if (!on) {
+    if (globalShortcut.isRegistered(PTT_HOTKEY)) globalShortcut.unregister(PTT_HOTKEY);
+    return { ok: true };
+  }
+  const status = await sttServerManager.getStatus();
+  if (!status.installed) return { ok: false, detail: '还没装语音识别：到设置里安装 STT，或者让她「安装语音识别」' };
+  if (!status.running || !status.healthy) {
+    const started = await sttServerManager.startServer();
+    if (!started.ok) return { ok: false, detail: `语音识别服务没起来：${started.detail}` };
+  }
+  if (!globalShortcut.isRegistered(PTT_HOTKEY)) {
+    globalShortcut.register(PTT_HOTKEY, () => {
+      if (liveWindow && !liveWindow.isDestroyed()) liveWindow.webContents.send('live:ptt-toggle');
+    });
+  }
+  return { ok: true, wsUrl: sttServerManager.getWebSocketUrl() };
+}
+
+function ownerVoice(state: 'listening' | 'heard' | 'idle', text = ''): void {
+  broadcastToWindows('live:owner-voice', { state, text });
+}
+
 /** 主播在控制台打字跟她说话：走正常对话（直播模式下她的回答会说出来），并同步到主窗口的聊天记录 */
 async function ownerSay(text: string): Promise<{ ok: boolean; reply?: string; detail?: string }> {
   const content = text.trim();
@@ -295,6 +325,20 @@ export function registerLiveIpc(): void {
   ipcMain.handle('live:ai:start', () => startAi());
   ipcMain.handle('live:ai:stop', () => stopAi());
   ipcMain.handle('live:owner-say', (_e, text: string) => ownerSay(String(text ?? '')));
+  ipcMain.handle('live:owner-mic', (_e, on: boolean) => setOwnerMic(!!on));
+  // 按下说话键：她立刻停下；松开：转写结果交给她接话
+  ipcMain.handle('live:ptt:down', () => {
+    if (!streamerController.isRunning) return false;
+    streamerController.ownerStarted();
+    ownerVoice('listening');
+    return true;
+  });
+  ipcMain.handle('live:ptt:up', (_e, text: string) => {
+    const said = String(text ?? '').trim().slice(0, 300);
+    ownerVoice(said ? 'heard' : 'idle', said);
+    void streamerController.ownerFinished(said);
+    return true;
+  });
   // 没开播时测试：以测试观众的身份发一条弹幕（和真实弹幕走同一条路）
   ipcMain.handle('live:test-chat', (_e, name: string, text: string) => {
     if (!streamerSession.running) return false;
@@ -332,6 +376,7 @@ export function registerLiveIpc(): void {
 
 /** 退出前断开（避免重连定时器拖住进程） */
 export function shutdownLive(): void {
+  if (globalShortcut.isRegistered(PTT_HOTKEY)) globalShortcut.unregister(PTT_HOTKEY);
   streamerController.stop();
   liveHub.onUpdate(null);
   liveHub.disconnect();

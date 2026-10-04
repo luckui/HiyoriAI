@@ -29,6 +29,7 @@
     </div>
     <div class="live-controls">
       <button id="ctl-ai" class="live-toggle" title="她自己挑弹幕、礼物、进场来回应">🤖 AI 互动</button>
+      <button id="ctl-mic" class="live-toggle" title="主人语音同台：按住「说话」或空格（游戏里按 F8 开始、再按一下说完），她会马上停下来接你的话">🎙 主人麦克风</button>
       <select id="ctl-segment" title="节目形式（会换成该节目的默认主题）">
         <option value="chat">💬 聊天回</option>
         <option value="sing">🎤 歌回</option>
@@ -73,6 +74,7 @@
   <form id="owner-form" class="owner-form">
     <input id="owner-input" type="text" autocomplete="off" placeholder="对 Hiyori 说…（观众听不到你）；「/弹幕 内容」发测试弹幕" />
     <button id="owner-send" type="submit" class="live-btn">发送</button>
+    <button id="ptt" type="button" class="live-btn ptt" hidden title="按住说话（也可以按住空格；游戏里按 F8）">🎙 按住说话</button>
   </form>
 
   <footer class="live-filters">
