@@ -11,7 +11,7 @@
 import { randomUUID } from 'crypto';
 import { gunzipSync } from 'zlib';
 import WebSocket from 'ws';
-import type { SpeechEngine, SpeechHealth, SpeechStream, SpeechStreamHandlers } from './engine';
+import type { SpeechEngine, SpeechHealth, SpeechStream, SpeechStreamHandlers, SpeechWord } from './engine';
 import { decodeFrame, DoubaoEvent, encodeRequest, locateSentenceStarts, SentenceAligner, type DoubaoFrame } from './doubaoProtocol';
 
 export const DOUBAO_BIDIRECTIONAL_URL = 'wss://openspeech.bytedance.com/api/v3/tts/bidirection';
@@ -35,6 +35,10 @@ const SAMPLE_RATE = 24000;
 const CONNECT_TIMEOUT_MS = 10_000;
 /** 会话里这么久没有收到任何帧就判为失败（交给降级方案） */
 const STALL_TIMEOUT_MS = 10_000;
+/** 一个累计位置单位大约念多久：英文字母（7 个单位）约 60ms，汉字（20 个单位）约 170ms */
+const SEC_PER_UNIT = 0.0086;
+/** 段结束后最多等逐词时间戳这么久，等不到就按停顿估句子起点 */
+const SUBTITLE_WAIT_MS = 600;
 /** 连接空闲这么久后主动断开，下次用时再连 */
 const IDLE_CLOSE_MS = 180_000;
 
@@ -88,7 +92,8 @@ export class DoubaoSpeechEngine implements SpeechEngine {
     if (pitch) additions.post_process = { pitch };
     let params: Record<string, unknown> = {
       speaker,
-      audio_params: { format: 'pcm', sample_rate: SAMPLE_RATE, ...(speechRate ? { speech_rate: speechRate } : {}) },
+      // enable_subtitle：服务端在每段结束后发 TTSSubtitle，带逐词时间戳 —— 句子起点和字幕节奏都以它为准
+      audio_params: { format: 'pcm', sample_rate: SAMPLE_RATE, enable_subtitle: true, ...(speechRate ? { speech_rate: speechRate } : {}) },
     };
     if (extraParams) {
       const { additions: extraAdditions, ...rest } = extraParams;
@@ -252,6 +257,19 @@ class DoubaoSession implements SpeechStream {
   /** 当前这段的文本和音频：句末按停顿定位我们每句的起点 */
   private serverText = '';
   private serverAudio: Buffer[] = [];
+  /** 逐词时间戳：相对哪一刻（这段开头），以及已经走到全文的哪个累计位置 */
+  private subtitleBase = 0;
+  private subtitlePos = 0;
+  /**
+   * 段里其余句子的起点先不按停顿估：逐词时间戳常在结束事件之后才到（纯英文时实测如此），等它，
+   * 等不到再估
+   */
+  private deferred: { inner: Array<{ sentence: number; fraction: number }>; text: string; audio: Buffer[]; at: number; duration: number } | null = null;
+  private deferTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 这次会话收到过逐词时间戳 */
+  private sawSubtitle = false;
+  /** 起点落在粘连词中间的句子、粘在后面的那几个字的长度（累计位置单位）、等不到下一个词时用的时刻 */
+  private glued: Array<[number, number, number]> = [];
   private readonly marked = new Set<number>();
   private stallTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -316,7 +334,10 @@ class DoubaoSession implements SpeechStream {
         break;
       case DoubaoEvent.TTSSentenceStart: {
         const text = (frame.json as { text?: string } | undefined)?.text ?? '';
+        this.resolveDeferred();
         this.serverSentenceAt = this.emittedSec;
+        this.subtitleBase = this.emittedSec;
+        this.subtitlePos = this.aligner.position;
         this.inServerSentence = [];
         this.alignAtEnd = !text;
         this.serverText = text;
@@ -349,24 +370,27 @@ class DoubaoSession implements SpeechStream {
           this.serverText = text;
           this.inServerSentence = this.aligner.start(text);
         }
-        const inner = this.inServerSentence.filter((s) => s.fraction > 0);
-        if (inner.length && duration > 0) {
-          // 按字数比例会偏早：把标点和音频里的停顿对上，取重新开口的时刻
-          let audio = Buffer.concat(this.serverAudio);
-          if (audio.byteOffset % 2) audio = Buffer.from(audio); // Int16Array 要求两字节对齐
-          const samples = new Int16Array(audio.buffer, audio.byteOffset, Math.floor(audio.length / 2));
-          const length = SentenceAligner.measure(this.serverText);
-          const starts = locateSentenceStarts(samples, SAMPLE_RATE, this.serverText, inner.map((s) => Math.round(s.fraction * length)));
-          inner.forEach((s, k) => { s.fraction = starts[k] / duration; });
+        // 起点在这段开头的马上报告；段中间的等逐词时间戳（见 TTSSubtitle），等不到再按停顿估
+        const inner = this.inServerSentence.splice(0);
+        for (const { sentence, fraction } of inner) if (fraction === 0) this.markStart(sentence, this.serverSentenceAt);
+        const rest = inner.filter((s) => s.fraction > 0 && !this.marked.has(s.sentence));
+        if (rest.length && duration > 0) {
+          this.deferred = { inner: rest, text: this.serverText, audio: this.serverAudio, at: this.serverSentenceAt, duration };
+          // 已经收到过逐词时间戳：后面的一定会来（长段落最后一批常在结束事件后快 1 秒才到，仍远早于播放），
+          // 等到会话结束再说；一次都没收到（这个音色/资源不支持）才稍等一下就按停顿估
+          if (!this.sawSubtitle) this.deferTimer = setTimeout(() => this.resolveDeferred(), SUBTITLE_WAIT_MS);
         }
         this.serverAudio = [];
-        for (const { sentence, fraction } of this.inServerSentence.splice(0)) {
-          this.markStart(sentence, this.serverSentenceAt + fraction * duration);
-        }
         this.reportDone(this.aligner.completed);
         break;
       }
+      case DoubaoEvent.TTSSubtitle:
+        this.applySubtitle(frame);
+        break;
       case DoubaoEvent.SessionFinished:
+        // 粘连词是最后一个词、后面再没有词了：用它的结束时刻（播放端会挪到开口处）
+        for (const [i, , fallback] of this.glued.splice(0)) this.markStart(i, fallback);
+        this.resolveDeferred();
         // 没对上的句子（服务端改写了文本）至少在结尾报告一次，播放端不会一直等
         for (let i = 0; i < this.aligner.size; i++) this.markStart(i, this.emittedSec);
         this.reportDone(Number.MAX_SAFE_INTEGER);
@@ -406,10 +430,72 @@ class DoubaoSession implements SpeechStream {
     this.engine.send(encodeRequest(DoubaoEvent.FinishSession, this.id, {}));
   }
 
-  private markStart(sentence: number, atSec: number): void {
+  /**
+   * 逐词时间戳：按词的累计位置找出起点落在哪个词上的我们的句子。起点正好是词头就取这个词的开始时刻；
+   * 落在词中间（服务端把「in.If」这种句号两边的词粘成了一个）就取这个词的结束时刻，播放端会再挪到开口处
+   */
+  private applySubtitle(frame: DoubaoFrame): void {
+    const words = (frame.json as { words?: Array<{ word?: string; startTime?: number; endTime?: number }> } | undefined)?.words ?? [];
+    const timed: SpeechWord[] = [];
+    if (words.length) this.sawSubtitle = true;
+    for (const w of words) {
+      const text = String(w.word ?? '');
+      const start = Number(w.startTime);
+      const end = Number(w.endTime);
+      if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+      const from = this.subtitlePos;
+      const to = from + SentenceAligner.measure(text);
+      if (to === from) continue;
+      this.subtitlePos = to;
+      const atSec = this.subtitleBase + start;
+      // 词头落在哪句里，这个词就归哪句（粘连词「five.Four.」归前一句）
+      let owner = 0;
+      while (owner + 1 < this.aligner.size && this.aligner.startOf(owner + 1) <= from) owner++;
+      timed.push({ text, atSec, endSec: this.subtitleBase + end, sentence: owner });
+      // 上一个词里粘着的句子起点：用这个正常词的开头往前推粘着的那几个字的时长
+      for (const [i, units] of this.glued.splice(0)) {
+        if (!this.marked.has(i)) this.markStart(i, Math.max(this.subtitleBase, atSec - units * SEC_PER_UNIT));
+      }
+      for (let i = 0; i < this.aligner.size; i++) {
+        const pos = this.aligner.startOf(i);
+        if (pos < from || pos >= to || this.marked.has(i)) continue;
+        if (pos === from) this.markStart(i, atSec, true);
+        // 起点落在词中间（服务端把「in.If」这种句号两边的词粘成了一个，这种词的时间很短、不可靠）：等下一个词
+        else this.glued.push([i, to - pos, this.subtitleBase + end]);
+      }
+    }
+    if (this.deferred) {
+      this.deferred.inner = this.deferred.inner.filter((s) => !this.marked.has(s.sentence));
+      if (!this.deferred.inner.length) this.clearDeferred();
+    }
+    if (timed.length && !this.canceled) this.handlers.onWords?.(timed);
+  }
+
+  /** 等不到逐词时间戳：按停顿估段中各句的起点（把标点和音频里的停顿对上，取重新开口的时刻） */
+  private resolveDeferred(): void {
+    const d = this.deferred;
+    this.clearDeferred();
+    if (!d) return;
+    const rest = d.inner.filter((s) => !this.marked.has(s.sentence));
+    if (!rest.length) return;
+    let audio = Buffer.concat(d.audio);
+    if (audio.byteOffset % 2) audio = Buffer.from(audio); // Int16Array 要求两字节对齐
+    const samples = new Int16Array(audio.buffer, audio.byteOffset, Math.floor(audio.length / 2));
+    const length = SentenceAligner.measure(d.text);
+    const starts = locateSentenceStarts(samples, SAMPLE_RATE, d.text, rest.map((s) => Math.round(s.fraction * length)));
+    rest.forEach((s, k) => this.markStart(s.sentence, d.at + starts[k]));
+  }
+
+  private clearDeferred(): void {
+    if (this.deferTimer) clearTimeout(this.deferTimer);
+    this.deferTimer = null;
+    this.deferred = null;
+  }
+
+  private markStart(sentence: number, atSec: number, exact = false): void {
     if (this.marked.has(sentence) || this.canceled) return;
     this.marked.add(sentence);
-    this.handlers.onSentenceStart?.(sentence, atSec);
+    this.handlers.onSentenceStart?.(sentence, atSec, exact);
   }
 
   /** 我们的前 count 句已经读完（不超过已推入的句数） */
@@ -432,6 +518,7 @@ class DoubaoSession implements SpeechStream {
   private close(): void {
     if (this.done) return;
     this.done = true;
+    this.clearDeferred();
     if (this.stallTimer) clearTimeout(this.stallTimer);
     this.engine.release(this);
   }

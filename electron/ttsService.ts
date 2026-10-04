@@ -61,6 +61,7 @@ class TTSService {
     stream = this.engine.open({
       onAudio: handlers.onAudio,
       onSentenceStart: handlers.onSentenceStart,
+      onWords: handlers.onWords,
       onSentenceDone: handlers.onSentenceDone,
       onEnd: (error) => {
         forget();

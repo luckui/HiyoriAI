@@ -11,8 +11,8 @@
 
 import { LAppDelegate } from './lappdelegate';
 import type { LAppModel } from './lappmodel';
-import { shouldShowTypewriterBubble, showTypewriterBubble } from './chat/typewriter';
-import { createTypewriterPlaybackCallback } from './typewriterPlayback';
+import { typewriterPlayback } from './chat/typewriter';
+import { estimateSpeechMs, mapWordsToChars, type TimedWord, type TypewriterPlaybackCallback } from './typewriterPlayback';
 import { SerialPlaybackQueue } from './ttsPlaybackQueue';
 import { liveliness } from './liveliness/motor';
 import { rmsOfByteTimeDomain } from './liveliness/dynamics';
@@ -20,8 +20,6 @@ import { performWithoutVoice, spokenSentences, startPerformance } from './speech
 import { PcmStreamPlayer } from './pcmStreamPlayer';
 import type { TtsStreamEvent } from '../shared/preloadApi';
 
-/** 还不知道一句实际多长时（流式引擎在读完前不知道），按每个字这么多毫秒估计字幕时长 */
-const ESTIMATED_MS_PER_CHAR = 220;
 
 function getLiveModel(): LAppModel | null {
   try {
@@ -77,7 +75,7 @@ export function stopTTS(): void {
 
 // ── 主入口 ───────────────────────────────────────────────────────
 
-export function playTTS(text: string, onDuration?: (ms: number, sentenceText?: string) => void): Promise<void> {
+export function playTTS(text: string, onDuration?: TypewriterPlaybackCallback): Promise<void> {
   const playbackId = ++_nextPlaybackId;
   const queuedAt = performance.now();
   const queuedAhead = _playbackQueue.pendingCount;
@@ -94,7 +92,7 @@ export function playTTS(text: string, onDuration?: (ms: number, sentenceText?: s
   });
 }
 
-async function playTTSNow(text: string, onDuration?: (ms: number, sentenceText?: string) => void): Promise<void> {
+async function playTTSNow(text: string, onDuration?: TypewriterPlaybackCallback): Promise<void> {
   const ttsAPI = window.ttsAPI;
   if (!ttsAPI) {
     console.warn('[TTS] 跳过：window.ttsAPI 未注入（preload 未包含？）');
@@ -136,15 +134,60 @@ async function playTTSNow(text: string, onDuration?: (ms: number, sentenceText?:
   analyser.connect(ctx.destination);
 
   const requestedAt = window.performance.now();
+  /** 正在说的句子，以及它的真实时长是否已经告诉字幕 */
+  let current = -1;
+  let currentTimed = false;
   const player = new PcmStreamPlayer(ctx, analyser, (sentence) => {
     if (sentence === 0) console.log(`[TTS] 首句出声，距请求 ${Math.round(window.performance.now() - requestedAt)}ms`);
     const sentenceText = sentences[sentence];
-    // 每句出声时通知字幕：下一句起点已知就用实际时长，否则按字数估计
-    onDuration?.(player.sentenceDurationMs(sentence) ?? (sentenceText?.length ?? 0) * ESTIMATED_MS_PER_CHAR, sentenceText);
+    // 每句出声时通知字幕：下一句起点已知就用实际时长，否则先估计，知道了再改（见 onSentenceTimed）
+    const known = player.sentenceDurationMs(sentence);
+    current = sentence;
+    currentTimed = known !== null;
+    onDuration?.(known ?? estimateSpeechMs(sentenceText ?? ''), sentenceText);
+    applyWords();
     // 从真正出声开始算「在说话」：等合成的那段时间里，该听歌还听歌
     liveliness.setSpeaking(true);
     performance.enter(sentence);
   });
+
+  // 后一句的起点到了（或音频结束），正在说的这句的真实时长就知道了：让字幕按它把剩下的字打完
+  player.onSentenceTimed = () => {
+    if (current < 0) return;
+    if (!currentTimed) {
+      const ms = player.sentenceDurationMs(current);
+      if (ms !== null) {
+        currentTimed = true;
+        onDuration?.(ms, sentences[current], true);
+      }
+    }
+    applyWords();
+  };
+
+  /**
+   * 引擎给的逐词时间（豆包开了字幕）：正在说的这句按她实际念到的词显示字幕。
+   * 这句的词 = 起点之后、下一句起点之前开始的词
+   */
+  const words: TimedWord[] = [];
+  const applyWords = () => {
+    if (current < 0 || !words.length) return;
+    const start = player.sentenceStart(current);
+    if (start === null) return;
+    const next = player.sentenceStart(current + 1);
+    // 引擎标了词属于哪句就按它；没标的按时间猜
+    const mine = words.filter((w) => (w.sentence !== undefined
+      ? w.sentence === current
+      : w.atSec >= start - 0.15 && (next === null || w.atSec < next - 0.05)));
+    if (!mine.length) return;
+    const timeline = mapWordsToChars(sentences[current], mine)
+      .map((p) => ({ chars: p.chars, atMs: player.streamToPerfMs(p.atSec) }))
+      .filter((p): p is { chars: number; atMs: number } => p.atMs !== null);
+    if (!timeline.length) return;
+    // 第一个点前补上「这句开始时什么都没显示」
+    const startMs = player.streamToPerfMs(start);
+    if (startMs !== null && startMs < timeline[0].atMs) timeline.unshift({ chars: 0, atMs: startMs });
+    onDuration?.(player.sentenceDurationMs(current) ?? estimateSpeechMs(sentences[current]), sentences[current], true, timeline);
+  };
 
   let streamId: number | null = null;
   let resolveEnd: (error?: string) => void = () => {};
@@ -153,7 +196,11 @@ async function playTTSNow(text: string, onDuration?: (ms: number, sentenceText?:
   const early: TtsStreamEvent[] = [];
   const handle = (event: TtsStreamEvent) => {
     if (event.type === 'audio') player.enqueue(event.sampleRate, event.pcm);
-    else if (event.type === 'sentence') player.mark(event.sentence, event.atSec);
+    else if (event.type === 'sentence') player.mark(event.sentence, event.atSec, event.exact);
+    else if (event.type === 'words') {
+      words.push(...event.words);
+      applyWords();
+    }
     else if (event.type === 'end') resolveEnd(event.error);
   };
   const unsubscribe = ttsAPI.onStreamEvent((event) => {
@@ -218,10 +265,7 @@ export function registerTTSPlayListener(): void {
   ttsAPI.onPlay((text, id) => {
     console.log('[TTS] 收到主进程推送的文本，调用 playTTS():', text.substring(0, 50));
     // 复用聊天框的 TTS 逻辑并显示打字机气泡（pause/resume hearing 已内置于 playTTS 内部）
-    playTTS(
-      text,
-      createTypewriterPlaybackCallback(text, shouldShowTypewriterBubble, showTypewriterBubble),
-    )
+    playTTS(text, typewriterPlayback(text))
       .catch((e) => console.error('[TTS] playTTS error:', e))
       // 主进程（直播节奏）在等她说完
       .finally(() => { if (id !== undefined) ttsAPI.playDone(id); });

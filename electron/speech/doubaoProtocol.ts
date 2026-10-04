@@ -1,3 +1,5 @@
+import { speechWeight } from '../../shared/spokenText';
+
 /**
  * 豆包语音 WebSocket 双向流式 V3 的二进制帧编解码（纯函数，便于测试）。
  * 协议：https://www.volcengine.com/docs/6561/1329505
@@ -22,6 +24,8 @@ export const DoubaoEvent = {
   TaskRequest: 200,
   TTSSentenceStart: 350,
   TTSSentenceEnd: 351,
+  /** 开了 audio_params.enable_subtitle 才有：逐词（中文逐字）时间戳，秒，相对这段的开头 */
+  TTSSubtitle: 364,
   TTSResponse: 352,
 } as const;
 
@@ -122,8 +126,11 @@ export class SentenceAligner {
   private total = 0;
   private cursor = 0;
 
+  /** 文本「说出来有多长」：按字加权（见 speechWeight），整数，累加不会有浮点误差 */
   static measure(text: string): number {
-    return text.match(/[\p{L}\p{N}]/gu)?.length ?? 0;
+    let total = 0;
+    for (const ch of text) total += speechWeight(ch);
+    return total;
   }
 
   /** 记下我们推进去的一句 */
@@ -131,6 +138,16 @@ export class SentenceAligner {
     this.starts.push(this.total);
     this.total += SentenceAligner.measure(text);
     this.ends.push(this.total);
+  }
+
+  /** 第 i 句开头在全部文本中的累计位置 */
+  startOf(i: number): number {
+    return this.starts[i];
+  }
+
+  /** 服务端的句子已经走到的累计位置 */
+  get position(): number {
+    return this.cursor;
   }
 
   /** 推进来的句子数 */
@@ -191,7 +208,7 @@ const SKIP_PAUSE_MAX = 1.2;
  *
  * @param pcm     这一段的 16-bit 单声道 PCM
  * @param text    服务端给的这一段文本（带标点）
- * @param offsets 我们各句开头在这段文本里的位置（第几个可读字符），递增，都大于 0
+ * @param offsets 我们各句开头在这段文本里的位置（按 speechWeight 累计），递增，都大于 0
  * @returns 各句起点（秒，相对这一段开头）
  */
 export function locateSentenceStarts(pcm: Int16Array, sampleRate: number, text: string, offsets: number[]): number[] {
@@ -237,10 +254,11 @@ export function locateSentenceStarts(pcm: Int16Array, sampleRate: number, text: 
   let count = 0;
   let after: '' | 'comma' | 'final' = '';
   for (const ch of text) {
-    if (/[\p{L}\p{N}]/u.test(ch)) {
+    const weight = speechWeight(ch);
+    if (weight) {
       if (after && count > 0) boundaries.push({ offset: count, final: after === 'final' });
       after = '';
-      count++;
+      count += weight;
     } else if (/[。！？.!?…]/u.test(ch)) {
       after = 'final';
     } else if (/[，、；：,;:]/u.test(ch) && after !== 'final') {

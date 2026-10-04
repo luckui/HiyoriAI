@@ -17,13 +17,25 @@ export interface SpeechAudioChunk {
   pcm: Buffer;
 }
 
+/** 一个词（中文是一个字）在这段音频里的起止时刻（秒，从第一个采样算起），连同它后面的标点 */
+export interface SpeechWord {
+  text: string;
+  atSec: number;
+  endSec: number;
+  /** 这个词属于我们的第几句（按文本位置定，不靠时间猜） */
+  sentence?: number;
+}
+
 export interface SpeechStreamHandlers {
   onAudio(chunk: SpeechAudioChunk): void;
   /**
    * 第 sentence 句从本段音频的第 atSec 秒开始（从第一个采样算起）。
-   * 可能在这段音频送达之前或之后报告；同一句只报告一次
+   * 可能在这段音频送达之前或之后报告；同一句只报告一次。
+   * exact：来自引擎的逐词时间戳，是她开口的准确时刻（播放端不用再去找开口）
    */
-  onSentenceStart?(sentence: number, atSec: number): void;
+  onSentenceStart?(sentence: number, atSec: number, exact?: boolean): void;
+  /** 引擎给的逐词时间戳（豆包开了字幕时有）：字幕按她实际念到哪个词来显示 */
+  onWords?(words: SpeechWord[]): void;
   /** 第 sentence 句的音频已全部给出（合成失败被跳过的句子也会回调） */
   onSentenceDone?(sentence: number): void;
   /** 结束：error 为空表示所有句子都处理完了。cancel() 之后不再回调 */

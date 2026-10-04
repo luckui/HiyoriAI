@@ -30,7 +30,13 @@ export class FallbackSpeechEngine implements SpeechEngine {
       console.warn(`[TTS] ${this.primary.name} 失败（${error.message}），从第 ${offset + 1} 句起改用 ${this.fallback.name}`);
       const stream = this.fallback.open({
         onAudio: (chunk) => handlers.onAudio(chunk),
-        onSentenceStart: (i, atSec) => handlers.onSentenceStart?.(i + offset, baseSec + atSec),
+        onSentenceStart: (i, atSec, exact) => handlers.onSentenceStart?.(i + offset, baseSec + atSec, exact),
+        onWords: (words) => handlers.onWords?.(words.map((w) => ({
+          ...w,
+          atSec: baseSec + w.atSec,
+          endSec: baseSec + w.endSec,
+          ...(w.sentence === undefined ? {} : { sentence: w.sentence + offset }),
+        }))),
         onSentenceDone: (i) => handlers.onSentenceDone?.(i + offset),
         onEnd: (e) => handlers.onEnd(e),
       });
@@ -44,7 +50,8 @@ export class FallbackSpeechEngine implements SpeechEngine {
         emittedSec += pcmSeconds(chunk);
         handlers.onAudio(chunk);
       },
-      onSentenceStart: (i, atSec) => handlers.onSentenceStart?.(i, atSec),
+      onSentenceStart: (i, atSec, exact) => handlers.onSentenceStart?.(i, atSec, exact),
+      onWords: (words) => handlers.onWords?.(words),
       onSentenceDone: (i) => {
         done.add(i);
         handlers.onSentenceDone?.(i);

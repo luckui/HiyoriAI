@@ -297,3 +297,15 @@ export function splitSpokenText(text: string, options: SplitSpokenTextOptions = 
     .flatMap((sentence) => splitLongSentence(sentence, hardMax));
   return limitSegments(mergeShortSentences(sentences), maxSegments);
 }
+
+/**
+ * 一个字符念出来大约占多长（以一个汉字为 20）。英文按字母算时一个字母远比一个汉字快：
+ * 都按 1 算的话，中英混排时英文部分被当成长了三倍。标点、空格不念，为 0。
+ * 整数：累加不会有浮点误差（豆包对齐要按累计位置比较相等）。
+ */
+export function speechWeight(ch: string): number {
+  if (/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(ch)) return 20;
+  if (/\p{N}/u.test(ch)) return 12;
+  if (/\p{L}/u.test(ch)) return 7;
+  return 0;
+}

@@ -129,7 +129,9 @@ export type TtsStreamEvent =
   /** 一块 16-bit 单声道 PCM，接在上一块后面播 */
   | { id: number; type: 'audio'; sampleRate: number; pcm: Uint8Array }
   /** 第 sentence 句从本段音频的第 atSec 秒开始（可能早于或晚于那段音频送达） */
-  | { id: number; type: 'sentence'; sentence: number; atSec: number }
+  | { id: number; type: 'sentence'; sentence: number; atSec: number; exact?: boolean }
+  /** 逐词时间戳（秒，本段音频中的位置）：字幕按她念到哪个词显示 */
+  | { id: number; type: 'words'; words: Array<{ text: string; atSec: number; endSec: number; sentence?: number }> }
   /** 第 sentence 句的音频已全部给出 */
   | { id: number; type: 'sentence-done'; sentence: number }
   /** 结束；error 非空表示中途失败 */

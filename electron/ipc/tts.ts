@@ -34,7 +34,8 @@ function startStream(sender: WebContents, sentences: string[], keepOpen: boolean
   };
   const stream = ttsService.openStream({
     onAudio: ({ sampleRate, pcm }) => send({ id, type: 'audio', sampleRate, pcm }),
-    onSentenceStart: (sentence, atSec) => send({ id, type: 'sentence', sentence, atSec }),
+    onSentenceStart: (sentence, atSec, exact) => send({ id, type: 'sentence', sentence, atSec, ...(exact ? { exact } : {}) }),
+    onWords: (words) => send({ id, type: 'words', words }),
     onSentenceDone: (sentence) => send({ id, type: 'sentence-done', sentence }),
     onEnd: (error) => {
       liveStreams.delete(id);
