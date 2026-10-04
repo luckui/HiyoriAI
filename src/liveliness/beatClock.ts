@@ -38,6 +38,8 @@ const CONTINUITY_RANGE_DB = 20;
 /** 连续度换算成系数的区间：说话通常 0.55–0.73，音乐通常 0.8 以上 */
 const CONTINUITY_SPEECH = 0.68;
 const CONTINUITY_MUSIC = 0.82;
+/** 把握在 0.6 以上稳住这么久才算「稳稳跟上了拍子」：说话偶尔像有拍子，但撑不了这么久 */
+const LATCH_AFTER_MS = 4000;
 
 const frac = (x: number): number => x - Math.floor(x);
 /** 把相位差折到 [-0.5, 0.5) */
@@ -147,6 +149,20 @@ export class BeatClock {
   private positionValue = 0;
   private clockMs: number | null = null;
 
+  /** 她在说话：不送数据，把握冻结 */
+  private paused = false;
+  /** 说完、重新攒数据期间：把握沿用说话前的，但要确认音乐还在响 */
+  private resumedAtMs: number | null = null;
+  /** 说话前「响的时候」的音量（dB），用来判断说完后音乐还在不在 */
+  private pausedLoudDb = -120;
+  /** 已经稳稳地跟上过拍子：之后只要声音还像音乐，把握就降得很慢 */
+  private latched = false;
+  private confidentSinceMs: number | null = null;
+  /** 稳稳跟上拍子时「响的时候」的音量（dB）：之后音量掉下去 20 dB 以上就是歌停了 */
+  private latchedLoudDb = -120;
+  /** 最近 6 秒「响的时候」（90 分位）的音量（dB） */
+  private loudDb = -120;
+
   /** 每帧送入这一帧的起音强度和音量（RMS） */
   pushFrame(flux: number, rms: number, timeMs: number): void {
     const db = 20 * Math.log10(rms + 1e-6);
@@ -191,10 +207,47 @@ export class BeatClock {
     return this.positionValue;
   }
 
-  /** 是在放有规律的音乐的把握 [0, 1]；几秒没有新估计（比如她一直在说话）就慢慢降下去 */
+  /**
+   * 是在放有规律的音乐的把握 [0, 1]；几秒没有新估计就慢慢降下去。
+   * 说话期间（pause）冻结；说完、数据攒够之前沿用说话前的把握，乘上「音乐还在响」的程度
+   */
   confidence(nowMs: number): number {
+    if (this.paused) return this.confidenceValue;
+    if (this.resumedAtMs !== null) return this.confidenceValue * this.presenceSinceResume();
     const stale = nowMs - this.lastAnalysisMs;
     return stale <= 2000 ? this.confidenceValue : this.confidenceValue * Math.exp(-(stale - 2000) / 3000);
+  }
+
+  /**
+   * 她开口说话：系统回环会录到自己的声音，这段时间不送数据（调用方负责），时钟照常走，把握冻结。
+   * 和「数据断了」不同：断了说明音乐可能停了，把握要降；说话只是暂时听不见
+   */
+  pause(): void {
+    if (this.paused) return;
+    this.paused = true;
+    const count = Math.min(this.filled, CONTINUITY_WINDOW_MS / STEP_MS);
+    if (count > 0) {
+      const recent = Array.from(this.levels.subarray(this.levels.length - count)).sort((a, b) => a - b);
+      this.pausedLoudDb = recent[Math.floor(count * 0.9)];
+    }
+  }
+
+  /** 说完了：历史作废重新攒（中间那段不能拼起来算），攒够之前沿用说话前的把握 */
+  resume(nowMs: number): void {
+    if (!this.paused) return;
+    this.paused = false;
+    this.clearHistory();
+    this.resumedAtMs = nowMs;
+  }
+
+  /** 说完后的音量有多少落在说话前「响的时候」20 dB 以内：歌停了就是 0，攒到 0.3 秒之前不判断 */
+  private presenceSinceResume(): number {
+    if (this.filled < 30) return 1;
+    const count = Math.min(this.filled, 100);
+    const recent = this.levels.subarray(this.levels.length - count);
+    let loud = 0;
+    for (const db of recent) if (db > this.pausedLoudDb - CONTINUITY_RANGE_DB) loud++;
+    return clamp01((loud / count - 0.3) / 0.4);
   }
 
   /** 诊断用 */
@@ -217,6 +270,10 @@ export class BeatClock {
     this.lastAnalysisMs = -Infinity;
     this.positionValue = 0;
     this.clockMs = null;
+    this.paused = false;
+    this.resumedAtMs = null;
+    this.latched = false;
+    this.confidentSinceMs = null;
   }
 
   private clearHistory(): void {
@@ -231,7 +288,15 @@ export class BeatClock {
     const count = Math.min(this.filled, CONTINUITY_WINDOW_MS / STEP_MS);
     const recent = Array.from(this.levels.subarray(this.levels.length - count));
     const reference = [...recent].sort((a, b) => a - b)[Math.floor(count * 0.9)];
+    this.loudDb = reference;
     return recent.filter(db => db > reference - CONTINUITY_RANGE_DB).length / count;
+  }
+
+  /** 最近 1 秒音量的中位数（dB） */
+  private recentDb(): number {
+    const count = Math.min(this.filled, 100);
+    if (!count) return -120;
+    return Array.from(this.levels.subarray(this.levels.length - count)).sort((a, b) => a - b)[count >> 1];
   }
 
   private agreement(): number {
@@ -241,6 +306,11 @@ export class BeatClock {
   }
 
   private analyse(nowMs: number): void {
+    if (this.resumedAtMs !== null) {
+      // 说完后第一次估计：把「音乐还在不在」并进把握，从这里接着正常更新
+      this.confidenceValue *= this.presenceSinceResume();
+      this.resumedAtMs = null;
+    }
     const result = estimateTempo(this.curve, nowMs, this.periodMs ?? undefined);
     this.lastAnalysisMs = nowMs;
     if (!result) {
@@ -285,8 +355,22 @@ export class BeatClock {
     const continuous = clamp01((this.continuity - CONTINUITY_SPEECH) / (CONTINUITY_MUSIC - CONTINUITY_SPEECH));
     // 速度稳定 × 声音连续；峰太平（几乎没起伏）时再打个折
     const target = this.agreement() * continuous * clamp01(chosen.contrast / 0.06);
-    // 升得快、降得慢：歌里短暂的安静段落不该让她停下来；说话时把握本来就升不起来
-    this.confidenceValue += (target - this.confidenceValue) * (target > this.confidenceValue ? 0.35 : 0.12);
+    // 升得快、降得慢：歌里短暂的安静段落不该让她停下来；说话时把握本来就升不起来。
+    // 稳稳跟上过拍子之后，只要声音还连续（歌还在放），速度一时估不准（原声歌在几个候选速度之间摇摆）
+    // 也只是慢慢降，时钟按原来的速度接着走；声音断了（暂停、换歌、放完）才快速降
+    if (this.confidenceValue >= 0.6) {
+      this.confidentSinceMs ??= nowMs;
+      if (nowMs - this.confidentSinceMs >= LATCH_AFTER_MS) {
+        this.latched = true;
+        this.latchedLoudDb = this.loudDb;
+      }
+    } else {
+      this.confidentSinceMs = null;
+    }
+    // 声音断断续续（暂停、换歌），或者比稳稳跟拍时小了 20 dB 以上（放完了、只剩底噪）：不再当歌还在放
+    if (this.continuity < 0.6 || this.recentDb() < this.latchedLoudDb - CONTINUITY_RANGE_DB) this.latched = false;
+    const fall = this.latched ? 0.015 : 0.12;
+    this.confidenceValue += (target - this.confidenceValue) * (target > this.confidenceValue ? 0.35 : fall);
   }
 
   /** 只往前走，不倒退 */

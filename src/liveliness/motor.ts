@@ -154,11 +154,16 @@ export class LivelinessMotor {
   /**
    * 系统音频的一帧：起音强度（见 SpectralFlux）和音量（RMS）。停止监听时送 (0, 0)。
    * 说话时不交给节拍时钟：系统回环会录到自己的声音，把说话的节奏当拍子会让节拍乱掉。
-   * 时钟按原速继续走，说完再接着听。
+   * 时钟暂停收听（按原速继续走、把握冻结），说完接着听 —— 歌没停的话，律动不断
    */
   setMusicFrame(flux: number, rms: number, timeMs: number): void {
     this.musicInput = rms;
-    if (!this.speaking) this.beat.pushFrame(flux, rms, timeMs);
+    if (this.speaking) {
+      this.beat.pause();
+      return;
+    }
+    this.beat.resume(timeMs);
+    this.beat.pushFrame(flux, rms, timeMs);
   }
 
   setSpeaking(speaking: boolean): void {
