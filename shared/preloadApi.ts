@@ -45,6 +45,11 @@ import type {
   LiveSegment,
   LiveStagePhase,
   LiveStageState,
+  LiveSegmentInfo,
+  LiveDirectorState,
+  LiveRundownItem,
+  LiveShowSummary,
+  StagePanelState,
   LiveStatus,
   LiveTheme,
   LiveUpdate,
@@ -308,6 +313,27 @@ export interface LiveAPI {
   stopAi(): Promise<LiveStageState>;
   /** 主播在控制台对她说话（观众只听得到她的回答） */
   ownerSay(text: string): Promise<{ ok: boolean; reply?: string; detail?: string }>;
+  /** 测试：以测试观众身份发一条弹幕（AI 互动开着时才有效） */
+  testChat(name: string, text: string): Promise<boolean>;
+  /** 节目单：能选的环节 + 导演当前状态 */
+  getRundown(): Promise<{ segments: LiveSegmentInfo[]; state: LiveDirectorState | null }>;
+  /** 保存节目单（正在跑时下一场才生效） */
+  saveRundown(items: LiveRundownItem[]): Promise<LiveDirectorState | null>;
+  /** 没开画面时手动开始 / 停止节目单 */
+  startRundown(): Promise<LiveDirectorState | null>;
+  stopRundown(): Promise<LiveDirectorState | null>;
+  /** 说一句过渡，进下一个环节 */
+  nextSegment(): Promise<LiveDirectorState | null>;
+  extendSegment(minutes: number): Promise<LiveDirectorState | null>;
+  /** 拿掉排在后面的第一项 */
+  skipUpcoming(): Promise<LiveDirectorState | null>;
+  onDirector(cb: (state: LiveDirectorState) => void): Unsubscribe;
+  getPanel(): Promise<StagePanelState | null>;
+  onPanel(cb: (panel: StagePanelState | null) => void): Unsubscribe;
+  /** 上一场的指标汇总 */
+  getShowSummary(): Promise<{ summary: LiveShowSummary; file: string | null } | null>;
+  onShowSummary(cb: (result: { summary: LiveShowSummary; file: string | null }) => void): Unsubscribe;
+  openShowLogs(): Promise<boolean>;
 }
 
 /** window 上由 preload 注入的全部接口 */

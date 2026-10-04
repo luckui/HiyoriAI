@@ -9,6 +9,7 @@ import type {
   LiveSuperChatEvent,
   LiveUser,
 } from '../../../shared/types/live';
+import type { SegmentBeat } from '../segments/types';
 
 /** 房间热度：决定她能顾得上多少，以及值不值得点名 */
 export type RoomHeat = 'quiet' | 'normal' | 'busy';
@@ -37,9 +38,13 @@ export type TopicBody =
   /** 一段时间没人说话：她自己找话说 */
   | { kind: 'idle'; silentMs: number }
   /** 开场动画放完：跟大家打招呼 */
-  | { kind: 'opening'; segmentTitle: string }
+  | { kind: 'opening'; segmentTitle: string; plan?: string[] }
   /** 谢幕：道别，可以提一下本场 */
-  | { kind: 'ending'; summary: string };
+  | { kind: 'ending'; summary: string }
+  /** 环节的一拍：按素材说一件事；recap 是她在这个环节里刚说过的几句，接着往下说 */
+  | { kind: 'segment'; segmentId: string; segmentTitle: string; beat: SegmentBeat; recap: string[] }
+  /** 换环节的口播：to 为空表示节目单走完了，接下来自由聊 */
+  | { kind: 'transition'; from?: { id: string; title: string }; to?: { id: string; title: string; description: string } };
 
 export type Topic = TopicBody & {
   id: string;

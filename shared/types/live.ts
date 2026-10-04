@@ -203,3 +203,83 @@ export interface LiveFocus {
   kind: string;
   eventIds: string[];
 }
+
+/** 节目单的一项：跑哪个环节、跑多久 */
+export interface LiveRundownItem {
+  /** 环节插件 id（见 electron/streaming/segments/registry.ts） */
+  segmentId: string;
+  minutes: number;
+  /** 传给环节的参数，比如话题卡用哪副牌 */
+  params?: Record<string, unknown>;
+}
+
+/** 控制台能选的环节 */
+export interface LiveSegmentInfo {
+  id: string;
+  title: string;
+  description: string;
+}
+
+/** 导演的当前状态：控制台显示节目单进度用 */
+export interface LiveDirectorState {
+  running: boolean;
+  /** 环节暂停出拍、也不计时 */
+  paused: boolean;
+  /** 为什么暂停：layout 画面切到了别的布局（比如临时切到游戏回），audience 直播间没人在看 */
+  pausedFor?: 'layout' | 'audience';
+  rundown: LiveRundownItem[];
+  /** 正在跑第几项；-1 表示还没开始或已经走完 */
+  index: number;
+  current?: { segmentId: string; title: string; elapsedMs: number; plannedMs: number; beats: number };
+}
+
+/** 舞台面板：角落里「现在在做：××」的小卡片，加上环节自己的内容（由 renderer 表里按 kind 画） */
+export interface StagePanelState {
+  segmentId: string;
+  /** 「现在在做」后面那几个字 */
+  nowDoing: string;
+  /** 面板渲染器的键；没有专门内容时只显示小卡片 */
+  kind?: string;
+  data?: unknown;
+}
+
+/** 一场直播的指标汇总（electron/streaming/showMetrics.ts 生成） */
+export interface LiveShowSummaryOptions {
+  /** 超过这么久没开口算冷场（秒） */
+  coldGapSec?: number;
+  /** 两句话的字符三元组 Jaccard 超过它算重复 */
+  repeatThreshold?: number;
+}
+
+export interface LiveShowSummary {
+  startedAt: number;
+  /** 有人在看的时长（下面的比例都按它算） */
+  durationMs: number;
+  /** 没人在看的时长 */
+  emptyMs: number;
+  speeches: number;
+  /** 她在说话的时间占比 */
+  talkRatio: number;
+  /** 超过 coldGapSec 的空隙，加起来占全场的比例 */
+  coldRate: number;
+  longestGapMs: number;
+  /** 和之前任意一句相似度超过阈值的句子占比（只抓得到换汤不换药的原话重复） */
+  repeatRate: number;
+  /**
+   * 后半场的新鲜度：每句话里有多少字符二元组是本场第一次出现，取后半场平均。
+   * 她反复绕回同几个话题（手机电量、吃了没）时，原话不同但用词一直是那些，这个值会掉下去
+   */
+  novelty: number;
+  /** 相似度最高的几对，方便人工看是哪种重复 */
+  repeatSamples: Array<{ a: string; b: string; similarity: number }>;
+  /** 出现在很多句话里的短语（口头禅、固定开头） */
+  stockPhrases: Array<{ phrase: string; lines: number }>;
+  /** 含口头禅的句子占比 */
+  stockRate: number;
+  /** 开头前三个字和前 10 句里某一句相同的占比（「新卡：」「所以……」这种套路开头） */
+  openingRepeatRate: number;
+  byKind: Record<string, number>;
+  segments: Array<{ segmentId: string; title: string; ms: number; beats: number }>;
+  highlights: Array<{ t: number; why: string }>;
+  options: Required<LiveShowSummaryOptions>;
+}

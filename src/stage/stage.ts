@@ -17,6 +17,7 @@ import { liveliness } from '../liveliness/motor';
 import { ParticleField } from './particles';
 import { buildTheme, THEME_BURST_COLORS, type ThemeScene } from './themes';
 import { clearSequence, playEnding, playOpening, showWaiting } from './sequences';
+import { renderPanel } from './panels';
 import './stage.css';
 
 const MAX_CHAT = 9;
@@ -522,6 +523,8 @@ export function initStage(): void {
   if (!api) return;
   api.onStage(apply);
   api.onFocus(onFocus);
+  api.onPanel(renderPanel);
+  void api.getPanel().then(renderPanel);
   api.onUpdate((update) => {
     if (!isStageMode()) return;
     onEvents(update.events, true);

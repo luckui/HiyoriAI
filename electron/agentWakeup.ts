@@ -108,7 +108,7 @@ export function wireAgentNotifications(): void {
 
     // 直播中：定时任务完成后自动播报结果
     if (task.type === 'cron' && task.result?.trim() && streamerController.getStatus().running) {
-      void streamerController.speak(task.result);
+      void streamerController.speak(task.result, 'task');
     }
 
     if (task.type === 'delegate' || !wakesConversation(task)) return;

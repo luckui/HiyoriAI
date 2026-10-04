@@ -6,7 +6,7 @@
  * - 弹幕姬窗口兼做控制台，开播时主播在这里操作和打字，不会出现在画面里。
  */
 
-import { BrowserWindow, desktopCapturer, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, shell } from 'electron';
 import { join } from 'path';
 import {
   LIVE_SEGMENTS,
@@ -26,6 +26,8 @@ import { liveHub } from '../streaming/liveHub';
 import { streamerSession } from '../streaming/streamerSession';
 import { streamerController } from '../streaming/streamerController';
 import { ShowLog } from '../streaming/showLog';
+import * as show from '../streaming/showRunner';
+import { listSegments } from '../streaming/segments/registry';
 import type { Topic } from '../streaming/attention/topics';
 import { getAgentMode, setAgentMode } from '../agentMode';
 import { sendChatMessage } from '../aiService';
@@ -110,13 +112,18 @@ function setPhase(next: LiveStagePhase): LiveStageState {
   phase = next;
   setStageWindow(next !== 'off');
   if (next === 'opening' || prev === 'off') showLog.reset();
+  // 一场的记录：开场开始记，回到桌宠时写汇总；节目单只在直播中跑
+  if (next === 'opening' || next === 'live') show.beginRecording();
+  if (next === 'live') show.startRundown();
+  else show.stopRundown();
   syncAutoReply();
   const aiOn = streamerController.isRunning && streamerSession.running;
   if (aiOn && next === 'live' && prev === 'opening') {
-    void streamerController.announce({ kind: 'opening', segmentTitle: stageTitle });
+    void streamerController.announce({ kind: 'opening', segmentTitle: stageTitle, plan: show.rundownTitles() });
   } else if (aiOn && next === 'ending') {
     void streamerController.announce({ kind: 'ending', summary: showLog.summary() });
   }
+  if (next === 'off') show.finishRecording();
   return broadcastStage();
 }
 
@@ -125,6 +132,7 @@ function setSegment(next: LiveSegment, title?: string): LiveStageState {
   stageTitle = title?.trim() || LIVE_SEGMENTS[segment].title;
   theme = LIVE_SEGMENTS[segment].theme;
   streamerSession.setTopic(LIVE_SEGMENTS[segment].topic);
+  show.layoutChanged(segment);
   return broadcastStage();
 }
 
@@ -202,6 +210,12 @@ async function ownerSay(text: string): Promise<{ ok: boolean; reply?: string; de
 }
 
 export function registerLiveIpc(): void {
+  show.initShowRunner({
+    dataDir: app.getPath('userData'),
+    // 环节自带布局：换环节时画面跟着换（主播手动切走则环节暂停）
+    applyLayout: (layout) => { if (layout !== segment) setSegment(layout); },
+    broadcast: broadcastToWindows,
+  });
   liveHub.onUpdate((update) => {
     showLog.observeOnline(update.status.stats.online);
     broadcastToWindows('live:update', update);
@@ -271,6 +285,34 @@ export function registerLiveIpc(): void {
   ipcMain.handle('live:ai:start', () => startAi());
   ipcMain.handle('live:ai:stop', () => stopAi());
   ipcMain.handle('live:owner-say', (_e, text: string) => ownerSay(String(text ?? '')));
+  // 没开播时测试：以测试观众的身份发一条弹幕（和真实弹幕走同一条路）
+  ipcMain.handle('live:test-chat', (_e, name: string, text: string) => {
+    if (!streamerSession.running) return false;
+    streamerSession.ingestTest(String(name || '测试观众').slice(0, 20), String(text ?? '').slice(0, 200));
+    return true;
+  });
+
+  // 节目单
+  ipcMain.handle('live:rundown:get', () => ({ segments: listSegments(), state: show.directorState() }));
+  ipcMain.handle('live:rundown:save', (_e, items: unknown) => show.saveRundown(Array.isArray(items) ? items : []));
+  // 没开画面测试时手动开始 / 停止（开了画面由阶段机管）
+  ipcMain.handle('live:rundown:start', () => { show.startRundown(); return show.directorState(); });
+  ipcMain.handle('live:rundown:stop', () => {
+    show.stopRundown();
+    if (phase === 'off') show.finishRecording();
+    return show.directorState();
+  });
+  ipcMain.handle('live:rundown:next', () => { show.nextSegment(); return show.directorState(); });
+  ipcMain.handle('live:rundown:extend', (_e, minutes: number) => { show.extendSegment(Number(minutes) || 5); return show.directorState(); });
+  ipcMain.handle('live:rundown:skip', () => { show.skipUpcoming(); return show.directorState(); });
+  ipcMain.handle('live:panel:get', () => show.currentPanel());
+  ipcMain.handle('live:show:summary', () => show.lastShowSummary());
+  ipcMain.handle('live:show:open-logs', async () => {
+    const dir = show.logsDir();
+    if (!dir) return false;
+    await shell.openPath(dir);
+    return true;
+  });
 }
 
 /** 退出前断开（避免重连定时器拖住进程） */

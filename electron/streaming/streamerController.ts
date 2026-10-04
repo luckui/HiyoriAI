@@ -18,6 +18,15 @@ export interface StreamerControllerConfig {
   autoTTS?: boolean;
 }
 
+/** 她说完的一段话（直播指标记录用） */
+export interface SpokenLine {
+  kind: string;
+  segment?: string;
+  text: string;
+  startedAt: number;
+  endedAt: number;
+}
+
 /** 没开 TTS 时按这个语速估计「说完」的时间 */
 const MS_PER_CHAR = 220;
 const TICK_MS = 250;
@@ -78,10 +87,10 @@ class StreamerControllerManager extends EventEmitter {
     streamerSession.idleAfterMs = this.config.idleThresholdMs;
   }
 
-  /** 直播中别的来源（主播对话、定时任务）要她说的话 */
-  async speak(text: string): Promise<void> {
+  /** 直播中别的来源（主播对话、定时任务）要她说的话；kind 只用于记录 */
+  async speak(text: string, kind = 'aside'): Promise<void> {
     if (!this.running || !text.trim()) return;
-    await this.say(text);
+    await this.say(text, { kind });
   }
 
   /**
@@ -113,20 +122,25 @@ class StreamerControllerManager extends EventEmitter {
     try {
       console.log(`[StreamerController] 话题 ${topic.kind}（${topic.heat}，优先级 ${topic.priority.toFixed(0)}）`);
       const reply = await streamerSession.compose(topic);
+      let said = '';
       if (reply.reply) {
         this.emit('reply', reply);
-        await this.say(reply.reply);
+        said = await this.say(reply.reply, { kind: topic.kind, segment: topic.kind === 'segment' ? topic.segmentId : undefined });
       }
+      // 环节要知道这拍说没说出来
+      this.emit('topic-done', topic, said);
       return reply;
     } finally {
       this.busy = false;
     }
   }
 
-  private async say(raw: string): Promise<void> {
+  /** 朗读并等她说完；返回实际说出的文字。说完发 spoken 事件（直播指标记录用） */
+  private async say(raw: string, meta: { kind: string; segment?: string }): Promise<string> {
     const text = raw.replace(/【.*?】/g, '').replace(/\[.*?\]/g, '').trim();
-    if (!text) return;
+    if (!text) return '';
     if (this.speaking++ === 0) streamerSession.speechStarted();
+    const startedAt = Date.now();
     try {
       if (!this.config.autoTTS || !(await speakAndWait(text))) {
         await new Promise((r) => setTimeout(r, text.length * MS_PER_CHAR));
@@ -135,7 +149,9 @@ class StreamerControllerManager extends EventEmitter {
       console.error('[StreamerController] TTS error:', err);
     } finally {
       if (--this.speaking === 0) streamerSession.speechEnded();
+      this.emit('spoken', { ...meta, text, startedAt, endedAt: Date.now() } satisfies SpokenLine);
     }
+    return text;
   }
 }
 

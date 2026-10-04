@@ -8,6 +8,11 @@
  *   - 热闹（≥ 30 条/分）：只接问题、点她名的、舰长和老粉；刷屏合成一句「大家都在刷 xx」；进场只欢迎舰长。
  * 醒目留言和上舰无论多忙都要说到；弹幕会随时间「凉掉」，过一会儿再回就不自然了。
  *
+ * 直播间没人在看时什么都不做（省 LLM 和 TTS）：不出环节拍、不冷场找话，等有人来了再说。
+ *
+ * 有环节在跑时（见 segments/），没人说话也不用硬聊：环节的「一拍」和普通弹幕交替着说，
+ * 房间越安静环节拍越多；醒目留言、上舰、点名提问仍然排在环节前面。
+ *
  * 这里没有时钟、没有 IO：所有方法都接收 now，方便拿录下来的直播回放测试。
  */
 
@@ -50,6 +55,21 @@ export const TUNING = {
   welcomeTtlMs: 90_000,
   /** 没话题时多久开始自己找话说 */
   idleAfterMs: 45_000,
+  audience: {
+    /** 最近这么久有观众动静（进场、弹幕、礼物、点赞……）就算有人在看 */
+    activityMs: 5 * 60_000,
+    /** 在线人数到这个数也算有人：B 站的在线人数把我们自己的弹幕连接也算进去了，1 就是没人 */
+    minOnline: 2,
+  },
+  beat: {
+    /** 上一句说完后至少歇这么久再出环节拍，给观众插话的空 */
+    gapMs: { quiet: 1500, normal: 2500, busy: 4000 } as Record<RoomHeat, number>,
+    /** 刚说完一拍：让位给任何过了门槛的弹幕和进场欢迎（弹幕的优先级 = 50 × 分数，门槛见 chatThreshold） */
+    afterBeat: { quiet: 1, normal: 1, busy: 1 } as Record<RoomHeat, number>,
+    /** 刚回完弹幕或别的事：回到环节，压过普通弹幕，但让着点名提问（≥ 60） */
+    afterOther: { quiet: 55, normal: 50, busy: 35 } as Record<RoomHeat, number>,
+    transition: 70,
+  },
   maxPendingChats: 200,
 };
 
@@ -73,8 +93,20 @@ interface UserMemory {
 
 const GUARD_TAG: Record<number, string> = { 1: '总督', 2: '提督', 3: '舰长' };
 
+/** 环节导演对注意力层的接口：现在有没有一拍（或一次换环节口播）可以说 */
+export interface BeatSource {
+  /** 直播间有没有人在看（没人时导演暂停计时） */
+  setAudience?(present: boolean, now: number): void;
+  /** 只看不拿 */
+  peek(now: number, heat: RoomHeat): 'segment' | 'transition' | null;
+  /** 真的要说了：拿走这一拍 */
+  take(now: number, heat: RoomHeat): TopicBody | null;
+}
+
 export interface AttentionSnapshot {
   heat: RoomHeat;
+  /** 有没有人在看 */
+  audience: boolean;
   chatsPerMin: number;
   pending: {
     chats: number;
@@ -105,6 +137,15 @@ export class LiveAttention {
   private lastSpeechEndAt: number;
   private speaking = false;
   private lastSaid: Partial<Record<TopicBody['kind'], number>> = {};
+  private lastKind: TopicBody['kind'] | null = null;
+  private beats: BeatSource | null = null;
+  /** 最近一次有观众动静的时间 */
+  private lastAudienceAt = -Infinity;
+  private online: number | undefined;
+  private anchorId = '';
+  /** 上次看时有没有人：从没人到有人，先回应来的人，再接着说环节 */
+  private hadAudience = true;
+  private justWoke = false;
   private seq = 0;
 
   constructor(now: number) {
@@ -114,6 +155,8 @@ export class LiveAttention {
   // ── 输入 ─────────────────────────────────────────────
 
   observe(event: LiveEvent, isUpdate: boolean, now: number): void {
+    // 主播自己（比如开着自己的直播间页面）不算观众
+    if (!this.anchorId || event.user.id !== this.anchorId) this.lastAudienceAt = now;
     switch (event.kind) {
       case 'chat': if (!isUpdate) this.observeChat(event, now); break;
       case 'superchat': if (!isUpdate) this.superchats.push(event); break;
@@ -130,6 +173,24 @@ export class LiveAttention {
       case 'follow': if (!isUpdate) this.follows.push({ user: event.user, at: now }); break;
       default: break;
     }
+  }
+
+  /** 平台推来的在线人数（没开播时平台不推，为 undefined） */
+  setOnline(online: number | undefined): void {
+    this.online = online;
+  }
+
+  setAnchorId(id: string | undefined): void {
+    this.anchorId = id ?? '';
+  }
+
+  audiencePresent(now: number): boolean {
+    return now - this.lastAudienceAt < TUNING.audience.activityMs || (this.online ?? 0) >= TUNING.audience.minOnline;
+  }
+
+  /** 接上（或断开）环节导演 */
+  setBeatSource(source: BeatSource | null): void {
+    this.beats = source;
   }
 
   speechStarted(): void {
@@ -154,7 +215,11 @@ export class LiveAttention {
   next(now: number): Topic | null {
     this.prune(now);
     const heat = this.heat(now);
-    const candidates: Array<{ priority: number; build: () => TopicBody }> = [];
+    const audience = this.audiencePresent(now);
+    if (audience && !this.hadAudience) this.justWoke = true;
+    this.hadAudience = audience;
+    this.beats?.setAudience?.(audience, now);
+    const candidates: Array<{ priority: number; build: () => TopicBody; waitUntil?: number }> = [];
 
     const sc = this.superchats[0];
     if (sc) candidates.push({ priority: 100, build: () => ({ kind: 'superchat', event: this.superchats.shift()! }) });
@@ -186,16 +251,24 @@ export class LiveAttention {
     const welcome = this.welcomeCandidate(heat, now);
     if (welcome) candidates.push(welcome);
 
+    // 没人在看：只回应真的发生了的事（其实也不会有），不自己找话
+    const beat = audience ? this.beatCandidate(heat, now) : null;
+    if (beat) candidates.push(beat);
+
     if (!candidates.length) {
       const silentMs = now - this.lastSpeechEndAt;
-      if (this.speaking || silentMs < this.idleAfterMs) return null;
+      if (!audience || this.speaking || silentMs < this.idleAfterMs) return null;
       candidates.push({ priority: 1, build: () => ({ kind: 'idle', silentMs }) });
     }
 
     candidates.sort((a, b) => b.priority - a.priority);
     const best = candidates[0];
+    // 该说环节拍了，但刚说完话：先歇一口气（这时来的普通弹幕不插队）
+    if (best.waitUntil !== undefined && now < best.waitUntil) return null;
     const body = best.build();
     this.lastSaid[body.kind] = now;
+    this.lastKind = body.kind;
+    this.justWoke = false;
     return { ...body, id: `topic-${++this.seq}`, priority: best.priority, heat, createdAt: now };
   }
 
@@ -203,6 +276,7 @@ export class LiveAttention {
     this.prune(now);
     return {
       heat: this.heat(now),
+      audience: this.audiencePresent(now),
       chatsPerMin: this.chatsPerMin(now),
       pending: {
         chats: this.chats.length,
@@ -296,6 +370,28 @@ export class LiveAttention {
     };
   }
 
+  // ── 环节 ─────────────────────────────────────────────
+
+  private beatCandidate(heat: RoomHeat, now: number): { priority: number; build: () => TopicBody; waitUntil: number } | null {
+    if (!this.beats || this.speaking) return null;
+    const kind = this.beats.peek(now, heat);
+    if (!kind) return null;
+    const source = this.beats;
+    const priority = kind === 'transition'
+      ? TUNING.beat.transition
+      : this.lastKind === 'segment' || this.justWoke ? TUNING.beat.afterBeat[heat] : TUNING.beat.afterOther[heat];
+    // 偶尔 peek 到了却拿不到（素材刚好用完）：退回冷场找话
+    // 冷清的房间有人刚进来：先等他们凑齐、欢迎完再接着说环节
+    const greetFirst = heat === 'quiet' && this.enters.length
+      ? Math.min(...this.enters.map((e) => e.at)) + TUNING.welcomeGatherMs
+      : -Infinity;
+    return {
+      priority,
+      waitUntil: Math.max(this.lastSpeechEndAt + TUNING.beat.gapMs[heat], greetFirst),
+      build: () => source.take(now, heat) ?? { kind: 'idle', silentMs: now - this.lastSpeechEndAt },
+    };
+  }
+
   // ── 刷屏 ─────────────────────────────────────────────
 
   private trendCandidate(heat: RoomHeat, now: number): { priority: number; build: () => TopicBody } | null {
@@ -367,7 +463,8 @@ export class LiveAttention {
     if (now - (this.lastSaid.welcome ?? -Infinity) < TUNING.welcomeIntervalMs[heat]) return null;
     if (now - Math.min(...eligible.map((e) => e.at)) < TUNING.welcomeGatherMs) return null;
     return {
-      priority: heat === 'quiet' ? 40 : 20,
+      // 冷清时欢迎排在环节拍前面（环节拍最高 55）
+      priority: heat === 'quiet' ? 60 : 20,
       build: () => {
         const ranked = eligible.sort((a, b) => notability(b.user) - notability(a.user));
         this.enters = [];

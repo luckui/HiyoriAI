@@ -44,6 +44,25 @@
       <button id="ctl-bg-clear" class="live-btn" title="换回主题背景" hidden>✕</button>
     </div>
     <div id="capture-picker" class="capture-picker" hidden></div>
+    <details id="rundown" class="rundown">
+      <summary>
+        <span class="rundown-label">📋 节目单</span>
+        <span id="rundown-now" class="rundown-now">未开始</span>
+      </summary>
+      <div class="rundown-actions">
+        <button id="rd-start" class="live-btn" title="没开直播画面时手动开始（开了画面，进入「直播中」自动开始）">▶ 开始</button>
+        <button id="rd-next" class="live-btn" title="说一句过渡，进下一个环节">⏭ 下一环节</button>
+        <button id="rd-extend" class="live-btn" title="当前环节多跑 5 分钟">+5 分钟</button>
+        <button id="rd-skip" class="live-btn" title="拿掉排在后面的第一项">跳过下一个</button>
+      </div>
+      <ol id="rundown-list" class="rundown-list"></ol>
+      <div class="rundown-actions">
+        <button id="rd-add" class="live-btn">＋ 添加</button>
+        <button id="rd-save" class="live-btn">保存</button>
+        <span id="rundown-hint" class="rundown-hint"></span>
+      </div>
+      <div id="show-summary" class="show-summary" hidden></div>
+    </details>
   </header>
 
   <div id="live-ambient" class="live-ambient"></div>
@@ -52,7 +71,7 @@
   <button id="live-jump" class="live-jump" hidden>有新消息 ↓</button>
 
   <form id="owner-form" class="owner-form">
-    <input id="owner-input" type="text" autocomplete="off" placeholder="对 Hiyori 说…（观众听不到你，只听得到她的回答）" />
+    <input id="owner-input" type="text" autocomplete="off" placeholder="对 Hiyori 说…（观众听不到你）；「/弹幕 内容」发测试弹幕" />
     <button id="owner-send" type="submit" class="live-btn">发送</button>
   </form>
 

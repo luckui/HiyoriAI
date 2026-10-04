@@ -557,7 +557,7 @@ async function sendChatMessageUnlocked(
   // 动态 import 避免 aiService ↔ streamerController ↔ main 静态循环依赖
   if (effectiveMode === 'streamer' && replyContent.trim() && !replyContent.startsWith('（请求失败：')) {
     void import('./streaming/streamerController').then(({ streamerController }) => {
-      void streamerController.speak(replyContent);
+      void streamerController.speak(replyContent, 'owner-reply');
     });
   }
 

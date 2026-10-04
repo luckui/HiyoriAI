@@ -4,7 +4,19 @@
  * 数据全部来自主进程（window.liveAPI），这里只负责显示和转发操作。
  */
 
-import type { LiveEvent, LiveSegment, LiveStagePhase, LiveStageState, LiveStatus, LiveTheme, LiveUser } from '../../shared/types/live';
+import type {
+  LiveDirectorState,
+  LiveEvent,
+  LiveRundownItem,
+  LiveSegment,
+  LiveSegmentInfo,
+  LiveShowSummary,
+  LiveStagePhase,
+  LiveStageState,
+  LiveStatus,
+  LiveTheme,
+  LiveUser,
+} from '../../shared/types/live';
 
 const MAX_ROWS = 300;
 const STICK_THRESHOLD_PX = 40;
@@ -328,6 +340,12 @@ function bindConsole(): void {
     const text = input.value.trim();
     if (!text) return;
     input.value = '';
+    // 「/弹幕 内容」：以测试观众身份发一条弹幕，没开播也能试她怎么接
+    const test = text.match(/^\/弹幕\s+(.+)$/);
+    if (test) {
+      if (!(await api.testChat('测试观众', test[1]))) showNotice('先打开 AI 互动，再发测试弹幕');
+      return;
+    }
     ownerRow('你：', text);
     input.disabled = true;
     try {
@@ -341,6 +359,129 @@ function bindConsole(): void {
   });
 }
 
+// ── 节目单 ─────────────────────────────────────────────
+
+function clock(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+function renderSummary(result: { summary: LiveShowSummary; file: string | null } | null): void {
+  const box = document.getElementById('show-summary')!;
+  if (!result) return;
+  const s = result.summary;
+  const pct = (x: number) => `${Math.round(x * 100)}%`;
+  box.hidden = false;
+  box.replaceChildren();
+  const line = (label: string, value: string) => {
+    const row = el('div', '', `${label} `);
+    row.append(el('b', '', value));
+    box.append(row);
+  };
+  line('上一场', `有人看的 ${Math.round(s.durationMs / 60_000)} 分钟里她说了 ${s.speeches} 段${s.emptyMs >= 60_000 ? `（另有 ${Math.round(s.emptyMs / 60_000)} 分钟没人在看）` : ''}`);
+  line('说话占比', pct(s.talkRatio));
+  line(`冷场（空隙超过 ${s.options.coldGapSec} 秒）`, pct(s.coldRate));
+  line('重复', `${pct(s.repeatRate)}，套路开头 ${pct(s.openingRepeatRate)}，后半场新鲜度 ${s.novelty}`);
+  if (s.stockPhrases.length) line('口头禅', s.stockPhrases.slice(0, 4).map((p) => `${p.phrase}×${p.lines}`).join('  '));
+  if (s.segments.length) line('环节', s.segments.map((g) => `${g.title} ${Math.round(g.ms / 60_000)} 分 ${g.beats} 拍`).join('，'));
+  if (s.highlights.length) line('高光候选', `${s.highlights.length} 处`);
+  const open = el('button', 'live-btn', '打开记录文件夹');
+  open.addEventListener('click', () => void window.liveAPI.openShowLogs());
+  box.append(open);
+}
+
+function bindRundown(): void {
+  const api = window.liveAPI;
+  const list = document.getElementById('rundown-list')!;
+  const now = document.getElementById('rundown-now')!;
+  const hint = document.getElementById('rundown-hint')!;
+  let segments: LiveSegmentInfo[] = [];
+  let state: LiveDirectorState | null = null;
+  /** 正在编辑的节目单；改了没保存时不被主进程的状态覆盖 */
+  let draft: LiveRundownItem[] = [];
+  let dirty = false;
+
+  const markDirty = () => {
+    dirty = true;
+    hint.textContent = state?.running ? '未保存（正在跑的节目单下一场才换）' : '未保存';
+  };
+
+  const renderList = () => {
+    list.replaceChildren(...draft.map((item, i) => {
+      const li = document.createElement('li');
+      if (state?.running && !dirty) {
+        li.classList.toggle('current', i === state.index);
+        li.classList.toggle('done', state.index >= 0 && i < state.index);
+      }
+      const select = document.createElement('select');
+      for (const seg of segments) {
+        const opt = document.createElement('option');
+        opt.value = seg.id;
+        opt.textContent = seg.title;
+        opt.title = seg.description;
+        select.append(opt);
+      }
+      select.value = item.segmentId;
+      select.addEventListener('change', () => { item.segmentId = select.value; markDirty(); });
+      const minutes = document.createElement('input');
+      minutes.type = 'number';
+      minutes.min = '1';
+      minutes.max = '240';
+      minutes.value = String(item.minutes);
+      minutes.addEventListener('change', () => { item.minutes = Number(minutes.value) || 10; markDirty(); });
+      const remove = el('button', 'rd-remove', '✕');
+      remove.title = '删掉这一项';
+      remove.addEventListener('click', () => { draft.splice(i, 1); markDirty(); renderList(); });
+      li.append(select, ' ', minutes, ' 分钟 ', remove);
+      return li;
+    }));
+  };
+
+  const renderState = (next: LiveDirectorState | null) => {
+    state = next;
+    if (!next) return;
+    if (!dirty) draft = next.rundown.map((i) => ({ ...i }));
+    const cur = next.current;
+    now.classList.toggle('on', next.running && !!cur);
+    now.textContent = !next.running
+      ? '未开始'
+      : !cur
+        ? '节目单走完了，自由聊天'
+        : `${next.paused ? '⏸ ' : '▶ '}${cur.title} ${clock(cur.elapsedMs)} / ${clock(cur.plannedMs)} · ${cur.beats} 拍${next.pausedFor === 'audience' ? '（没人在看，等人来）' : next.pausedFor === 'layout' ? '（画面切走了）' : ''}`;
+    document.getElementById('rd-start')!.textContent = next.running ? '■ 停止' : '▶ 开始';
+    renderList();
+  };
+
+  void api.getRundown().then(({ segments: all, state: st }) => {
+    segments = all;
+    renderState(st);
+  });
+  void api.getShowSummary().then(renderSummary);
+  api.onDirector(renderState);
+  api.onShowSummary(renderSummary);
+  // 计时每秒刷新
+  setInterval(() => {
+    if (state?.running && state.current && !state.paused) void api.getRundown().then(({ state: st }) => renderState(st));
+  }, 1000);
+
+  document.getElementById('rd-start')!.addEventListener('click', async () => {
+    renderState(state?.running ? await api.stopRundown() : await api.startRundown());
+  });
+  document.getElementById('rd-next')!.addEventListener('click', async () => renderState(await api.nextSegment()));
+  document.getElementById('rd-extend')!.addEventListener('click', async () => renderState(await api.extendSegment(5)));
+  document.getElementById('rd-skip')!.addEventListener('click', async () => renderState(await api.skipUpcoming()));
+  document.getElementById('rd-add')!.addEventListener('click', () => {
+    draft.push({ segmentId: segments[0]?.id ?? 'topic-cards', minutes: 15 });
+    markDirty();
+    renderList();
+  });
+  document.getElementById('rd-save')!.addEventListener('click', async () => {
+    dirty = false;
+    hint.textContent = '已保存';
+    renderState(await api.saveRundown(draft));
+  });
+}
+
 async function reload(): Promise<void> {
   rows.clear();
   feed.replaceChildren(el('div', 'empty', '还没有弹幕'));
@@ -351,6 +492,7 @@ async function reload(): Promise<void> {
 async function init(): Promise<void> {
   bindControls();
   bindConsole();
+  bindRundown();
   window.liveAPI.onUpdate((update) => {
     addEvents(update.events);
     renderStatus(update.status);

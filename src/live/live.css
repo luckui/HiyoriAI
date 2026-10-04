@@ -311,3 +311,64 @@ body {
 .capture-picker button:hover { border-color: var(--accent); }
 .capture-picker img { width: 100%; border-radius: 4px; }
 .capture-picker span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+/* ── 节目单 ─────────────────────────────────────────── */
+
+.rundown {
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.rundown summary {
+  display: flex;
+  gap: 8px;
+  padding: 6px 8px;
+  cursor: pointer;
+  list-style: none;
+}
+.rundown summary::-webkit-details-marker { display: none; }
+.rundown-label { font-weight: 600; }
+.rundown-now { flex: 1; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-align: right; }
+.rundown-now.on { color: var(--accent); }
+.rundown-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 8px;
+}
+.rundown-hint { color: var(--muted); }
+.rundown-list {
+  margin: 0;
+  padding: 0 8px 8px 28px;
+}
+.rundown-list li { margin-bottom: 4px; color: var(--muted); }
+.rundown-list li.current { color: var(--accent); }
+.rundown-list li.done { opacity: 0.5; }
+.rundown-list select,
+.rundown-list input {
+  padding: 2px 4px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+.rundown-list input { width: 48px; }
+.rundown-list .rd-remove {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.show-summary {
+  margin: 0 8px 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--muted);
+  line-height: 1.6;
+}
+.show-summary b { color: var(--text); }

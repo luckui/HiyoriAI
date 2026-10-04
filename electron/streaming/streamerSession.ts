@@ -1,8 +1,9 @@
 import aiConfig from '../ai.config';
 import { fetchCompletion } from '../llmClient';
 import type { StreamerReply, StreamerSessionConfig, StreamerStatus } from './types';
-import { LiveAttention } from './attention/attention';
+import { LiveAttention, type BeatSource } from './attention/attention';
 import type { Topic } from './attention/topics';
+import type { LiveChatEvent } from '../../shared/types/live';
 import { liveHub } from './liveHub';
 import { SESSION_SYSTEM_PROMPT, topicPrompt } from './streamerPrompts';
 
@@ -20,6 +21,8 @@ class StreamerSessionManager {
   private replies: StreamerReply[] = [];
   private lastError: string | undefined;
   private unsubscribe: (() => void) | null = null;
+  /** 环节导演：出环节拍，也先看一眼弹幕（作答、点播的不再当普通聊天） */
+  private director: (BeatSource & { onChat(event: LiveChatEvent, now: number): boolean }) | null = null;
 
   get running(): boolean {
     return !!this.config;
@@ -36,11 +39,16 @@ class StreamerSessionManager {
     this.startedAt = Date.now();
     this.attention = new LiveAttention(this.startedAt);
     this.attention.idleAfterMs = idleAfterMs;
+    this.attention.setBeatSource(this.director);
     this.replies = [];
     this.lastError = undefined;
 
     liveHub.connect({ platform: config.platform, roomId: config.roomId, cookie });
-    this.unsubscribe = liveHub.subscribe((event, isUpdate) => this.attention.observe(event, isUpdate, Date.now()));
+    this.unsubscribe = liveHub.subscribe((event, isUpdate) => {
+      const now = Date.now();
+      if (event.kind === 'chat' && !isUpdate && this.director?.onChat(event, now)) return;
+      this.attention.observe(event, isUpdate, now);
+    });
     return this.status();
   }
 
@@ -69,7 +77,16 @@ class StreamerSessionManager {
 
   /** 现在最该说的话题；没开会话或没什么可说时为 null */
   nextTopic(now = Date.now()): Topic | null {
-    return this.config ? this.attention.next(now) : null;
+    if (!this.config) return null;
+    const live = liveHub.status(now);
+    this.attention.setOnline(live.stats.online);
+    this.attention.setAnchorId(live.room?.anchorId);
+    return this.attention.next(now);
+  }
+
+  setDirector(director: (BeatSource & { onChat(event: LiveChatEvent, now: number): boolean }) | null): void {
+    this.director = director;
+    this.attention.setBeatSource(director);
   }
 
   speechStarted(): void {
