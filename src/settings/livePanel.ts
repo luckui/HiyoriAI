@@ -37,8 +37,20 @@ function formConfig(saved: LiveConfig): LiveConfig {
   };
 }
 
+function renderMemory(stats: { viewers: number; streams: number; memes: number; tastes: number } | null): void {
+  const el = document.getElementById('live-memory-stats');
+  if (el) el.textContent = stats ? `记得 ${stats.viewers} 位观众、${stats.streams} 场直播、${stats.memes} 个梗、${stats.tastes} 条喜好` : '直播记忆不可用';
+}
+
+async function clearMemory(): Promise<void> {
+  const api = window.liveAPI;
+  if (!api || !confirm('清空直播记忆？观众档案、每场回顾、梗和她的喜好都会删掉，不能恢复。')) return;
+  renderMemory(await api.clearMemory());
+}
+
 async function load(): Promise<void> {
   if (!window.liveAPI) return;
+  void window.liveAPI.getMemoryStats().then(renderMemory);
   const cfg = await window.liveAPI.getConfig();
   input('live-room-id').value = cfg.roomId ? String(cfg.roomId) : '';
   input('live-cookie').value = cfg.cookie;
@@ -79,5 +91,6 @@ export function initLivePanel(): void {
   document.getElementById('live-save-btn')?.addEventListener('click', () => void save());
   document.getElementById('live-connect-btn')?.addEventListener('click', () => void toggleConnection());
   document.getElementById('live-window-btn')?.addEventListener('click', () => void window.liveAPI?.openWindow());
+  document.getElementById('live-memory-clear')?.addEventListener('click', () => void clearMemory());
   window.liveAPI?.onUpdate((update) => renderStatus(update.status));
 }

@@ -180,6 +180,8 @@ expose('liveAPI', {
   pickBackground: () => ipcRenderer.invoke('live:stage:pick-background'),
   clearBackground: () => ipcRenderer.invoke('live:stage:clear-background'),
   onStage: (cb) => subscribe('live:stage', cb),
+  getMemoryStats: () => ipcRenderer.invoke('live:memory:stats'),
+  clearMemory: () => ipcRenderer.invoke('live:memory:clear'),
   testChat: (name, text) => ipcRenderer.invoke('live:test-chat', name, text),
   getRundown: () => ipcRenderer.invoke('live:rundown:get'),
   saveRundown: (items) => ipcRenderer.invoke('live:rundown:save', items),

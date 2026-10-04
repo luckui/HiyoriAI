@@ -28,6 +28,8 @@ import { streamerController } from '../streaming/streamerController';
 import { ShowLog } from '../streaming/showLog';
 import * as show from '../streaming/showRunner';
 import { listSegments } from '../streaming/segments/registry';
+import { LiveMemory } from '../streaming/memory/liveMemory';
+import { LiveMemoryStore } from '../streaming/memory/liveMemoryStore';
 import type { Topic } from '../streaming/attention/topics';
 import { getAgentMode, setAgentMode } from '../agentMode';
 import { sendChatMessage } from '../aiService';
@@ -43,6 +45,7 @@ let capture: LiveCaptureSource | null = null;
 const showLog = new ShowLog();
 /** 开 AI 互动前的对话模式，停的时候还原 */
 let modeBeforeAi: string | null = null;
+let liveMemory: LiveMemory | null = null;
 
 function stageState(): LiveStageState {
   return {
@@ -216,6 +219,13 @@ export function registerLiveIpc(): void {
     applyLayout: (layout) => { if (layout !== segment) setSegment(layout); },
     broadcast: broadcastToWindows,
   });
+  try {
+    liveMemory = new LiveMemory(new LiveMemoryStore(join(app.getPath('userData'), 'live-memory.db')));
+    streamerSession.setMemory(liveMemory, () => showLog.summary());
+  } catch (err) {
+    // 记忆坏了不影响直播
+    console.warn('[LiveMemory] 打不开直播记忆库:', (err as Error).message);
+  }
   liveHub.onUpdate((update) => {
     showLog.observeOnline(update.status.stats.online);
     broadcastToWindows('live:update', update);
@@ -306,6 +316,11 @@ export function registerLiveIpc(): void {
   ipcMain.handle('live:rundown:extend', (_e, minutes: number) => { show.extendSegment(Number(minutes) || 5); return show.directorState(); });
   ipcMain.handle('live:rundown:skip', () => { show.skipUpcoming(); return show.directorState(); });
   ipcMain.handle('live:panel:get', () => show.currentPanel());
+  ipcMain.handle('live:memory:stats', () => liveMemory?.store.counts() ?? null);
+  ipcMain.handle('live:memory:clear', () => {
+    liveMemory?.store.clearAll();
+    return liveMemory?.store.counts() ?? null;
+  });
   ipcMain.handle('live:show:summary', () => show.lastShowSummary());
   ipcMain.handle('live:show:open-logs', async () => {
     const dir = show.logsDir();

@@ -313,6 +313,10 @@ export interface LiveAPI {
   stopAi(): Promise<LiveStageState>;
   /** 主播在控制台对她说话（观众只听得到她的回答） */
   ownerSay(text: string): Promise<{ ok: boolean; reply?: string; detail?: string }>;
+  /** 直播记忆：记了多少观众、场次、梗、口味 */
+  getMemoryStats(): Promise<{ viewers: number; streams: number; memes: number; tastes: number } | null>;
+  /** 清空直播记忆（说过「别记我」的名单保留） */
+  clearMemory(): Promise<{ viewers: number; streams: number; memes: number; tastes: number } | null>;
   /** 测试：以测试观众身份发一条弹幕（AI 互动开着时才有效） */
   testChat(name: string, text: string): Promise<boolean>;
   /** 节目单：能选的环节 + 导演当前状态 */

@@ -40,6 +40,15 @@ export interface TopicContext {
   streamTopic?: string;
   /** 她最近说过的几句（旧 → 新），避免重复 */
   recentLines: string[];
+  /** 直播记忆：她记得这位观众什么（没有返回 null） */
+  viewerCard?: (user: LiveUser) => string | null;
+  /** 上一场的回顾（开场白用） */
+  lastRecap?: string[];
+  /** 今天的日期（观众卡片里的日期要和它比） */
+  today?: string;
+  /** 她之前直播里说过的口味，和直播间的梗 */
+  tastes?: string[];
+  memes?: string[];
 }
 
 const HEAT_TEXT = { quiet: '直播间人不多，弹幕很慢', normal: '弹幕不快不慢', busy: '弹幕刷得很快' } as const;
@@ -59,16 +68,25 @@ function names(users: LiveUser[], more: number): string {
 }
 
 /** 这次要说的事 + 怎么说 */
-function topicBody(topic: Topic): { what: string[]; how: string; maxChars: number } {
+function cardLine(user: LiveUser, ctx: TopicContext): string[] {
+  const card = ctx.viewerCard?.(user);
+  return card ? [`  （关于${cleanName(user.name)}，你记得：${card}）`] : [];
+}
+
+function topicBody(topic: Topic, ctx: TopicContext): { what: string[]; how: string; maxChars: number } {
   switch (topic.kind) {
     case 'chat': {
-      const lines = topic.picks.map((p) => `- ${who(p.event.user)}${p.tags.length ? ` [${p.tags.join('/')}]` : ''}：${cleanText(p.text)}`);
+      const lines = topic.picks.flatMap((p) => [
+        `- ${who(p.event.user)}${p.tags.length ? ` [${p.tags.join('/')}]` : ''}：${cleanText(p.text)}`,
+        ...cardLine(p.event.user, ctx),
+      ]);
       const many = topic.picks.length > 1;
       return {
         what: ['<观众弹幕>', ...lines, '</观众弹幕>'],
-        how: many
+        how: (many
           ? '挑其中最有意思或最需要回答的一两条回应，可以点名，点名不超过两位；其余的不用硬接。'
-          : '自然地回应这条弹幕，可以点名。',
+          : '自然地回应这条弹幕，可以点名。')
+          + (lines.some((l) => l.startsWith('  （')) ? '你记得的事自然的时候可以提一句，别每次都提。' : ''),
         maxChars: many ? 80 : 60,
       };
     }
@@ -106,7 +124,7 @@ function topicBody(topic: Topic): { what: string[]; how: string; maxChars: numbe
       };
     case 'welcome':
       return {
-        what: [`刚进直播间的观众：${names(topic.users, topic.more)}`],
+        what: [`刚进直播间的观众：${names(topic.users, topic.more)}`, ...topic.users.flatMap((u) => cardLine(u, ctx))],
         how: topic.heat === 'quiet' ? '像打招呼一样欢迎，可以顺口问一句或者告诉他们现在在聊什么。' : '简短地欢迎一下。',
         maxChars: 40,
       };
@@ -117,6 +135,7 @@ function topicBody(topic: Topic): { what: string[]; how: string; maxChars: numbe
         what: [
           `直播刚刚开始，今天是「${cleanText(topic.segmentTitle)}」。`,
           ...(topic.plan?.length ? [`今天的节目安排：${topic.plan.map(cleanText).join(' → ')}`] : []),
+          ...(ctx.lastRecap?.length ? [`上一场直播的回顾（可以提一句）：${ctx.lastRecap.join('；')}`] : []),
         ],
         how: '元气地跟大家打招呼，说一下今天播什么，邀请大家发弹幕。',
         maxChars: 60,
@@ -167,14 +186,19 @@ function topicBody(topic: Topic): { what: string[]; how: string; maxChars: numbe
 }
 
 export function topicPrompt(topic: Topic, ctx: TopicContext): string {
-  const body = topicBody(topic);
+  const body = topicBody(topic, ctx);
   // 开场、谢幕不是从弹幕里挑出来的，不提弹幕快慢
   const heat = ['opening', 'ending', 'transition'].includes(topic.kind) ? '' : `${HEAT_TEXT[topic.heat]}。`;
   const parts = [
-    `本场主题：${ctx.streamTopic || '自由聊天'}。${heat}`,
+    `本场主题：${ctx.streamTopic || '自由聊天'}。${heat}${ctx.today ? `今天是${ctx.today}。` : ''}`,
   ];
   if (ctx.recentLines.length) {
     parts.push('', '你最近说过（不要重复这些话和开头）：', ...ctx.recentLines.map((l) => `- ${l}`));
+  }
+  // 她自己找话说的时候：之前说过的口味要一致，直播间的梗可以用
+  if (topic.kind === 'segment' || topic.kind === 'idle') {
+    if (ctx.tastes?.length) parts.push('', `你之前直播里表达过的口味（说到相关的要保持一致）：${ctx.tastes.join('；')}`);
+    if (ctx.memes?.length) parts.push(`直播间的梗（自然的时候可以用，别硬塞）：${ctx.memes.join('；')}`);
   }
   parts.push('', ...body.what, '', `${body.how}只说一段话，不超过 ${body.maxChars} 字。`);
   return parts.join('\n');
