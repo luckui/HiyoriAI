@@ -1,0 +1,399 @@
+/* ========================================================
+   开场 / 准备中 / 谢幕（#stage-seq，盖在 Live2D 之上）
+======================================================== */
+
+#stage-seq {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* 准备中、开场揭幕前：她先不出场 */
+body.stage-phase-waiting #canvas-container,
+body.stage-phase-opening:not(.stage-revealed) #canvas-container {
+  opacity: 0;
+  transform: scale(0.92) translateY(30px);
+}
+body.stage-mode #canvas-container {
+  transition: opacity 0.5s ease, transform 0.7s cubic-bezier(0.2, 1.5, 0.4, 1);
+}
+/* 准备中、开场时弹幕栏等也先藏起来 */
+body.stage-phase-waiting #stage-chat,
+body.stage-phase-waiting #stage-header,
+body.stage-phase-waiting #stage-game,
+body.stage-phase-opening:not(.stage-revealed) #stage-chat,
+body.stage-phase-opening:not(.stage-revealed) #stage-header,
+body.stage-phase-opening:not(.stage-revealed) #stage-game {
+  opacity: 0;
+  transform: translateY(16px);
+}
+#stage-chat, #stage-header, #stage-game {
+  transition: opacity 0.5s ease 0.15s, transform 0.6s ease 0.15s;
+}
+
+/* ── 准备中 ── */
+
+.seq-waiting {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.seq-wait-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 36px 70px 30px;
+  border-radius: 36px;
+  background: var(--st-panel-bg);
+  border: 3px solid var(--st-panel-border);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 20px 60px rgba(120, 60, 140, 0.25);
+  animation: seq-pop 0.7s cubic-bezier(0.2, 1.5, 0.4, 1) both;
+}
+
+.seq-logo {
+  display: flex;
+  font-size: 104px;
+  font-weight: 900;
+  font-style: italic;
+  line-height: 1;
+  letter-spacing: 2px;
+}
+.seq-logo span {
+  display: inline-block;
+  background: var(--st-seg-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 5px 0 rgba(255, 255, 255, 0.9)) drop-shadow(0 10px 18px rgba(160, 70, 150, 0.35));
+  animation: seq-wave 2.4s ease-in-out infinite;
+  animation-delay: calc(var(--i) * 0.12s);
+}
+@keyframes seq-wave {
+  0%, 60%, 100% { transform: translateY(0) rotate(0); }
+  25% { transform: translateY(-18px) rotate(-6deg); }
+}
+
+.seq-wait-chip {
+  padding: 6px 18px;
+  border-radius: 999px;
+  background: var(--st-seg-grad);
+  color: #fff;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 2px;
+}
+
+.seq-wait-title {
+  font-size: 34px;
+  font-weight: 900;
+  color: var(--st-ink);
+  letter-spacing: 6px;
+}
+.seq-wait-title::after {
+  content: "";
+  display: inline-block;
+  width: 1.4em;
+  text-align: left;
+  animation: seq-dots 1.6s steps(4) infinite;
+}
+@keyframes seq-dots {
+  0% { content: ""; }
+  25% { content: "."; }
+  50% { content: ".."; }
+  75% { content: "..."; }
+}
+
+.seq-wait-bar {
+  width: 360px;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.5);
+  overflow: hidden;
+  position: relative;
+}
+.seq-wait-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  border-radius: inherit;
+  background: var(--st-seg-grad);
+  animation: seq-bar 1.8s ease-in-out infinite;
+}
+@keyframes seq-bar {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(260%); }
+}
+
+.seq-wait-tip {
+  min-height: 26px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--st-muted);
+}
+.seq-wait-tip.in {
+  animation: seq-tip 0.5s ease both;
+}
+@keyframes seq-tip {
+  from { opacity: 0; transform: translateY(10px); }
+}
+
+.seq-wait-clock {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--st-muted);
+  letter-spacing: 3px;
+}
+
+@keyframes seq-pop {
+  from { opacity: 0; transform: scale(0.85) translateY(30px); }
+}
+
+/* ── 斜向色块（开场转场、谢幕底板） ── */
+
+.seq-panels {
+  position: absolute;
+  inset: 0;
+}
+.seq-panel {
+  position: absolute;
+  top: -20%;
+  bottom: -20%;
+  width: 60%;
+  transform: skewX(-18deg);
+}
+.seq-panel.p1 { left: -10%; background: var(--st-accent); }
+.seq-panel.p2 { left: 30%; background: var(--st-accent2); }
+.seq-panel.p3 { left: 70%; width: 50%; background: #ffffff; }
+
+.in-then-out .seq-panel {
+  animation: seq-panel-in 0.7s cubic-bezier(0.7, 0, 0.3, 1) both, seq-panel-out 0.7s cubic-bezier(0.7, 0, 0.3, 1) 3.4s forwards;
+}
+.in-then-out .p2 { animation-delay: 0.08s, 3.48s; }
+.in-then-out .p3 { animation-delay: 0.16s, 3.56s; }
+@keyframes seq-panel-in {
+  from { transform: skewX(-18deg) translateX(-220%); }
+  to { transform: skewX(-18deg) translateX(0); }
+}
+@keyframes seq-panel-out {
+  to { transform: skewX(-18deg) translateX(260%); }
+}
+
+/* ── 开场：大字 ── */
+
+.seq-hero {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 32%;
+  display: flex;
+  justify-content: center;
+  font-size: 170px;
+  font-weight: 900;
+  font-style: italic;
+  line-height: 1;
+  letter-spacing: 6px;
+  color: #fff;
+  text-shadow: 0 8px 0 rgba(90, 40, 110, 0.35), 0 18px 40px rgba(90, 40, 110, 0.4);
+  animation: seq-hero-out 0.4s ease-in 3.3s forwards;
+}
+.seq-hero span {
+  display: inline-block;
+  animation: seq-drop 0.6s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+  animation-delay: calc(0.55s + var(--i) * 0.11s);
+}
+@keyframes seq-drop {
+  from { opacity: 0; transform: translateY(-160px) rotate(-14deg) scale(1.3); }
+}
+@keyframes seq-hero-out {
+  to { opacity: 0; transform: scale(1.25); }
+}
+
+.seq-hero-sub {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 62%;
+  text-align: center;
+  font-size: 34px;
+  font-weight: 900;
+  letter-spacing: 8px;
+  color: var(--st-ink);
+  animation: seq-sub-in 0.6s cubic-bezier(0.2, 1.4, 0.4, 1) 1.5s both, seq-hero-out 0.4s ease-in 3.3s forwards;
+}
+.seq-hero-sub::before,
+.seq-hero-sub::after {
+  content: "";
+  display: inline-block;
+  width: 80px;
+  height: 4px;
+  margin: 0 22px;
+  vertical-align: 10px;
+  border-radius: 4px;
+  background: currentColor;
+}
+@keyframes seq-sub-in {
+  from { opacity: 0; transform: translateX(-120px); }
+}
+
+.seq-flash {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 40px;
+  height: 40px;
+  margin: -20px 0 0 -20px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff 0%, rgba(255, 255, 255, 0.9) 40%, rgba(255, 255, 255, 0) 70%);
+  opacity: 0;
+  animation: seq-flash 0.9s ease-out 3.05s both;
+}
+@keyframes seq-flash {
+  0% { opacity: 0; transform: scale(0.2); }
+  30% { opacity: 1; }
+  100% { opacity: 0; transform: scale(70); }
+}
+
+/* ── 谢幕 ── */
+
+.end-backdrop .seq-panel {
+  animation: seq-panel-in 0.8s cubic-bezier(0.7, 0, 0.3, 1) both;
+  opacity: 0.97;
+}
+.end-backdrop .p1 { left: -30%; width: 75%; }
+.end-backdrop .p2 { left: 36%; width: 6%; animation-delay: 0.1s; }
+.end-backdrop .p3 { display: none; }
+
+.seq-end-left {
+  position: absolute;
+  left: 50px;
+  top: 40px;
+  bottom: 30px;
+  width: 560px;
+  display: flex;
+  flex-direction: column;
+  color: #fff;
+}
+
+.seq-thanks {
+  display: flex;
+  font-size: 92px;
+  font-weight: 900;
+  font-style: italic;
+  line-height: 1;
+  letter-spacing: 2px;
+  text-shadow: 0 6px 0 rgba(90, 40, 110, 0.3);
+}
+.seq-thanks span {
+  display: inline-block;
+  animation: seq-drop 0.6s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+  animation-delay: calc(0.6s + var(--i) * 0.07s);
+}
+
+.seq-end-sub {
+  margin: 10px 0 18px 6px;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  animation: seq-sub-in 0.6s ease 1.4s both;
+}
+
+.seq-end-stats {
+  display: flex;
+  gap: 14px;
+  margin-bottom: 18px;
+  animation: seq-sub-in 0.6s ease 1.7s both;
+}
+.seq-end-stat {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 18px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.22);
+  border: 2px solid rgba(255, 255, 255, 0.6);
+}
+.seq-end-stat b {
+  font-size: 26px;
+  font-weight: 900;
+}
+.seq-end-stat span {
+  font-size: 13px;
+  font-weight: 700;
+  opacity: 0.9;
+}
+
+.seq-credit-roll {
+  flex: 1;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 12%, #000 85%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0, #000 12%, #000 85%, transparent 100%);
+}
+.seq-credit-track {
+  padding-top: 340px;
+  animation-name: seq-roll;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+}
+@keyframes seq-roll {
+  from { transform: translateY(0); }
+  to { transform: translateY(-100%); }
+}
+.seq-credit-section {
+  margin-bottom: 30px;
+}
+.seq-credit-section h3 {
+  margin: 0 0 10px;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 3px;
+}
+.seq-credit-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  font-size: 19px;
+  font-weight: 700;
+}
+.seq-credit-empty,
+.seq-credit-end {
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: 3px;
+  margin-top: 20px;
+}
+
+.seq-bye {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+}
+.seq-bye-text {
+  display: flex;
+  font-size: 88px;
+  font-weight: 900;
+}
+.seq-bye-text span {
+  display: inline-block;
+  animation: seq-drop 0.6s cubic-bezier(0.2, 1.6, 0.4, 1) both, seq-wave 2.4s ease-in-out 1s infinite;
+  animation-delay: calc(var(--i) * 0.1s), calc(1s + var(--i) * 0.12s);
+}
+.seq-bye-date {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  opacity: 0.85;
+}
+
+/* 谢幕时她站到右边 */
+body.stage-phase-ending #stage-chat,
+body.stage-phase-ending #stage-header,
+body.stage-phase-ending #stage-alerts,
+body.stage-phase-ending #stage-game {
+  opacity: 0;
+}

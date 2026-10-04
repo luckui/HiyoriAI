@@ -99,3 +99,34 @@ export async function playTTSAudio(text: string): Promise<boolean> {
   console.log(`[TTS] playTTSAudio → 发送文本到渲染进程: ${text.substring(0, 50)}...`);
   return true;
 }
+
+let nextPlayId = 0;
+const pendingPlays = new Map<number, () => void>();
+
+/**
+ * 同 playTTSAudio，但等到渲染进程实际播完才返回（直播节奏要知道她什么时候说完）。
+ * 渲染进程排队、合成慢都算在内；为防回报丢失，超过按字数估的时长加 20 秒就当说完。
+ * 返回 false 表示没能交给渲染进程。
+ */
+export function speakAndWait(text: string): Promise<boolean> {
+  const id = ++nextPlayId;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => finish(), 20_000 + text.length * 400);
+    const finish = () => {
+      clearTimeout(timer);
+      pendingPlays.delete(id);
+      resolve(true);
+    };
+    pendingPlays.set(id, finish);
+    if (!sendToRenderer('tts:play', { text, id })) {
+      clearTimeout(timer);
+      pendingPlays.delete(id);
+      resolve(false);
+    }
+  });
+}
+
+/** 渲染进程回报某段朗读播完 */
+export function notifyPlayDone(id: number): void {
+  pendingPlays.get(id)?.();
+}

@@ -2017,6 +2017,19 @@ body.avatar-studio-open #app {
   background: linear-gradient(135deg, #56CCF2 0%, #2F80ED 100%);
 }
 
+/* 直播设置：连接 / 打开弹幕姬并排 */
+.s-live-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.s-btn-secondary {
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--pink-deep);
+  border: 1px solid var(--pink-light);
+}
+
 .settings-dialog-backdrop {
   position: absolute;
   inset: 0;

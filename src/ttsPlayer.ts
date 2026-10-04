@@ -215,13 +215,16 @@ export function registerTTSPlayListener(): void {
     return;
   }
 
-  ttsAPI.onPlay((text) => {
+  ttsAPI.onPlay((text, id) => {
     console.log('[TTS] 收到主进程推送的文本，调用 playTTS():', text.substring(0, 50));
     // 复用聊天框的 TTS 逻辑并显示打字机气泡（pause/resume hearing 已内置于 playTTS 内部）
     playTTS(
       text,
       createTypewriterPlaybackCallback(text, shouldShowTypewriterBubble, showTypewriterBubble),
-    ).catch((e) => console.error('[TTS] playTTS error:', e));
+    )
+      .catch((e) => console.error('[TTS] playTTS error:', e))
+      // 主进程（直播节奏）在等她说完
+      .finally(() => { if (id !== undefined) ttsAPI.playDone(id); });
   });
 
   console.log('[TTS] tts:play 监听器已注册');

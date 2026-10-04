@@ -33,6 +33,7 @@ import { registerBridgeIpc } from './ipc/bridges';
 import { registerTTSIpc } from './ipc/tts';
 import { registerHearingIpc } from './ipc/hearing';
 import { registerAvatarIpc, registerAvatarProtocol, registerAvatarScheme } from './ipc/avatar';
+import { registerLiveIpc, shutdownLive } from './ipc/live';
 
 registerAvatarScheme();
 
@@ -94,6 +95,7 @@ app.whenReady().then(() => {
   registerTTSIpc();
   registerHearingIpc();
   registerAvatarIpc();
+  registerLiveIpc();
   createMainWindow();
 
   // 平台桥接与 Minecraft 默认绑定到最近的对话
@@ -129,6 +131,7 @@ let isQuitting = false;
 
 app.on('before-quit', (event) => {
   taskScheduler.stop();
+  shutdownLive();
   if (isQuitting) return;
 
   // 快速判断当前对话是否还有需要总结的内容

@@ -1,0 +1,520 @@
+/* ========================================================
+   直播间画面（body.stage-mode）：主窗口变成 16:9 舞台，
+   背景层（主题场景 + 粒子）在 Live2D 之下，弹幕 / 标题 / 特效 / 开场谢幕在之上。
+   配色来自主题（themes.css 里的 --st-* 变量），布局随节目形式（data-stage-segment）变化。
+======================================================== */
+
+@import './themes.css';
+@import './sequences.css';
+
+#stage-back,
+#stage-front {
+  display: none;
+}
+
+body.stage-mode {
+  --st-chat-w: 380px;
+  --st-radius: 26px;
+}
+
+body.stage-mode #chat-panel,
+body.stage-mode #settings-panel,
+body.stage-mode #canvas-controls,
+body.stage-mode #avatar-studio-slot,
+body.stage-mode #resize-grip {
+  display: none !important;
+}
+
+body.stage-mode #app {
+  position: relative;
+  overflow: hidden;
+}
+
+/* ── 背景层 ─────────────────────────────────────────── */
+
+body.stage-mode #stage-back {
+  display: block;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  background: #fff;
+}
+
+#stage-particles,
+#stage-fx {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* 自定义背景：视频或图片铺满，主题场景藏起来，粒子照旧 */
+#stage-video,
+#stage-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background-size: cover;
+  background-position: center;
+  display: none;
+}
+body.stage-mode.stage-has-video #stage-video,
+body.stage-mode.stage-has-image #stage-image {
+  display: block;
+}
+body.stage-has-video #stage-scene,
+body.stage-has-image #stage-scene {
+  display: none;
+}
+
+/* ── Live2D 与字幕 ─────────────────────────────────── */
+
+body.stage-mode #canvas-container {
+  position: absolute !important;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: calc(var(--st-chat-w) - 40px);
+  height: auto !important;
+  z-index: 2;
+}
+
+body.stage-mode #typewriter-overlay {
+  left: 10%;
+  right: 10%;
+  bottom: 34px;
+  max-height: none;
+  padding: 14px 26px 16px;
+  border-radius: var(--st-radius);
+  border: 3px solid var(--st-panel-border);
+  background: var(--st-sub-bg);
+  box-shadow: 0 8px 0 var(--st-sub-shadow), 0 14px 40px rgba(60, 30, 80, 0.25);
+  font-size: 25px;
+  font-weight: 700;
+  line-height: 1.55;
+  color: var(--st-ink);
+  text-align: center;
+}
+
+/* ── 前景层 ─────────────────────────────────────────── */
+
+body.stage-mode #stage-front {
+  display: block;
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  font-family: "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;
+  color: var(--st-ink);
+}
+
+#stage-header {
+  position: absolute;
+  top: 22px;
+  left: 26px;
+}
+
+#stage-segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 22px 8px 14px;
+  border-radius: 999px;
+  background: var(--st-seg-grad);
+  color: #fff;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  border: 3px solid #fff;
+  box-shadow: 0 6px 0 rgba(80, 40, 110, 0.25), 0 10px 24px rgba(80, 40, 110, 0.3);
+}
+
+#stage-seg-icon {
+  display: inline-block;
+  animation: stage-bounce 1.6s ease-in-out infinite;
+}
+
+@keyframes stage-bounce {
+  0%, 100% { transform: translateY(0) rotate(-6deg); }
+  50% { transform: translateY(-5px) rotate(6deg); }
+}
+
+#stage-room {
+  margin: 8px 0 0 10px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--st-muted);
+}
+
+#stage-stats {
+  position: absolute;
+  top: 24px;
+  right: 26px;
+  display: flex;
+  gap: 10px;
+}
+
+.stage-pill {
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--st-pill-bg);
+  border: 2px solid var(--st-panel-border);
+  box-shadow: 0 4px 14px rgba(60, 30, 80, 0.18);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--st-ink);
+}
+.stage-pill b {
+  color: var(--st-accent);
+  margin-left: 4px;
+}
+.stage-pill.live::before {
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #ff4d79;
+  animation: stage-pulse 1.6s infinite;
+  vertical-align: 1px;
+}
+@keyframes stage-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(255, 77, 121, 0.6); }
+  70% { box-shadow: 0 0 0 9px rgba(255, 77, 121, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 77, 121, 0); }
+}
+
+/* ── 弹幕栏 ─────────────────────────────────────────── */
+
+#stage-chat {
+  position: absolute;
+  left: 22px;
+  top: 128px;
+  bottom: 24px;
+  width: var(--st-chat-w);
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--st-radius);
+  background: var(--st-panel-bg);
+  border: 3px solid var(--st-panel-border);
+  box-shadow: 0 10px 34px rgba(60, 30, 80, 0.18);
+  backdrop-filter: blur(10px);
+  overflow: hidden;
+}
+
+#stage-chat-title {
+  padding: 12px 18px 6px;
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--st-accent);
+  letter-spacing: 1px;
+}
+
+#stage-chat-list {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 4px 14px 10px;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 60px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 60px);
+}
+
+.sc-item {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  animation: stage-pop 0.38s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+@keyframes stage-pop {
+  from { opacity: 0; transform: translateX(-24px) scale(0.92); }
+  to { opacity: 1; transform: none; }
+}
+
+.sc-avatar {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  object-fit: cover;
+  background: var(--avatar-bg, #ffc6de);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 32px;
+  text-align: center;
+  box-shadow: 0 2px 8px rgba(60, 30, 80, 0.2);
+}
+
+.sc-body {
+  min-width: 0;
+}
+
+.sc-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--name-color);
+  margin: 0 0 2px 4px;
+}
+.sc-medal {
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--st-seg-grad);
+  color: #fff;
+  font-size: 11px;
+  line-height: 17px;
+}
+.sc-guard {
+  font-size: 13px;
+}
+
+.sc-bubble {
+  display: inline-block;
+  padding: 7px 13px;
+  border-radius: 4px 16px 16px 16px;
+  background: var(--st-bubble-bg);
+  color: var(--st-ink);
+  font-size: 16px;
+  line-height: 1.45;
+  font-weight: 600;
+  word-break: break-word;
+  box-shadow: 0 2px 8px rgba(60, 30, 80, 0.12);
+  transition: box-shadow 0.3s ease, transform 0.3s ease;
+}
+.sc-item.emote .sc-bubble {
+  opacity: 0.75;
+}
+.sc-item.gift .sc-bubble {
+  background: linear-gradient(135deg, #fff3c4, #ffd9ec);
+  color: #9a5a1a;
+}
+.sc-item.paid .sc-bubble {
+  background: linear-gradient(135deg, var(--paid-a, #8fd3ff), var(--paid-b, #b79cff));
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(80, 40, 120, 0.3);
+}
+.sc-price {
+  display: block;
+  font-size: 12px;
+  font-weight: 800;
+  opacity: 0.9;
+}
+
+/* 她正在回应这条：发光 + 小标签 */
+.sc-item.focused .sc-bubble {
+  transform: scale(1.04);
+  box-shadow: 0 0 0 3px var(--st-accent), 0 0 22px var(--st-accent);
+}
+.sc-item.focused .sc-name::after {
+  content: "♡ 回复中";
+  padding: 0 7px;
+  border-radius: 8px;
+  background: var(--st-accent);
+  color: #fff;
+  font-size: 11px;
+  line-height: 17px;
+  animation: stage-bounce 1.2s ease-in-out infinite;
+}
+
+.sc-bubble.sticker {
+  padding: 4px;
+}
+.sc-bubble.sticker img {
+  display: block;
+  max-width: 96px;
+  max-height: 96px;
+}
+.sc-emo {
+  width: 24px;
+  height: 24px;
+  margin: 0 1px;
+  vertical-align: -6px;
+}
+
+#stage-ticker {
+  min-height: 34px;
+  padding: 7px 18px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--st-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-top: 2px dashed var(--st-panel-border);
+}
+#stage-ticker .tick {
+  display: inline-block;
+  animation: stage-pop 0.3s ease both;
+}
+
+/* ── 大事件特效 ─────────────────────────────────────── */
+
+#stage-alerts {
+  position: absolute;
+  top: 26px;
+  left: calc(var(--st-chat-w) + 40px);
+  right: 220px;
+  display: flex;
+  justify-content: center;
+}
+
+.stage-alert {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: 100%;
+  padding: 12px 26px 12px 14px;
+  border-radius: 24px;
+  background: linear-gradient(135deg, #ff7eb8, #ffb86b);
+  border: 3px solid #fff;
+  color: #fff;
+  font-size: 20px;
+  font-weight: 800;
+  box-shadow: 0 8px 0 rgba(200, 80, 120, 0.25), 0 16px 40px rgba(220, 90, 140, 0.35);
+  animation: stage-alert-in 0.6s cubic-bezier(0.2, 1.5, 0.4, 1) both;
+}
+.stage-alert.leaving {
+  animation: stage-alert-out 0.4s ease-in both;
+}
+.stage-alert.membership { background: linear-gradient(135deg, #9b7bff, #ff7ec7); }
+.stage-alert.superchat { background: linear-gradient(135deg, #4fb8ff, #a37dff); }
+.stage-alert .alert-icon {
+  font-size: 36px;
+  animation: stage-bounce 1s ease-in-out infinite;
+}
+.stage-alert .alert-sub {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  opacity: 0.95;
+}
+@keyframes stage-alert-in {
+  from { opacity: 0; transform: translateY(-40px) scale(0.8); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes stage-alert-out {
+  to { opacity: 0; transform: translateY(-30px) scale(0.9); }
+}
+
+/* ── 游戏画面框（只在游戏回显示） ──────────────────────── */
+
+#stage-game {
+  display: none;
+  position: absolute;
+  left: 24px;
+  top: 100px;
+  width: 880px;
+  height: 495px;
+  border-radius: 18px;
+  overflow: hidden;
+  background: rgba(10, 6, 30, 0.75);
+  border: 4px solid var(--st-accent2);
+  box-shadow: 0 0 0 4px var(--st-accent), 0 0 40px var(--st-accent2), 0 16px 40px rgba(0, 0, 0, 0.35);
+}
+#stage-game-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+  display: none;
+}
+#stage-game.has-video #stage-game-video { display: block; }
+#stage-game.has-video #stage-game-empty { display: none; }
+#stage-game-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  color: var(--st-muted);
+}
+
+/* ══ 布局：歌回 —— 她站中间，弹幕栏靠右 ══════════════════ */
+
+body.stage-mode[data-stage-segment="sing"] {
+  --st-chat-w: 300px;
+}
+body.stage-mode[data-stage-segment="sing"] #canvas-container {
+  left: 14%;
+  right: 14%;
+}
+body.stage-mode[data-stage-segment="sing"] #stage-chat {
+  left: auto;
+  right: 22px;
+  top: 96px;
+}
+body.stage-mode[data-stage-segment="sing"] #stage-alerts {
+  left: 300px;
+  right: 340px;
+  top: 100px;
+}
+
+/* ══ 布局：游戏回 —— 游戏画面占大头，她在右下角，弹幕在右上 ══ */
+
+body.stage-mode[data-stage-segment="game"] #stage-game {
+  display: block;
+}
+body.stage-mode[data-stage-segment="game"] #stage-chat {
+  left: auto;
+  right: 22px;
+  top: 100px;
+  bottom: 330px;
+  width: 340px;
+}
+body.stage-mode[data-stage-segment="game"] #canvas-container {
+  left: 900px;
+  top: 270px;
+  overflow: visible;
+}
+/* 字幕放在游戏画面下方 */
+body.stage-mode[data-stage-segment="game"] #typewriter-overlay {
+  left: -876px;
+  right: auto;
+  width: 880px;
+  bottom: 18px;
+  box-sizing: border-box;
+  font-size: 22px;
+  padding: 10px 22px 12px;
+}
+body.stage-mode[data-stage-segment="game"] #stage-alerts {
+  left: 24px;
+  right: 400px;
+  top: 116px;
+}
+body.stage-mode[data-stage-segment="game"] #stage-header {
+  top: 18px;
+}
+body.stage-mode[data-stage-segment="game"] #stage-segment {
+  font-size: 22px;
+  padding: 5px 18px 5px 12px;
+}
+body.stage-mode[data-stage-segment="game"] #stage-room {
+  display: none;
+}
+
+/* 谢幕：不管什么布局，她都站到右半边 */
+body.stage-mode.stage-phase-ending #canvas-container {
+  left: 46%;
+  top: 0;
+  right: 0;
+  bottom: 0;
+}
+body.stage-phase-ending #typewriter-overlay {
+  left: 6% !important;
+  right: 6% !important;
+  width: auto !important;
+}

@@ -12,7 +12,7 @@ import type { TTSConfig } from '../tts.config';
 import * as ttsServerManager from '../ttsServerManager';
 import { importGenieVoiceFromFolder } from '../genieVoiceManager';
 import { getBridgeConfig, getTTSConfig, setBridgeConfig } from '../config/runtimeConfig';
-import { saveTTSSettings } from '../ttsRuntime';
+import { notifyPlayDone, saveTTSSettings } from '../ttsRuntime';
 import { dialogParentWindow } from '../mainWindow';
 
 /** 把本地服务安装/启动日志推给发起请求的窗口（窗口可能已关闭） */
@@ -49,6 +49,8 @@ function startStream(sender: WebContents, sentences: string[], keepOpen: boolean
 }
 
 export function registerTTSIpc(): void {
+  ipcMain.on('tts:play:done', (_e, id: number) => notifyPlayDone(id));
+
   // ── 朗读 ────────────────────────────────────────────────
   ipcMain.handle('tts:speak:abort', () => {
     ttsService.abortAll();

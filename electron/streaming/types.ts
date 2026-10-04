@@ -1,36 +1,17 @@
-export type LivePlatform = 'bilibili';
+import type { LiveChatEvent, LivePlatform, LiveStatus } from '../../shared/types/live';
+import type { AttentionSnapshot } from './attention/attention';
+import type { TopicKind } from './attention/topics';
 
-export type LiveEventType =
-  | 'danmu'
-  | 'gift'
-  | 'super_chat'
-  | 'guard'
-  | 'enter'
-  | 'like'
-  | 'system';
-
-export interface LiveEvent {
+/** 清洗后的弹幕：只有这种形态会进入 AI 的提示词 */
+export interface SanitizedChat {
   id: string;
-  platform: LivePlatform;
-  type: LiveEventType;
   ts: number;
-  uid?: string;
-  uname?: string;
-  text?: string;
-  giftName?: string;
-  giftCount?: number;
-  giftValue?: number;
-  raw?: unknown;
-}
-
-export interface SanitizedLiveEvent extends Omit<LiveEvent, 'text' | 'uname' | 'giftName'> {
+  uid: string;
   uname: string;
   text: string;
-  giftName: string;
   fingerprint: string;
   riskFlags: string[];
-  /** 由 DanmuPool 动态标记：此弹幕是由该 uid 的礼物信用驱动的请求 */
-  fundedByUid?: string;
+  source: LiveChatEvent;
 }
 
 export interface StreamerSessionConfig {
@@ -41,25 +22,13 @@ export interface StreamerSessionConfig {
   autoReply?: boolean;
 }
 
-export interface EphemeralLiveCredentials {
-  cookie: string;
-  receivedAt: number;
-}
-
+/** 她在直播里说过的一句话，以及为什么说 */
 export interface StreamerReply {
   id: string;
   createdAt: number;
-  kind: 'gift_thanks' | 'danmu_single' | 'danmu_batch' | 'topic_control' | 'funded_request';
+  kind: TopicKind;
   prompt: string;
   reply?: string;
-  eventIds: string[];
-  /** funded_request 专用：送礼物的观众信息 */
-  fundedBy?: {
-    uid: string;
-    uname: string;
-    giftName: string;
-    giftValue: number;
-  };
 }
 
 export interface StreamerStatus {
@@ -68,18 +37,9 @@ export interface StreamerStatus {
   roomId?: number;
   topic?: string;
   startedAt?: number;
-  adapterStatus?: string;
-  credentials: {
-    required: boolean;
-    present: boolean;
-    persisted: false;
-  };
-  queue: {
-    pendingDanmu: number;
-    pendingPriority: number;
-    recentPerMinute: number;
-    mode: 'single' | 'batch' | 'summary';
-  };
+  autoReply?: boolean;
+  live: LiveStatus;
+  attention?: AttentionSnapshot;
   replies: number;
   lastError?: string;
 }

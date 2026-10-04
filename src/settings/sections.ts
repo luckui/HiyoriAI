@@ -5,7 +5,7 @@
  * 打开设置、放弃修改后重载、离开前保存，都遍历注册表，新增分区只需 registerSection 一次。
  */
 
-export type SettingsSection = 'llm' | 'tts' | 'discord' | 'feishu' | 'wechat' | 'skills';
+export type SettingsSection = 'llm' | 'tts' | 'discord' | 'feishu' | 'wechat' | 'skills' | 'live';
 
 export interface SectionHandlers {
   /** 从主进程读取已保存的配置并填入表单 */

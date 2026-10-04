@@ -46,7 +46,8 @@ export function dismissTypewriterBubble(): void {
 }
 
 export function shouldShowTypewriterBubble(): boolean {
-  return !isChatExpanded();
+  // 直播间画面里气泡就是字幕，一直显示
+  return document.body.classList.contains('stage-mode') || !isChatExpanded();
 }
 
 /** 交给 TTS 播放器的回调：每句开始播放时按真实时长推进气泡 */

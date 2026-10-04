@@ -26,11 +26,11 @@ version: 1.1.0
 manage_bilibili_live(action="start", room_id=<房间号>, topic="本场主题")
 ```
 
-- `room_id`：直播间房间号，如 live.bilibili.com/26835777 中的 26835777
+- `room_id`：直播间房间号，如 live.bilibili.com/26835777 中的 26835777；不填则用设置 › 直播里保存的房间号
 - `topic`：本场直播主题，用于引导弹幕回复风格
-- 缺少 `room_id` 时工具会自动暂停并要求向用户询问
-- 首次启动需要提供 B 站 Cookie（工具会在缺失时要求询问）
-- Cookie 仅本次临时使用，不会写入文件或记忆
+- 设置里没有房间号、调用时也没给时，工具会暂停并要求向用户询问
+- 登录 Cookie 由用户在设置 › 直播里填写，不要在聊天里索要
+- 弹幕姬（设置 › 直播 › 打开弹幕姬）显示同一个连接收到的弹幕、礼物、进场；停止 AI 互动不会断开它
 
 ### 2. 检查当前状态
 
@@ -69,7 +69,7 @@ manage_bilibili_live(action="stop")
 ### 7. 注入测试事件（调试用）
 
 ```
-manage_bilibili_live(action="ingest_test", event_type="danmu", uname="测试用户", text="你好")
+manage_bilibili_live(action="ingest_test", uname="测试用户", text="你好")
 ```
 
 ## TTS 与听觉管理
@@ -93,6 +93,6 @@ manage_hearing(action="read")     # 读取最近转录内容
 
 ## 注意事项
 
-- Cookie 只在本次 start 调用中临时持有，直播停止后自动丢弃，禁止写入文件/记忆/日志
+- 不要把 Cookie 写入记忆、日志或聊天内容
 - TTS 播放时语音识别会自动暂停，避免自说自话
 - 暗场阈值（`idle_threshold_ms`）控制 AI 主动发言频率，可用 `update_config` 实时调整

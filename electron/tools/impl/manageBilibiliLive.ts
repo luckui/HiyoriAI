@@ -1,28 +1,21 @@
 ﻿import type { ToolPauseResult, ToolDefinition } from '../types';
 import { streamerSession } from '../../streaming/streamerSession';
-import type { EphemeralLiveCredentials, LiveEvent, StreamerSessionConfig } from '../../streaming/types';
+import type { StreamerSessionConfig } from '../../streaming/types';
+import { getLiveConfig } from '../../config/runtimeConfig';
 
 interface ManageBilibiliLiveParams {
   action: 'start' | 'stop' | 'status' | 'ingest_test' | 'flush' | 'replies' | 'set_auto_reply' | 'set_topic' | 'update_config';
   room_id?: number;
   topic?: string;
-  cookie?: string;
-  require_cookie?: boolean;
   auto_reply?: boolean;
   enabled?: boolean;
-  event_type?: LiveEvent['type'];
-  uid?: string;
   uname?: string;
   text?: string;
-  gift_name?: string;
-  gift_count?: number;
-  gift_value?: number;
   limit?: number;
   /** update_config: 暗场阈値（毫秒） */
   idle_threshold_ms?: number;
   /** update_config: 是否自动 TTS */
   auto_tts?: boolean;
-  /** update_config: 是否自动 Live2D */
 }
 
 function formatStatus() {
@@ -51,54 +44,30 @@ function requestRoomIdPause(topic?: string): ToolPauseResult {
   };
 }
 
-function requestCookiePause(roomId: number, topic?: string): ToolPauseResult {
-  return {
-    __pause: true,
-    trace: [
-      'Bilibili live start requested.',
-      'No Cookie was provided in this tool call.',
-      'Cookie must be collected from the user for this start attempt only.',
-    ],
-    userMessage:
-      `要连接 B 站直播间 ${roomId}${topic ? `（主题：${topic}）` : ''}，请提供本次使用的 B 站 Cookie。` +
-      '我不会把 Cookie 写入源码、数据库或长期配置；这次启动流程结束或停止直播后就丢弃。',
-    resumeHint:
-      '用户提供 Cookie 后，立刻重新调用 manage_bilibili_live(action="start", room_id=原房间号, topic=原主题, cookie=用户提供的 Cookie)。' +
-      '不要把 Cookie 写入文件、记忆、日志或普通聊天总结。',
-  };
-}
-
 const manageBilibiliLiveTool: ToolDefinition<ManageBilibiliLiveParams> = {
   schema: {
     type: 'function',
     function: {
       name: 'manage_bilibili_live',
       description:
-        '管理 B 站直播主播后台会话：启动/停止 streamer 会话、查看弹幕池状态、注入测试弹幕、触发一次回复规划。' +
-        'start 动作：如果缺少 room_id 或 Cookie，工具会暂停并要求 AI 向用户询问。Cookie 只能临时使用，禁止写入文件、记忆或数据库。',
+        '管理 B 站直播的 AI 互动：启动/停止自动回弹幕、查看弹幕池状态、注入测试弹幕、触发一次回复。' +
+        '连接用设置 › 直播里保存的房间号和登录 Cookie；start 不给 room_id 且设置里也没有时，工具会暂停并要求向用户询问房间号。',
       parameters: {
         type: 'object',
         properties: {
           action: {
             type: 'string',
             enum: ['start', 'stop', 'status', 'ingest_test', 'flush', 'replies', 'set_auto_reply', 'set_topic', 'update_config'],
-            description: 'start 启动直播会话；stop 停止；status 状态；ingest_test 注入测试事件；flush 生成/规划一条回复；replies 查看最近回复；set_auto_reply 动态开关自动回复；set_topic 实时修改直播主题（暂不重启）；update_config 修改暗场阈值/TTS/Live2D 开关',
+            description: 'start 启动 AI 互动；stop 停止（不会断开弹幕姬）；status 状态；ingest_test 注入一条测试弹幕；flush 立刻挑一个话题说一句；replies 查看最近回复；set_auto_reply 动态开关自动回复；set_topic 实时修改直播主题（暂不重启）；update_config 调整冷场多久自己找话、是否朗读',
           },
-          room_id: { type: 'integer', description: 'B 站直播间 room_id。start 时如果不提供，工具会暂停并询问用户。' },
+          room_id: { type: 'integer', description: 'B 站直播间 room_id。不提供时用设置里保存的房间号；都没有时工具会暂停并询问用户。' },
           topic: { type: 'string', description: '本场直播主题，例如打游戏、读书、一起冲浪。start 和 set_topic 均可使用' },
-          cookie: { type: 'string', description: '本次 start 调用使用的 B 站 Cookie。不得硬编码、不得持久化、不得写入记忆；缺失时工具会要求 AI 询问用户。' },
-          require_cookie: { type: 'boolean', description: 'start 是否要求 Cookie。默认 true。仅离线测试弹幕池时可设为 false。' },
           auto_reply: { type: 'boolean', description: '是否自动调用 LLM 生成回复。默认 true，开播后自动回复弹幕。若需手动控制可传 false。' },
           enabled: { type: 'boolean', description: 'set_auto_reply 动作的开关值' },
-          event_type: { type: 'string', enum: ['danmu', 'gift', 'super_chat', 'guard', 'enter', 'like', 'system'], description: 'ingest_test 的事件类型' },
-          uid: { type: 'string', description: '测试事件用户 uid' },
-          uname: { type: 'string', description: '测试事件用户名' },
-          text: { type: 'string', description: '测试弹幕/SC 文本' },
-          gift_name: { type: 'string', description: '测试礼物名称' },
-          gift_count: { type: 'integer', description: '测试礼物数量' },
-          gift_value: { type: 'number', description: '测试礼物价值，单位由上游适配器归一化' },
+          uname: { type: 'string', description: 'ingest_test 的测试用户名' },
+          text: { type: 'string', description: 'ingest_test 的测试弹幕文本' },
           limit: { type: 'integer', description: 'replies 返回条数，默认 10' },
-          idle_threshold_ms: { type: 'integer', description: 'update_config: 暗场阈值（毫秒）。改小让 AI 更积极尝试开口，改大让 AI 更安静。例如 60000 表示 1 分钟暗场触发一次。' },
+          idle_threshold_ms: { type: 'integer', description: 'update_config: 没人说话多久后她自己找话说（毫秒），默认 45000。' },
           auto_tts: { type: 'boolean', description: 'update_config: 是否自动 TTS 朗读回复' },
         },
         required: ['action'],
@@ -109,63 +78,40 @@ const manageBilibiliLiveTool: ToolDefinition<ManageBilibiliLiveParams> = {
   async execute(params, context) {
     switch (params.action) {
       case 'start': {
-        // 1. 检查 room_id
-        if (!params.room_id) {
-          return requestRoomIdPause(params.topic);
-        }
+        const saved = getLiveConfig();
+        const roomId = params.room_id ?? saved.roomId;
+        if (!roomId) return requestRoomIdPause(params.topic);
 
-        // 2. 检查 Cookie
-        const requireCookie = params.require_cookie ?? true;
-        if (requireCookie && !params.cookie?.trim()) {
-          return requestCookiePause(params.room_id, params.topic);
-        }
-
-        // 3. 启动会话
         const config: StreamerSessionConfig = {
           platform: 'bilibili',
-          roomId: params.room_id,
+          roomId,
           topic: params.topic,
           conversationId: context?.conversationId,
           autoReply: params.auto_reply ?? true,
         };
-        const credentials: EphemeralLiveCredentials | undefined = params.cookie?.trim()
-          ? { cookie: params.cookie.trim(), receivedAt: Date.now() }
-          : undefined;
-        const status = streamerSession.start(config, credentials);
-        
-        // 4. 启动主控循环（配置从 .env 读取，见 STREAMER_IDLE_THRESHOLD_MS 等变量）
+        // Cookie 是账号级的，换房间也能用
+        const status = streamerSession.start(config, saved.cookie);
+
+        // 启动主控循环（配置从 .env 读取，见 STREAMER_IDLE_THRESHOLD_MS 等变量）
         (await getStreamerController()).start();
-        
-        return `B 站 streamer 会话已启动。\n${JSON.stringify(status, null, 2)}`;
+
+        const hint = saved.cookie ? '' : '\n提示：设置 › 直播里没有登录 Cookie，B 站会把大部分观众名打码。';
+        return `B 站 AI 互动已启动。${hint}\n${JSON.stringify(status, null, 2)}`;
       }
       case 'stop': {
         // 停止主控循环
         (await getStreamerController()).stop();
         // 停止会话
         const status = streamerSession.stop();
-        return `B 站 streamer 会话已停止。\n${JSON.stringify(status, null, 2)}`;
+        return `B 站 AI 互动已停止（弹幕姬连接保持不变）。\n${JSON.stringify(status, null, 2)}`;
       }
       case 'status':
         return formatStatus();
-      case 'ingest_test': {
-        const event: LiveEvent = {
-          id: `test-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-          platform: 'bilibili',
-          type: params.event_type ?? 'danmu',
-          ts: Date.now(),
-          uid: params.uid,
-          uname: params.uname,
-          text: params.text,
-          giftName: params.gift_name,
-          giftCount: params.gift_count,
-          giftValue: params.gift_value,
-        };
-        const result = streamerSession.ingest(event);
-        return JSON.stringify(result, null, 2);
-      }
+      case 'ingest_test':
+        return JSON.stringify(streamerSession.ingestTest(params.uname ?? '测试用户', params.text ?? '你好'), null, 2);
       case 'flush': {
-        const reply = await streamerSession.flushOnce();
-        return reply ? JSON.stringify(reply, null, 2) : '当前没有待处理的直播事件。';
+        const reply = await (await getStreamerController()).flushOnce();
+        return reply ? JSON.stringify(reply, null, 2) : '现在没有值得说的话题。';
       }
       case 'replies':
         return JSON.stringify(streamerSession.listReplies(params.limit ?? 10), null, 2);
@@ -175,7 +121,7 @@ const manageBilibiliLiveTool: ToolDefinition<ManageBilibiliLiveParams> = {
         if (!success) {
           return '设置失败：当前没有活跃的直播会话。请先使用 action="start" 启动直播会话。';
         }
-        return `自动回复已${enabled ? '开启' : '关闭'}。${enabled ? '现在会自动调用 AI 回复弹幕。' : '现在只规划回复内容，不自动生成 AI 回复。'}`;
+        return `自动回复已${enabled ? '开启' : '关闭'}。${enabled ? '她会自己挑弹幕、礼物和进场来回应。' : '她不再自己开口；可以用 flush 手动让她说一句。'}`;
       }
       case 'set_topic': {
         const newTopic = params.topic?.trim();
@@ -189,7 +135,7 @@ const manageBilibiliLiveTool: ToolDefinition<ManageBilibiliLiveParams> = {
         return `直播主题已更新为「${newTopic}」。后续弹幕回复和暗场将使用新主题。`;
       }
       case 'update_config': {
-        const patch: Record<string, unknown> = {};
+        const patch: { idleThresholdMs?: number; autoTTS?: boolean } = {};
         if (params.idle_threshold_ms !== undefined) patch.idleThresholdMs = params.idle_threshold_ms;
         if (params.auto_tts !== undefined) patch.autoTTS = params.auto_tts;
         if (Object.keys(patch).length === 0) {
@@ -197,7 +143,7 @@ const manageBilibiliLiveTool: ToolDefinition<ManageBilibiliLiveParams> = {
         }
         (await getStreamerController()).updateConfig(patch);
         const updated: string[] = [];
-        if (params.idle_threshold_ms !== undefined) updated.push(`暗场阈值 = ${params.idle_threshold_ms / 1000}秒`);
+        if (params.idle_threshold_ms !== undefined) updated.push(`冷场多久自己找话 = ${params.idle_threshold_ms / 1000}秒`);
         if (params.auto_tts !== undefined) updated.push(`自动TTS = ${params.auto_tts ? '开' : '关'}`);
         return `配置已更新：${updated.join('，')}。无需重启即生效。`;
       }

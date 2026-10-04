@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: http: data:; style-src 'self' 'unsafe-inline'" />
+  <title>弹幕姬</title>
+  <link rel="stylesheet" href="./live/live.css" />
+</head>
+<body>
+  <header id="live-header">
+    <div class="live-head-row">
+      <span id="live-dot" class="live-dot"></span>
+      <div class="live-room">
+        <div id="live-anchor" class="live-anchor">未连接</div>
+        <div id="live-title" class="live-title"></div>
+      </div>
+      <button id="live-connect" class="live-btn" title="连接 / 断开">连接</button>
+      <button id="live-pin" class="live-btn live-btn-on" title="窗口置顶">📌</button>
+    </div>
+    <div id="live-stats" class="live-stats"></div>
+    <div id="live-notice" class="live-notice" hidden></div>
+    <div class="live-phases" title="直播间画面：OBS / 直播姬采集「Hiyori 直播间」窗口">
+      <button data-phase="waiting">⏳ 准备中</button>
+      <button data-phase="opening">▶ 开场</button>
+      <button data-phase="live">🔴 直播中</button>
+      <button data-phase="ending">🌙 谢幕</button>
+      <button data-phase="off" class="phase-off" title="收起直播间画面，回到桌宠">✕</button>
+    </div>
+    <div class="live-controls">
+      <button id="ctl-ai" class="live-toggle" title="她自己挑弹幕、礼物、进场来回应">🤖 AI 互动</button>
+      <select id="ctl-segment" title="节目形式（会换成该节目的默认主题）">
+        <option value="chat">💬 聊天回</option>
+        <option value="sing">🎤 歌回</option>
+        <option value="game">🎮 游戏回</option>
+      </select>
+      <select id="ctl-theme" title="画面主题">
+        <option value="sakura">🌸 樱花午后</option>
+        <option value="starlight">✨ 星光演唱会</option>
+        <option value="arcade">👾 像素游戏厅</option>
+      </select>
+      <button id="ctl-capture" class="live-btn" title="游戏回：选择要显示的游戏窗口" hidden>🎮 游戏窗口</button>
+      <button id="ctl-bg" class="live-btn" title="自定义背景：选一个视频或图片（会盖住主题场景）">🖼</button>
+      <button id="ctl-bg-clear" class="live-btn" title="换回主题背景" hidden>✕</button>
+    </div>
+    <div id="capture-picker" class="capture-picker" hidden></div>
+  </header>
+
+  <div id="live-ambient" class="live-ambient"></div>
+
+  <main id="live-feed" aria-live="polite"></main>
+  <button id="live-jump" class="live-jump" hidden>有新消息 ↓</button>
+
+  <form id="owner-form" class="owner-form">
+    <input id="owner-input" type="text" autocomplete="off" placeholder="对 Hiyori 说…（观众听不到你，只听得到她的回答）" />
+    <button id="owner-send" type="submit" class="live-btn">发送</button>
+  </form>
+
+  <footer class="live-filters">
+    <label><input type="checkbox" id="f-emote" checked /> 表情弹幕</label>
+    <label><input type="checkbox" id="f-free-gift" checked /> 免费礼物</label>
+    <label><input type="checkbox" id="f-action" checked /> 关注/分享</label>
+  </footer>
+
+  <script type="module" src="./live/main.ts"></script>
+</body>
+</html>

@@ -11,6 +11,14 @@
   <body>
     <div id="app">
 
+      <!-- ===== 直播间画面：背景层（在 Live2D 之下），只在 body.stage-mode 时显示 ===== -->
+      <div id="stage-back" aria-hidden="true">
+        <div id="stage-scene"></div>
+        <video id="stage-video" muted loop playsinline></video>
+        <div id="stage-image"></div>
+        <canvas id="stage-particles"></canvas>
+      </div>
+
       <!-- ===== Live2D 画布区域（可拖动窗口） ===== -->
       <div id="canvas-container" class="drag-region">
         <canvas id="live2d-canvas"></canvas>
@@ -30,6 +38,27 @@
           </button>
           <button id="pin-btn" class="ctrl-btn" title="置顶/取消置顶">📌</button>
         </div>
+      </div>
+
+      <!-- ===== 直播间画面：前景层（弹幕、标题、特效），不接收鼠标 ===== -->
+      <div id="stage-front" aria-hidden="true">
+        <header id="stage-header">
+          <div id="stage-segment"><span id="stage-seg-icon">💬</span><span id="stage-seg-title">聊天回</span></div>
+          <div id="stage-room">Hiyori 的直播间</div>
+        </header>
+        <div id="stage-stats"></div>
+        <div id="stage-game">
+          <video id="stage-game-video" muted playsinline></video>
+          <div id="stage-game-empty">🎮 在控制台选择游戏窗口</div>
+        </div>
+        <section id="stage-chat">
+          <div id="stage-chat-title">💌 弹幕</div>
+          <div id="stage-chat-list"></div>
+          <div id="stage-ticker"></div>
+        </section>
+        <div id="stage-alerts"></div>
+        <canvas id="stage-fx"></canvas>
+        <div id="stage-seq"></div>
       </div>
 
       <!-- ===== 聊天面板 ===== -->
@@ -256,6 +285,7 @@
             <button class="s-tab s-tab-active" data-tab="llm">🤖 AI 模型</button>
             <button class="s-tab" data-tab="tts">🔊 语音</button>
             <button class="s-tab" data-tab="bridges">🔗 平台桥接</button>
+            <button class="s-tab" data-tab="live">📺 直播</button>
             <button class="s-tab" data-tab="skills">🧰 Skills</button>
           </div>
           <button id="s-tabs-more" class="s-tab-more" hidden>更多 ▾</button>
@@ -685,6 +715,39 @@
             </div><!-- /#s-bridges-layout -->
 
           </div><!-- /#s-tab-bridges -->
+
+          <!-- ════ Tab: 直播 ════ -->
+          <div id="s-tab-live" class="s-tab-pane s-tab-pane-hidden">
+            <section class="s-section">
+              <h3 class="s-title">B 站直播间</h3>
+              <label class="s-label">房间号
+                <input id="live-room-id" type="text" inputmode="numeric" class="s-input" placeholder="例如 live.bilibili.com/26835777 里的 26835777" />
+              </label>
+              <label class="s-label">登录 Cookie
+                <div class="s-input-row">
+                  <input id="live-cookie" type="password" class="s-input" placeholder="SESSDATA=…; buvid3=…" />
+                  <button class="s-eye-btn" id="live-eye-btn">👁</button>
+                </div>
+                <span class="s-hint">不填也能连，但 B 站会把大部分观众的名字打码成「小***」。Cookie 只保存在本机配置里；在浏览器里点「退出登录」会让它失效。</span>
+              </label>
+            </section>
+
+            <section class="s-section">
+              <h3 class="s-title">连接</h3>
+              <div class="s-status-row">
+                <span id="live-status-dot" class="s-status-dot s-status-off"></span>
+                <span id="live-status-text">未连接</span>
+              </div>
+              <div class="s-live-actions">
+                <button id="live-connect-btn" class="s-save-btn">连接</button>
+                <button id="live-window-btn" class="s-save-btn s-btn-secondary">打开弹幕姬</button>
+              </div>
+            </section>
+
+            <div class="s-save-row">
+              <button id="live-save-btn" class="s-save-btn">保存设置</button>
+            </div>
+          </div><!-- /#s-tab-live -->
 
           <!-- ════ Tab: Skills 管理 ════ -->
           <div id="s-tab-skills" class="s-tab-pane s-tab-pane-hidden">

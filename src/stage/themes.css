@@ -1,0 +1,356 @@
+/* ========================================================
+   直播间主题场景。每个主题：配色变量（弹幕卡片、标题、字幕都用）+ 背景层的动态场景。
+   场景元素都在 #stage-scene 里，全部 pointer-events: none。
+======================================================== */
+
+#stage-scene {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+#stage-scene > * {
+  position: absolute;
+  pointer-events: none;
+}
+
+/* ── 通用：PV 风文字飘带、巨大描边字 ───────────────────── */
+
+.pv-tape {
+  left: -20%;
+  width: 140%;
+  height: 46px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  background: var(--tape-bg);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+}
+.pv-tape-track {
+  display: flex;
+  white-space: nowrap;
+  animation: pv-tape-scroll 38s linear infinite;
+}
+.pv-tape span {
+  padding-right: 28px;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 4px;
+  color: var(--tape-ink);
+  font-style: italic;
+}
+.pv-tape.t1 { top: 58%; transform: rotate(-9deg); }
+.pv-tape.t2 { top: 7%; transform: rotate(5deg); opacity: 0.75; }
+.pv-tape.t2 .pv-tape-track { animation-direction: reverse; animation-duration: 46s; }
+
+@keyframes pv-tape-scroll {
+  to { transform: translateX(-50%); }
+}
+
+.pv-bigtext {
+  right: -2%;
+  top: 6%;
+  font-size: 300px;
+  font-weight: 900;
+  font-style: italic;
+  line-height: 1;
+  letter-spacing: -8px;
+  color: transparent;
+  -webkit-text-stroke: 3px var(--bigtext-stroke);
+  opacity: 0.55;
+  animation: pv-bigtext-float 14s ease-in-out infinite;
+}
+@keyframes pv-bigtext-float {
+  0%, 100% { transform: translate(0, 0) rotate(-4deg); }
+  50% { transform: translate(-30px, 16px) rotate(-2deg); }
+}
+
+/* ══ 樱花午后 ═══════════════════════════════════════════ */
+
+body[data-stage-theme="sakura"] {
+  --st-accent: #ff6fa8;
+  --st-accent2: #b98cff;
+  --st-ink: #4a3350;
+  --st-muted: #8a6a94;
+  --st-panel-bg: rgba(255, 255, 255, 0.52);
+  --st-panel-border: rgba(255, 255, 255, 0.95);
+  --st-bubble-bg: rgba(255, 255, 255, 0.94);
+  --st-pill-bg: rgba(255, 255, 255, 0.85);
+  --st-seg-grad: linear-gradient(135deg, #ff7eb8, #b98cff);
+  --st-sub-bg: rgba(255, 255, 255, 0.9);
+  --st-sub-shadow: rgba(255, 111, 168, 0.35);
+  --st-name-l: 48%;
+  --tape-bg: rgba(255, 255, 255, 0.72);
+  --tape-ink: #ff86b6;
+  --bigtext-stroke: rgba(255, 255, 255, 0.95);
+}
+
+.sk-sky {
+  inset: 0;
+  background: linear-gradient(180deg, #ffd9ea 0%, #ffe8e1 38%, #f3e4ff 70%, #dff1ff 100%);
+  background-size: 100% 200%;
+  animation: sk-sky 30s ease-in-out infinite alternate;
+}
+@keyframes sk-sky {
+  to { background-position: 0 100%; }
+}
+
+.sk-sun {
+  width: 520px;
+  height: 520px;
+  left: 50%;
+  top: -150px;
+  margin-left: -60px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 252, 230, 1) 0%, rgba(255, 236, 214, 0.85) 25%, rgba(255, 220, 235, 0) 62%);
+}
+.sk-rays {
+  position: absolute;
+  inset: -260px;
+  background: repeating-conic-gradient(from 0deg, rgba(255, 255, 255, 0.38) 0deg 6deg, rgba(255, 255, 255, 0) 6deg 18deg);
+  -webkit-mask-image: radial-gradient(circle, #000 15%, transparent 62%);
+  mask-image: radial-gradient(circle, #000 15%, transparent 62%);
+  animation: sk-spin 80s linear infinite;
+}
+@keyframes sk-spin {
+  to { transform: rotate(360deg); }
+}
+
+.sk-cloud {
+  height: 70px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.85);
+  filter: blur(1px);
+  box-shadow: 0 10px 30px rgba(255, 180, 210, 0.25);
+  animation: sk-cloud linear infinite;
+}
+.sk-cloud::before,
+.sk-cloud::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  background: inherit;
+}
+.sk-cloud::before { width: 46%; height: 150%; left: 14%; top: -62%; }
+.sk-cloud::after { width: 34%; height: 120%; left: 50%; top: -40%; }
+.sk-cloud.c1 { width: 260px; top: 15%; animation-duration: 90s; animation-delay: -20s; }
+.sk-cloud.c2 { width: 190px; top: 34%; animation-duration: 120s; animation-delay: -70s; opacity: 0.8; transform: scale(0.8); }
+.sk-cloud.c3 { width: 320px; top: 8%; animation-duration: 150s; animation-delay: -110s; opacity: 0.7; }
+@keyframes sk-cloud {
+  from { left: 105%; }
+  to { left: -40%; }
+}
+
+.sk-hill {
+  left: -10%;
+  width: 120%;
+  border-radius: 50% 50% 0 0;
+}
+.sk-hill.h1 {
+  height: 260px;
+  bottom: -150px;
+  background: linear-gradient(180deg, #ffe3ef, #ffd3e6);
+  animation: sk-hill 20s ease-in-out infinite alternate;
+}
+.sk-hill.h2 {
+  height: 200px;
+  bottom: -140px;
+  left: 30%;
+  width: 90%;
+  background: linear-gradient(180deg, #f6e1ff, #ead2ff);
+  animation: sk-hill 26s ease-in-out infinite alternate-reverse;
+}
+@keyframes sk-hill {
+  to { transform: translateX(-40px); }
+}
+
+.sk-branch {
+  left: -20px;
+  top: -24px;
+  width: 460px;
+  transform-origin: 0 20%;
+  animation: sk-branch 7s ease-in-out infinite;
+  filter: drop-shadow(0 6px 10px rgba(200, 100, 140, 0.18));
+}
+@keyframes sk-branch {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(2.5deg); }
+}
+.sk-flower {
+  animation: sk-flower 3s ease-in-out infinite;
+  animation-delay: var(--d);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+@keyframes sk-flower {
+  50% { opacity: 0.85; }
+}
+
+/* ══ 星光演唱会 ═════════════════════════════════════════ */
+
+body[data-stage-theme="starlight"] {
+  --st-accent: #ff8fd9;
+  --st-accent2: #7cc8ff;
+  --st-ink: #f4ecff;
+  --st-muted: #b9a8dc;
+  --st-panel-bg: rgba(30, 18, 64, 0.55);
+  --st-panel-border: rgba(186, 150, 255, 0.55);
+  --st-bubble-bg: rgba(255, 255, 255, 0.12);
+  --st-pill-bg: rgba(30, 18, 64, 0.7);
+  --st-seg-grad: linear-gradient(135deg, #ff6fd8, #6f8dff);
+  --st-sub-bg: rgba(24, 14, 52, 0.82);
+  --st-sub-shadow: rgba(255, 111, 216, 0.45);
+  --st-name-l: 74%;
+  --tape-bg: rgba(255, 111, 216, 0.16);
+  --tape-ink: #ffb8ec;
+  --bigtext-stroke: rgba(186, 150, 255, 0.45);
+}
+
+.st-sky {
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 70% 110%, rgba(255, 111, 216, 0.45), transparent 55%),
+    radial-gradient(ellipse at 20% 0%, rgba(111, 141, 255, 0.35), transparent 50%),
+    linear-gradient(180deg, #0d0a2b 0%, #24124f 55%, #3d1660 100%);
+}
+
+.st-ring {
+  left: 62%;
+  top: 46%;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 143, 217, 0.35);
+  box-shadow: 0 0 24px rgba(255, 143, 217, 0.35), inset 0 0 24px rgba(124, 200, 255, 0.25);
+}
+.st-ring.r1 { width: 620px; height: 620px; margin: -310px 0 0 -310px; border-style: dashed; animation: sk-spin 60s linear infinite; }
+.st-ring.r2 { width: 460px; height: 460px; margin: -230px 0 0 -230px; border-color: rgba(124, 200, 255, 0.35); animation: sk-spin 40s linear infinite reverse; }
+
+.st-beam {
+  top: -40px;
+  width: 260px;
+  height: 900px;
+  margin-left: -130px;
+  transform-origin: 50% 0;
+  background: linear-gradient(180deg, var(--beam) 0%, transparent 85%);
+  clip-path: polygon(45% 0, 55% 0, 100% 100%, 0 100%);
+  mix-blend-mode: screen;
+  filter: blur(6px);
+  transition: opacity 0.12s linear;
+}
+.st-beam.b1 { left: 30%; --beam: rgba(255, 120, 220, 0.55); animation: st-sweep 7s ease-in-out infinite; }
+.st-beam.b2 { left: 55%; --beam: rgba(120, 200, 255, 0.5); animation: st-sweep 9s ease-in-out infinite reverse; }
+.st-beam.b3 { left: 78%; --beam: rgba(255, 230, 140, 0.45); animation: st-sweep 8s ease-in-out infinite; animation-delay: -3s; }
+.st-beam.b4 { left: 95%; --beam: rgba(190, 140, 255, 0.5); animation: st-sweep 10s ease-in-out infinite reverse; animation-delay: -5s; }
+@keyframes st-sweep {
+  0%, 100% { transform: rotate(-22deg); }
+  50% { transform: rotate(22deg); }
+}
+
+.st-floor {
+  left: 38%;
+  right: -6%;
+  bottom: -110px;
+  height: 220px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(255, 160, 230, 0.55), rgba(120, 90, 255, 0.2) 55%, transparent 72%);
+  animation: st-floor 4s ease-in-out infinite;
+}
+@keyframes st-floor {
+  50% { filter: brightness(1.3); }
+}
+
+.st-eq {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 120px;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 0 10px;
+  opacity: 0.55;
+}
+.st-eq i {
+  flex: 1;
+  height: 100%;
+  border-radius: 6px 6px 0 0;
+  background: linear-gradient(0deg, #ff6fd8, #7cc8ff);
+  transform-origin: 50% 100%;
+  transform: scaleY(0.1);
+}
+
+/* ══ 像素游戏厅 ═════════════════════════════════════════ */
+
+body[data-stage-theme="arcade"] {
+  --st-accent: #ff5fd2;
+  --st-accent2: #5ff4ff;
+  --st-ink: #f2f6ff;
+  --st-muted: #a9b4e8;
+  --st-panel-bg: rgba(16, 10, 40, 0.68);
+  --st-panel-border: #5ff4ff;
+  --st-bubble-bg: rgba(255, 255, 255, 0.1);
+  --st-pill-bg: rgba(16, 10, 40, 0.8);
+  --st-seg-grad: linear-gradient(135deg, #ff5fd2, #7b5fff);
+  --st-sub-bg: rgba(16, 10, 40, 0.86);
+  --st-sub-shadow: rgba(95, 244, 255, 0.5);
+  --st-name-l: 72%;
+  --st-radius: 4px;
+  --tape-bg: rgba(255, 95, 210, 0.85);
+  --tape-ink: #1a0f3a;
+  --bigtext-stroke: rgba(95, 244, 255, 0.4);
+}
+
+.ar-sky {
+  inset: 0;
+  background: linear-gradient(180deg, #120a35 0%, #3b1468 45%, #a3337f 72%, #ff8a5c 100%);
+}
+.ar-sun {
+  left: 58%;
+  top: 22%;
+  width: 360px;
+  height: 360px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #ffe35f 0%, #ff8a5c 55%, #ff3d9a 100%);
+  box-shadow: 0 0 80px rgba(255, 140, 90, 0.6);
+  mask-image: linear-gradient(180deg, #000 45%, transparent 45%), repeating-linear-gradient(180deg, #000 0 16px, transparent 16px 24px);
+  mask-composite: add;
+  animation: ar-sun 6s ease-in-out infinite;
+}
+@keyframes ar-sun {
+  50% { transform: translateY(8px); filter: brightness(1.12); }
+}
+.ar-mountains {
+  left: 0;
+  right: 0;
+  bottom: 34%;
+  height: 160px;
+  background: #241046;
+  clip-path: polygon(0 100%, 0 60%, 8% 30%, 16% 62%, 26% 18%, 36% 58%, 46% 34%, 55% 70%, 64% 26%, 74% 60%, 84% 20%, 92% 52%, 100% 36%, 100% 100%);
+  opacity: 0.9;
+}
+.ar-grid-wrap {
+  left: -50%;
+  right: -50%;
+  bottom: -10%;
+  height: 46%;
+  perspective: 300px;
+  overflow: hidden;
+}
+.ar-grid {
+  position: absolute;
+  inset: 0 0 -100% 0;
+  transform: rotateX(62deg);
+  transform-origin: 50% 0;
+  background-image:
+    linear-gradient(rgba(255, 95, 210, 0.85) 2px, transparent 2px),
+    linear-gradient(90deg, rgba(95, 244, 255, 0.7) 2px, transparent 2px);
+  background-size: 70px 70px;
+  background-color: #170a33;
+  animation: ar-grid calc(1.2s / var(--grid-boost, 1)) linear infinite;
+}
+@keyframes ar-grid {
+  to { background-position: 0 70px; }
+}
+.ar-scan {
+  inset: 0;
+  background: repeating-linear-gradient(180deg, rgba(0, 0, 0, 0.12) 0 2px, transparent 2px 4px);
+  mix-blend-mode: multiply;
+}

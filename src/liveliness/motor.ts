@@ -225,6 +225,27 @@ export class LivelinessMotor {
     this.conversation.setExpression(cue, holdMs);
   }
 
+  /** 视线跟不跟鼠标（直播间画面里关掉：观众看不到鼠标，她该看镜头和弹幕） */
+  followCursor = true;
+
+  /** 看向画面上某处（x 正为她自己的左边、观众的右边）一会儿，再回到平常的视线 */
+  lookAt(x: number, y: number, holdMs: number): void {
+    this.conversation.lookAt(x, y, holdMs);
+  }
+
+  /**
+   * 给直播间背景做律动用：音乐的拍点相位（0–1，拍点在 0）、律动强度，以及她说话的音量。
+   * 没有稳定节拍时 beatPhase 为 null
+   */
+  get stagePulse(): { beatPhase: number | null; groove: number; voice: number } {
+    const beats = this.lastClockBeats;
+    return {
+      beatPhase: beats === null || this.beat.bpm === null ? null : beats - Math.floor(beats),
+      groove: this.groove.value,
+      voice: this.speaking ? this.speechEnv.value : 0,
+    };
+  }
+
   /** TTS 开始说新的一句 */
   beginSentence(): void {
     this.conversation.beginSentence();
@@ -343,7 +364,7 @@ export class LivelinessMotor {
       lean: GROOVE_LEAN_RAD * g.side + SPEECH_LEAN_RAD * speech.sway,
       authority: Math.max(music.authority, talk.authority),
       // 正在和你说话的人看着你，不会一直盯着你的鼠标
-      cursorFollow: 1 - 0.9 * Math.max(music.authority, talk.authority),
+      cursorFollow: this.followCursor ? 1 - 0.9 * Math.max(music.authority, talk.authority) : 0,
       mouthOpen: speech.mouth,
       gesture: talk.gesture,
     };
@@ -373,7 +394,7 @@ export class LivelinessMotor {
     this.lastPeriodMs = this.beat.bpm !== null ? periodMs : null;
     const beats = clockBeats + this.phaseOffset.step(dt);
     const raw = grooveFrame(beats + AUDIO_LATENCY_MS / periodMs, periodMs, groove);
-    const frame = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, v * GROOVE_SCALE])) as typeof raw;
+    const frame = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, v * GROOVE_SCALE])) as unknown as typeof raw;
     return {
       groove,
       frame,

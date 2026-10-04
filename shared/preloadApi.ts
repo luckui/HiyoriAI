@@ -36,6 +36,19 @@ import type {
   WakeupPayload,
 } from './types/chat';
 import type { ServiceResult, SttServerStatus, TtsServerStatus } from './types/services';
+import type {
+  LiveCaptureSource,
+  LiveConfig,
+  LiveCredits,
+  LiveEvent,
+  LiveFocus,
+  LiveSegment,
+  LiveStagePhase,
+  LiveStageState,
+  LiveStatus,
+  LiveTheme,
+  LiveUpdate,
+} from './types/live';
 
 /** 取消监听 */
 export type Unsubscribe = () => void;
@@ -138,8 +151,10 @@ export interface TtsAPI {
   onStreamEvent(cb: (event: TtsStreamEvent) => void): Unsubscribe;
   /** 取消所有挂起的合成请求（新一轮播放开始时调用，防止旧请求堆积在服务器队列） */
   abortSpeak(): Promise<void>;
-  /** 主进程请求朗读（直播、Minecraft 等） */
-  onPlay(cb: (text: string) => void): void;
+  /** 主进程请求朗读（直播、Minecraft 等）；带 id 的播完后要用 playDone 回报 */
+  onPlay(cb: (text: string, id?: number) => void): void;
+  /** 回报主进程：这段朗读已经播完（或放弃） */
+  playDone(id: number): void;
   /** TTS 播放期间暂停 / 恢复听觉，防止 AI 的声音被麦克风听到 */
   pauseHearing(): Promise<void>;
   resumeHearing(): Promise<void>;
@@ -254,6 +269,45 @@ export interface AvatarAPI {
   onConfigChanged(cb: (cfg: AvatarConfig) => void): Unsubscribe;
 }
 
+/** 直播：弹幕姬窗口与设置页共用 */
+export interface LiveAPI {
+  getConfig(): Promise<LiveConfig>;
+  /** 保存设置；已连接时按新设置重连 */
+  saveConfig(cfg: LiveConfig): Promise<LiveStatus>;
+  /** 按已保存的设置连接 */
+  connect(): Promise<{ ok: boolean; detail?: string; status: LiveStatus }>;
+  disconnect(): Promise<LiveStatus>;
+  getStatus(): Promise<LiveStatus>;
+  /** 最近的事件（旧 → 新），弹幕姬打开时补齐历史 */
+  getRecent(): Promise<LiveEvent[]>;
+  openWindow(): Promise<void>;
+  /** 弹幕姬窗口置顶开关，返回新的状态 */
+  togglePin(): Promise<boolean>;
+  onUpdate(cb: (update: LiveUpdate) => void): Unsubscribe;
+  /** 直播间画面 */
+  getStage(): Promise<LiveStageState>;
+  /** 切换画面阶段：off 桌宠 / waiting 准备中 / opening 开场 / live 直播中 / ending 谢幕 */
+  setPhase(phase: LiveStagePhase): Promise<LiveStageState>;
+  /** 换节目形式（同时换成该节目的默认主题） */
+  setSegment(segment: LiveSegment, title?: string): Promise<LiveStageState>;
+  setTheme(theme: LiveTheme): Promise<LiveStageState>;
+  /** 本场记录：谢幕的感谢名单 */
+  getCredits(): Promise<LiveCredits>;
+  /** 可采集的窗口（游戏回） */
+  listCaptureSources(): Promise<LiveCaptureSource[]>;
+  setCapture(source: LiveCaptureSource | null): Promise<LiveStageState>;
+  /** 她正在回应哪些事件 */
+  onFocus(cb: (focus: LiveFocus) => void): Unsubscribe;
+  pickBackground(): Promise<LiveStageState>;
+  clearBackground(): Promise<LiveStageState>;
+  onStage(cb: (state: LiveStageState) => void): Unsubscribe;
+  /** AI 自动回应直播间 */
+  startAi(): Promise<{ ok: boolean; detail?: string; state: LiveStageState }>;
+  stopAi(): Promise<LiveStageState>;
+  /** 主播在控制台对她说话（观众只听得到她的回答） */
+  ownerSay(text: string): Promise<{ ok: boolean; reply?: string; detail?: string }>;
+}
+
 /** window 上由 preload 注入的全部接口 */
 export interface PreloadApis {
   electronAPI: ElectronAPI;
@@ -273,4 +327,5 @@ export interface PreloadApis {
   live2dAPI: Live2DAPI;
   skillsAPI: SkillsAPI;
   avatarAPI: AvatarAPI;
+  liveAPI: LiveAPI;
 }

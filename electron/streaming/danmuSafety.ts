@@ -1,5 +1,6 @@
 import crypto from 'crypto';
-import type { LiveEvent, SanitizedLiveEvent } from './types';
+import type { LiveChatEvent } from '../../shared/types/live';
+import type { SanitizedChat } from './types';
 
 const MAX_TEXT = 240;
 const MAX_NAME = 32;
@@ -12,6 +13,16 @@ const INJECTION_PATTERNS: Array<[RegExp, string]> = [
   [/```|<\|.*?\|>|<\/?(system|developer|assistant|tool)>/i, 'prompt-boundary'],
 ];
 
+/** 观众名进提示词前的清洗 */
+export function cleanName(value: unknown): string {
+  return cleanScalar(value, MAX_NAME) || '某位观众';
+}
+
+/** 观众文字进提示词前的清洗 */
+export function cleanText(value: unknown): string {
+  return cleanScalar(value, MAX_TEXT);
+}
+
 function cleanScalar(value: unknown, maxLen: number): string {
   return String(value ?? '')
     .replace(/[\u0000-\u001f\u007f]/g, ' ')
@@ -20,10 +31,9 @@ function cleanScalar(value: unknown, maxLen: number): string {
     .slice(0, maxLen);
 }
 
-export function sanitizeLiveEvent(event: LiveEvent): SanitizedLiveEvent {
+export function sanitizeChat(event: LiveChatEvent): SanitizedChat {
   const text = cleanScalar(event.text, MAX_TEXT);
-  const uname = cleanScalar(event.uname || `uid-${event.uid ?? 'unknown'}`, MAX_NAME);
-  const giftName = cleanScalar(event.giftName, 40);
+  const uname = cleanScalar(event.user.name || `uid-${event.user.id || 'unknown'}`, MAX_NAME);
   const riskFlags = INJECTION_PATTERNS
     .filter(([pattern]) => pattern.test(text))
     .map(([, flag]) => flag);
@@ -35,26 +45,8 @@ export function sanitizeLiveEvent(event: LiveEvent): SanitizedLiveEvent {
 
   const fingerprint = crypto
     .createHash('sha1')
-    .update(`${event.type}:${event.uid ?? ''}:${normalized}`)
+    .update(`${event.user.id || uname}:${normalized}`)
     .digest('hex');
 
-  return {
-    ...event,
-    uname,
-    text,
-    giftName,
-    fingerprint,
-    riskFlags,
-  };
-}
-
-export function formatUntrustedEvent(event: SanitizedLiveEvent): string {
-  const flags = event.riskFlags.length ? ` risk=${event.riskFlags.join(',')}` : '';
-  if (event.type === 'gift') {
-    return `- [gift${flags}] user=${event.uname} item=${event.giftName} count=${event.giftCount ?? 1} value=${event.giftValue ?? 0}`;
-  }
-  if (event.type === 'super_chat') {
-    return `- [super_chat${flags}] user=${event.uname}: ${event.text}`;
-  }
-  return `- [${event.type}${flags}] user=${event.uname}: ${event.text}`;
+  return { id: event.id, ts: event.ts, uid: event.user.id || uname, uname, text, fingerprint, riskFlags, source: event };
 }

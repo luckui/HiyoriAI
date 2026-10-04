@@ -12,6 +12,7 @@ import { LAppDelegate } from './lappdelegate';
 import { liveliness } from './liveliness/motor';
 import { playTTS } from './ttsPlayer';
 import { typewriterPlayback } from './chat/typewriter';
+import { injectStageEvents, injectStageFocus } from './stage/stage';
 
 /** 读模型参数的范围、默认值和当前值：给新模型调表情、排查「这个参数怎么没反应」 */
 function readParams(ids: string[]) {
@@ -40,6 +41,9 @@ export function installDebugHooks(): void {
     // 和回复一样带打字机气泡（聊天区折叠时显示）
     say: (text: string) => playTTS(text, typewriterPlayback(text)),
     params: readParams,
+    /** 往直播间画面塞假事件，看弹幕样式和特效 */
+    stage: injectStageEvents,
+    stageFocus: injectStageFocus,
     /** 漫符的落点（设备像素）：脸、脸颊、头顶 */
     anchors: () => LAppDelegate.getInstance().getFirstSubdelegate()?.getLive2DManager().getFirstModel()?.getAnchors() ?? null,
   };

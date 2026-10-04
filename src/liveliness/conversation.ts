@@ -98,6 +98,8 @@ export class Conversation {
   private nextGazeSec = 0;
   /** 句子开头移开视线时，到这个时刻再看回来 */
   private glanceUntilSec = -Infinity;
+  /** lookAt 指定的视线保持到这个时刻 */
+  private lookUntilSec = -Infinity;
 
   private readonly authority = new Envelope(0.4, 1.5);
 
@@ -156,6 +158,15 @@ export class Conversation {
     }
   }
 
+  /** 看向某处一会儿（直播时看弹幕栏），到时再按状态找视线；这段时间视线不跟鼠标 */
+  lookAt(x: number, y: number, holdMs: number): void {
+    this.gazeX.target = x;
+    this.gazeY.target = y;
+    this.nextGazeSec = this.timeSec + holdMs / 1000;
+    this.glanceUntilSec = this.nextGazeSec;
+    this.lookUntilSec = this.nextGazeSec;
+  }
+
   /** 麦克风音量（听觉模块采集时送来，几次每秒）。停止收听时送 0 */
   setListenLevel(rms: number): void {
     this.micLevel = rms;
@@ -207,7 +218,7 @@ export class Conversation {
       gazeX: gaze.x,
       gazeY: gaze.y,
       energy: this.energy.step(1 + (this.acting.energy - 1) * this.intensity, dt),
-      authority: this.authority.step(STATE_AUTHORITY[this.state], dt),
+      authority: this.authority.step(this.timeSec < this.lookUntilSec ? Math.max(0.9, STATE_AUTHORITY[this.state]) : STATE_AUTHORITY[this.state], dt),
       gesture: this.takeGesture(),
     };
   }

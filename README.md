@@ -305,7 +305,7 @@ electron/
 ├── minecraft/       # Minecraft 游戏化身运行时与动作
 ├── runtimes/        # Codex Provider、任务会话与事件流
 ├── speech/          # 流式语音引擎：本地 HTTP、豆包 WebSocket、云端失败回落
-├── streaming/       # B 站直播实验模块
+├── streaming/       # 直播：平台适配器（B 站）、事件中枢 liveHub（弹幕姬）、AI 回弹幕
 ├── tools/           # Agent 工具注册与实现
 ├── agentRunner.ts   # 后台子智能体执行器
 ├── batchRunner.ts   # 批量父子任务与结果聚合

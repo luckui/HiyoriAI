@@ -2,7 +2,7 @@
  * 主窗口：创建、置顶、拖动、缩放，以及每帧推送光标位置（Live2D 目光追踪）。
  */
 
-import { app, BrowserWindow, ipcMain, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, screen, type Rectangle } from 'electron';
 import { join } from 'path';
 import { setToolEventListener } from '../aiService';
 import { initLive2DBridge } from '../live2dBridge';
@@ -11,6 +11,32 @@ import { getMainWindow, sendToRenderer, setMainWindow } from '../mainWindow';
 /** 窗口应有的尺寸：拖动时每次都用它还原尺寸（见 window-drag），由 window-resize 更新 */
 let windowSize = { width: 360, height: 620 };
 let pinned = true;
+
+/**
+ * 直播间画面：主窗口改成 16:9 大画面、取消置顶；关掉时还原原来的位置、尺寸和置顶。
+ */
+let boundsBeforeStage: Rectangle | null = null;
+export function setStageWindow(on: boolean, size = { width: 1280, height: 720 }): void {
+  const win = getMainWindow();
+  if (!win) return;
+  if (on && !boundsBeforeStage) {
+    boundsBeforeStage = win.getBounds();
+    const area = screen.getDisplayMatching(boundsBeforeStage).workArea;
+    windowSize = { ...size };
+    win.setAlwaysOnTop(false);
+    win.setBounds({
+      x: Math.round(area.x + (area.width - size.width) / 2),
+      y: Math.round(area.y + Math.max(0, (area.height - size.height) / 2)),
+      ...size,
+    });
+  } else if (!on && boundsBeforeStage) {
+    const prev = boundsBeforeStage;
+    boundsBeforeStage = null;
+    windowSize = { width: prev.width, height: prev.height };
+    win.setBounds(prev);
+    if (pinned) win.setAlwaysOnTop(true, 'screen-saver');
+  }
+}
 
 export function createMainWindow(): BrowserWindow {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
@@ -80,6 +106,8 @@ export function registerWindowIpc(): void {
   ipcMain.on('window-close', () => app.quit());
 
   ipcMain.on('window-resize', (_e, { width, height }: { width: number; height: number }) => {
+    // 直播间画面期间尺寸固定，桌宠布局的调整等退出后再说
+    if (boundsBeforeStage) return;
     windowSize = { width, height };
     const win = getMainWindow();
     if (!win) return;

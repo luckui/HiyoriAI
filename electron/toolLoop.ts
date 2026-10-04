@@ -1,7 +1,7 @@
 /**
  * ReAct 工具循环：请求模型 → 模型调用工具 → 回填结果 → 再请求，直到模型给出最终回答。
  *
- * 主对话（aiService）、后台子任务（agentRunner）、直播付费点播（streamerController）
+ * 主对话（aiService）、后台子任务（agentRunner）
  * 共用这一份循环骨架；各自不同的地方通过钩子注入：
  *   - complete   怎么请求模型（超时、截断重试等）
  *   - runTools   怎么执行一轮的工具调用（并行/串行、守卫、追踪）

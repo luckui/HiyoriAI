@@ -14,7 +14,8 @@ import { setSetting } from '../db';
 import { mergeBuiltinTTSProviders } from '../genieVoiceManager';
 import { DEFAULT_AVATAR_CONFIG, type AvatarConfig } from '../avatar/avatarConfig';
 import { cloneAvatarConfig, normalizeAvatarConfig, withBuiltinAvatarProfile } from '../avatar/avatarManager';
-import type { AppConfig, BridgeAppConfig } from './appConfig';
+import type { LiveConfig } from '../../shared/types/live';
+import { DEFAULT_LIVE_CONFIG, type AppConfig, type BridgeAppConfig } from './appConfig';
 import { loadAppConfigFromFile, saveAppConfig } from './configStore';
 
 /** 内置 TTS 方案 key，禁止删除，始终从代码默认值恢复 */
@@ -23,6 +24,7 @@ export const BUILTIN_TTS_PROVIDERS: ReadonlySet<string> = new Set(Object.keys(de
 let ttsConfig: TTSConfig = structuredClone(defaultTTSConfig);
 let bridgeConfig: BridgeAppConfig = bridgeConfigFromEnv();
 let avatarConfig: AvatarConfig = cloneAvatarConfig(DEFAULT_AVATAR_CONFIG);
+let liveConfig: LiveConfig = { ...DEFAULT_LIVE_CONFIG };
 
 // ── TTS ──────────────────────────────────────────────────
 
@@ -66,6 +68,16 @@ export function builtinAvatarModelDir(): string {
     : join(app.getAppPath(), 'public', 'Resources', 'Hiyori_pro');
 }
 
+// ── 直播 ─────────────────────────────────────────────────
+
+export function getLiveConfig(): LiveConfig {
+  return liveConfig;
+}
+
+export function setLiveConfig(next: LiveConfig): void {
+  liveConfig = { ...next };
+}
+
 // ── 持久化 ───────────────────────────────────────────────
 
 function currentAppConfig(): AppConfig {
@@ -76,6 +88,7 @@ function currentAppConfig(): AppConfig {
     skills: getSkillsConfig(),
     bridges: bridgeConfig,
     avatar: avatarConfig,
+    live: liveConfig,
   };
 }
 
@@ -100,6 +113,7 @@ export function loadPersistedConfig(): void {
     setTTSConfig(mergeBuiltinTTSProviders(cfg.tts, defaultTTSConfig));
     setBridgeConfig(cfg.bridges);
     setAvatarConfig(cfg.avatar);
+    setLiveConfig(cfg.live);
     saveSkillsConfig(cfg.skills);
 
     persistAppConfig();

@@ -5,6 +5,7 @@ import type { SkillsConfig } from '../skillsConfig';
 import type { AvatarConfig } from '../avatar/avatarConfig';
 
 import type { DiscordConfig, WeChatConfig, FeishuConfig, BridgeAppConfig } from '../../shared/types/config';
+import type { LiveConfig } from '../../shared/types/live';
 export type { DiscordConfig, WeChatConfig, FeishuConfig, BridgeAppConfig };
 
 export interface AppConfig {
@@ -14,6 +15,7 @@ export interface AppConfig {
   skills: SkillsConfig;
   bridges: BridgeAppConfig;
   avatar: AvatarConfig;
+  live: LiveConfig;
 }
 
 export interface AppConfigDefaults {
@@ -23,6 +25,8 @@ export interface AppConfigDefaults {
   bridges: BridgeAppConfig;
   avatar: AvatarConfig;
 }
+
+export const DEFAULT_LIVE_CONFIG: LiveConfig = { platform: 'bilibili', roomId: 0, cookie: '', background: '' };
 
 const DEFAULT_FEISHU_CONFIG: FeishuConfig = {
   enabled: false,
@@ -64,6 +68,7 @@ export function createDefaultAppConfig(defaults: AppConfigDefaults): AppConfig {
     skills: clone(defaults.skills),
     bridges: clone(defaults.bridges),
     avatar: clone(defaults.avatar),
+    live: { ...DEFAULT_LIVE_CONFIG },
   };
 }
 
@@ -80,6 +85,7 @@ export function normalizeAppConfig(raw: unknown, defaults: AppConfigDefaults): A
   const skillsInput = isObject(input.skills) ? input.skills : {};
   const bridgesInput = isObject(input.bridges) ? input.bridges : {};
   const avatarInput = isObject(input.avatar) ? input.avatar : {};
+  const liveInput = isObject(input.live) ? input.live : {};
   const discordInput = isObject(bridgesInput.discord) ? bridgesInput.discord : {};
   const wechatInput = isObject(bridgesInput.wechat) ? bridgesInput.wechat : {};
   const feishuInput = isObject(bridgesInput.feishu) ? bridgesInput.feishu : {};
@@ -157,6 +163,12 @@ export function normalizeAppConfig(raw: unknown, defaults: AppConfigDefaults): A
       models: Array.isArray(avatarInput.models)
         ? avatarInput.models as AvatarConfig['models']
         : base.avatar.models,
+    },
+    live: {
+      platform: liveInput.platform === 'bilibili' ? liveInput.platform : base.live.platform,
+      roomId: Math.max(0, Math.floor(normalizeNumber(liveInput.roomId, base.live.roomId))),
+      cookie: normalizeString(liveInput.cookie, base.live.cookie).trim(),
+      background: normalizeString(liveInput.background, base.live.background),
     },
   };
 }

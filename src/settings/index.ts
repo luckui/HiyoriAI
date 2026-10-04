@@ -11,6 +11,7 @@ import { initTabs } from './tabs';
 import { initLlmPanel } from './llmPanel';
 import { initTTSPanel } from './ttsPanel';
 import { initBridgePanels } from './bridgePanels';
+import { initLivePanel } from './livePanel';
 import { initSkillsPanel } from './skillsPanel';
 import { initMemoryPanel } from './memoryPanel';
 
@@ -61,6 +62,7 @@ function bindDirtyTracking(): void {
     ['#s-bridge-discord', 'discord'],
     ['#s-bridge-feishu', 'feishu'],
     ['#s-bridge-wechat', 'wechat'],
+    ['#s-tab-live', 'live'],
   ];
   for (const [container, section] of containers) {
     document.querySelectorAll(`${container} input, ${container} select, ${container} textarea`).forEach((el) => {
@@ -80,6 +82,7 @@ export function initSettings(): void {
   initLlmPanel();
   initTTSPanel();
   initBridgePanels();
+  initLivePanel();
   initSkillsPanel();
   initMemoryPanel();
   initTabs();

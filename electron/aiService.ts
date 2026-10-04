@@ -17,7 +17,6 @@ import { buildAgentPrompt } from './prompts/agent';
 import { buildMinecraftPrompt } from './prompts/minecraft';
 import { buildDeveloperPrompt } from './prompts/developer';
 import { buildStreamerPrompt } from './prompts/streamer';
-import { browserSession } from './tools/impl/browserSession';
 import { buildRuntimeContext } from './runtimeContext';
 import { ConversationTurnQueue } from './conversationTurnQueue';
 import {
@@ -516,25 +515,14 @@ async function sendChatMessageUnlocked(
       tools: tools?.map((tool) => tool.function.name) ?? [],
     });
 
-    // streamer 模式下：若本轮对话包含浏览器工具，需占用浏览器互斥锁，
-    // 防止与 funded_request 工具循环（processFundedRequest）同时操控同一 Playwright page。
-    // 普通模式/无浏览器工具时无需加锁，零开销。
-    const needBrowserLock = effectiveMode === 'streamer' && hasBrowserTools(tools);
-    const releaseBrowserLock = needBrowserLock
-      ? await browserSession.mutex.acquire('chat')
-      : null;
-    try {
-      replyContent = await callWithToolLoop(
-        provider,
-        messages,
-        tools,
-        conversationId,
-        turnId,
-        trigger,
-      );
-    } finally {
-      releaseBrowserLock?.();
-    }
+    replyContent = await callWithToolLoop(
+      provider,
+      messages,
+      tools,
+      conversationId,
+      turnId,
+      trigger,
+    );
   } catch (e) {
     traceTurnEvent({
       type: 'turn-error',

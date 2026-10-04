@@ -101,6 +101,13 @@ export class LAppLive2DManager {
     this._halfBodyMode = half;
   }
 
+  /** 直播间画面的构图（放大倍数、下移量）；null 表示用桌宠的半身构图 */
+  private _stageFraming: { scale: number; offsetY: number } | null = null;
+
+  public setStageFraming(framing: { scale: number; offsetY: number } | null): void {
+    this._stageFraming = framing;
+  }
+
   public onUpdate(): void {
     const { width, height } = this._subdelegate.getCanvas();
     const projection: CubismMatrix44 = new CubismMatrix44();
@@ -115,9 +122,10 @@ export class LAppLive2DManager {
       }
 
       if (this._halfBodyMode) {
-        // 半身模式：放大 1.75 倍，向下偏移让上半身（脸/胸）居中
-        projection.scaleRelative(1.75, 1.75);
-        projection.translateRelative(0.0, -0.55);
+        // 半身模式：放大 1.75 倍，向下偏移让上半身（脸/胸）居中；直播间画面用自己的构图
+        const framing = this._stageFraming ?? { scale: 1.75, offsetY: -0.55 };
+        projection.scaleRelative(framing.scale, framing.scale);
+        projection.translateRelative(0.0, framing.offsetY);
       }
 
       if (this._viewMatrix != null) {

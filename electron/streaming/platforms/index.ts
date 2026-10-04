@@ -1,47 +1,16 @@
-/**
- * 直播平台适配器工厂
- * 支持多平台扩展
- */
+/** 直播平台适配器工厂：新增平台在这里登记 */
 
-import { EventEmitter } from 'events';
-import type { LiveEvent, StreamerSessionConfig } from '../types';
-import { BiliClient } from './bilibili/biliClient';
+import type { LiveConnection } from '../../../shared/types/live';
+import type { LiveSource } from './source';
+import { BiliLiveSource } from './bilibili/biliSource';
 
-export interface PlatformAdapter extends EventEmitter {
-  start(): Promise<void>;
-  stop(): void;
-  on(event: 'event', listener: (event: LiveEvent) => void): this;
-  on(event: 'error', listener: (error: Error) => void): this;
-  on(event: 'connected' | 'authenticated' | 'disconnected', listener: () => void): this;
-}
+export type { LiveSource, LiveSourceListener } from './source';
 
-/**
- * 创建平台适配器
- */
-export function createPlatformAdapter(
-  config: StreamerSessionConfig,
-  cookie?: string
-): PlatformAdapter {
+export function createLiveSource(config: LiveConnection): LiveSource {
   switch (config.platform) {
-    case 'bilibili': {
-      // 从 Cookie 提取 uid（如果有）
-      let uid: number | undefined;
-      if (cookie) {
-        const match = /DedeUserID=(\d+)/.exec(cookie);
-        if (match) {
-          uid = parseInt(match[1], 10);
-        }
-      }
-
-      return new BiliClient({
-        roomId: config.roomId,
-        uid,
-        cookie,
-      });
-    }
-
+    case 'bilibili':
+      return new BiliLiveSource(config.roomId, config.cookie);
     default:
-      throw new Error(`Unsupported platform: ${config.platform}`);
+      throw new Error(`不支持的直播平台：${String(config.platform)}`);
   }
 }
-

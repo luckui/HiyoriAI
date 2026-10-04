@@ -1,215 +1,148 @@
 import aiConfig from '../ai.config';
 import { fetchCompletion } from '../llmClient';
-import type { EphemeralLiveCredentials, LiveEvent, StreamerReply, StreamerSessionConfig, StreamerStatus } from './types';
-import { DanmuPool } from './danmuPool';
-import { createPlatformAdapter, type PlatformAdapter } from './platforms';
-import { SESSION_SYSTEM_PROMPT } from './streamerPrompts';
+import type { StreamerReply, StreamerSessionConfig, StreamerStatus } from './types';
+import { LiveAttention } from './attention/attention';
+import type { Topic } from './attention/topics';
+import { liveHub } from './liveHub';
+import { SESSION_SYSTEM_PROMPT, topicPrompt } from './streamerPrompts';
 
+/** 提示词里带上她最近说过的几句，免得翻来覆去一个开头 */
+const RECENT_LINES = 4;
+
+/**
+ * AI 互动会话：把弹幕姬（liveHub）的事件交给注意力层，按需挑话题、请 LLM 写成要说的话。
+ * 什么时候开口由 streamerController 决定；连接本身归 liveHub 管，停掉 AI 互动不会断开弹幕姬。
+ */
 class StreamerSessionManager {
   private config: StreamerSessionConfig | null = null;
   private startedAt = 0;
-  private pool = new DanmuPool();
+  private attention = new LiveAttention(Date.now());
   private replies: StreamerReply[] = [];
-  private timer: NodeJS.Timeout | null = null;
-  private runningGeneration = false;
   private lastError: string | undefined;
-  private adapterStatus = 'not-connected';
-  private credentials: EphemeralLiveCredentials | null = null;
-  private adapter: PlatformAdapter | null = null;
+  private unsubscribe: (() => void) | null = null;
 
-  start(config: StreamerSessionConfig, credentials?: EphemeralLiveCredentials): StreamerStatus {
+  get running(): boolean {
+    return !!this.config;
+  }
+
+  get autoReply(): boolean {
+    return !!this.config?.autoReply;
+  }
+
+  start(config: StreamerSessionConfig, cookie: string): StreamerStatus {
     this.stop();
-    this.config = {
-      ...config,
-      autoReply: config.autoReply ?? false,
-    };
-    this.credentials = credentials ?? null;
+    const idleAfterMs = this.attention.idleAfterMs;
+    this.config = { ...config, autoReply: config.autoReply ?? false };
     this.startedAt = Date.now();
-    this.pool = new DanmuPool();
+    this.attention = new LiveAttention(this.startedAt);
+    this.attention.idleAfterMs = idleAfterMs;
     this.replies = [];
     this.lastError = undefined;
-    this.adapterStatus = 'connecting...';
 
-    // 启动平台适配器
-    try {
-      this.adapter = createPlatformAdapter(this.config, credentials?.cookie);
-      
-      this.adapter.on('connected', () => {
-        this.adapterStatus = 'connected';
-        console.log('[StreamerSession] Platform adapter connected');
-      });
-
-      this.adapter.on('authenticated', () => {
-        this.adapterStatus = 'authenticated (active)';
-        console.log('[StreamerSession] Platform adapter authenticated');
-      });
-
-      this.adapter.on('event', (event) => {
-        this.ingest(event);
-      });
-
-      this.adapter.on('error', (err) => {
-        this.lastError = err.message;
-        // 只打印 message，避免 Error 对象中潜在的网络请求细节（含 URL/headers）被暴露
-        console.error('[StreamerSession] Platform adapter error:', err.message);
-      });
-
-      this.adapter.on('disconnected', () => {
-        this.adapterStatus = 'disconnected (reconnecting...)';
-        console.warn('[StreamerSession] Platform adapter disconnected');
-      });
-
-      // 异步启动（不阻塞）
-      void this.adapter.start();
-    } catch (err) {
-      this.lastError = err instanceof Error ? err.message : String(err);
-      this.adapterStatus = 'failed';
-      console.error('[StreamerSession] Failed to start adapter:', err);
-    }
-
-    // 注意：不在 session 内部启动 flush timer。
-    // streamerController 是唯一编排者，负责 poll → 生成 → TTS 的完整流程。
-    // 若在此处也定时 flushDue，会抢先消费 pool 但无法触发 TTS，导致弹幕被吞。
-
+    liveHub.connect({ platform: config.platform, roomId: config.roomId, cookie });
+    this.unsubscribe = liveHub.subscribe((event, isUpdate) => this.attention.observe(event, isUpdate, Date.now()));
     return this.status();
   }
 
   stop(): StreamerStatus {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
-    }
-
-    if (this.adapter) {
-      this.adapter.stop();
-      this.adapter.removeAllListeners();
-      this.adapter = null;
-    }
-
+    this.unsubscribe?.();
+    this.unsubscribe = null;
     this.config = null;
-    this.credentials = null;
     this.startedAt = 0;
-    this.adapterStatus = 'stopped';
     return this.status();
   }
 
   status(): StreamerStatus {
-    const snap = this.pool.snapshot();
     return {
       running: !!this.config,
       platform: this.config?.platform,
       roomId: this.config?.roomId,
       topic: this.config?.topic,
       startedAt: this.startedAt || undefined,
-      adapterStatus: this.adapterStatus,
-      credentials: {
-        required: true,
-        present: !!this.credentials,
-        persisted: false,
-      },
-      queue: snap,
+      autoReply: this.config?.autoReply,
+      live: liveHub.status(),
+      attention: this.config ? this.attention.snapshot(Date.now()) : undefined,
       replies: this.replies.length,
       lastError: this.lastError,
     };
   }
 
-  ingest(event: LiveEvent): { accepted: boolean; reason?: string; status: StreamerStatus } {
-    if (!this.config) {
-      return { accepted: false, reason: 'streamer-not-running', status: this.status() };
-    }
-    const result = this.pool.ingest(event);
-    
-    if (result.accepted) {
-      const snap = this.pool.snapshot();
-      console.log(`[StreamerSession] Event ingested: type=${event.type}, uname=${event.uname || '(none)'}, queue=${snap.pendingDanmu}+${snap.pendingPriority}`);
-    } else {
-      // 详细说明拒绝原因
-      const reasonMsg = {
-        'empty': '内容为空',
-        'duplicate': '90秒内重复',
-        'user-rate-limit': '用户限流（同一用户500ms内只能发1条）',
-      }[result.reason || ''] || result.reason || 'unknown';
-      console.log(`[StreamerSession] Event rejected: type=${event.type}, uname=${event.uname || '(none)'}, reason=${reasonMsg}`);
-    }
-    
-    return { accepted: result.accepted, reason: result.reason, status: this.status() };
+  /** 现在最该说的话题；没开会话或没什么可说时为 null */
+  nextTopic(now = Date.now()): Topic | null {
+    return this.config ? this.attention.next(now) : null;
   }
 
-  async flushOnce(): Promise<StreamerReply | null> {
-    return this.flushDue(true);
+  speechStarted(): void {
+    this.attention.speechStarted();
+  }
+
+  speechEnded(now = Date.now()): void {
+    this.attention.speechEnded(now);
+  }
+
+  set idleAfterMs(ms: number) {
+    this.attention.idleAfterMs = ms;
+  }
+
+  /** 请 LLM 把话题写成一段要说的话；失败时 reply 为空 */
+  async compose(topic: Topic): Promise<StreamerReply> {
+    const recentLines = this.replies.filter((r) => r.reply).slice(-RECENT_LINES).map((r) => r.reply!);
+    const reply: StreamerReply = {
+      id: topic.id,
+      createdAt: Date.now(),
+      kind: topic.kind,
+      prompt: topicPrompt(topic, { streamTopic: this.config?.topic, recentLines }),
+    };
+    try {
+      const provider = aiConfig.providers[aiConfig.activeProvider];
+      if (!provider) throw new Error(`missing provider: ${aiConfig.activeProvider}`);
+      const messages = [
+        { role: 'system' as const, content: SESSION_SYSTEM_PROMPT },
+        { role: 'user' as const, content: reply.prompt },
+      ];
+      // 直播要快：不开深度思考；偶尔回空就再要一次
+      for (let attempt = 0; attempt < 2 && !reply.reply; attempt++) {
+        const data = await fetchCompletion(provider, messages, undefined, undefined, { disableThinking: true });
+        reply.reply = data.choices[0]?.message.content?.trim() ?? '';
+      }
+    } catch (err) {
+      this.lastError = err instanceof Error ? err.message : String(err);
+      console.error('[StreamerSession] AI generation failed:', this.lastError);
+    }
+    this.replies.push(reply);
+    if (this.replies.length > 200) this.replies.splice(0, 50);
+    return reply;
+  }
+
+  /** 调试用：注入一条测试弹幕（走和真实弹幕一样的路径） */
+  ingestTest(uname: string, text: string): StreamerStatus {
+    if (this.config) {
+      liveHub.ingest({
+        id: `test:${Date.now()}:${Math.random().toString(16).slice(2)}`,
+        platform: this.config.platform,
+        kind: 'chat',
+        ts: Date.now(),
+        user: { id: `test-${uname}`, name: uname },
+        text,
+      });
+    }
+    return this.status();
   }
 
   setAutoReply(enabled: boolean): boolean {
-    if (!this.config) {
-      console.warn('[StreamerSession] setAutoReply: no active session');
-      return false;
-    }
+    if (!this.config) return false;
     this.config.autoReply = enabled;
-    console.log(`[StreamerSession] autoReply 已${enabled ? '开启' : '关闭'}`);
     return true;
   }
 
   setTopic(topic: string): boolean {
-    if (!this.config) {
-      console.warn('[StreamerSession] setTopic: no active session');
-      return false;
-    }
+    if (!this.config) return false;
     this.config.topic = topic;
-    console.log(`[StreamerSession] topic updated: "${topic}"`);
     return true;
   }
 
   listReplies(limit = 10): StreamerReply[] {
     return this.replies.slice(-limit);
-  }
-
-  private async flushDue(force = false): Promise<StreamerReply | null> {
-    if (!this.config || this.runningGeneration) return null;
-
-    // autoReply 检查放在 nextReply 之前，避免事件被 pop 后又不生成 AI/TTS 造成丢弹幕
-    if (!this.config.autoReply && !force) {
-      console.log('[StreamerSession] autoReply=false and not forced, skipping');
-      return null;
-    }
-
-    const next = this.pool.nextReply(this.config.topic);
-    if (!next) return null;
-
-    console.log(`[StreamerSession] flushDue called: force=${force}, autoReply=${this.config.autoReply}, kind=${next.kind}, events=${next.eventIds?.length || 0}`);
-
-    // funded_request 不走简单 LLM 回复，直接透传给 streamerController 处理工具循环
-    if (next.kind === 'funded_request') {
-      console.log(`[StreamerSession] funded_request → 透传给 streamerController`);
-      this.replies.push(next);
-      return next;
-    }
-
-    this.runningGeneration = true;
-    try {
-      const provider = aiConfig.providers[aiConfig.activeProvider];
-      if (!provider) throw new Error(`missing provider: ${aiConfig.activeProvider}`);
-      
-      console.log(`[StreamerSession] Calling AI (provider=${aiConfig.activeProvider}, prompt length=${next.prompt.length})...`);
-      console.log(`[StreamerSession] Prompt preview: ${next.prompt.slice(0, 200)}...`);
-      
-      const data = await fetchCompletion(provider, [
-        { role: 'system', content: SESSION_SYSTEM_PROMPT },
-        { role: 'user', content: next.prompt },
-      ]);
-      next.reply = data.choices[0]?.message.content?.trim() ?? '';
-      
-      console.log(`[StreamerSession] AI replied: ${next.reply?.slice(0, 100) || '(empty)'}...`);
-      
-      this.replies.push(next);
-      return next;
-    } catch (err) {
-      this.lastError = err instanceof Error ? err.message : String(err);
-      console.error('[StreamerSession] AI generation failed:', this.lastError);
-      this.replies.push(next);
-      return next;
-    } finally {
-      this.runningGeneration = false;
-    }
   }
 }
 
