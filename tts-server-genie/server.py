@@ -124,6 +124,52 @@ def _t2s_guarded(self, ref_seq, ref_bert, text_seq, text_bert, ssl_content,
 
 _genie_inference.GENIE.t2s_cpu = _t2s_guarded
 
+# ── T2S 采样修正 ─────────────────────────────────────────────────────
+#
+# 解码器 ONNX 里的采样是 argmax(p / q)。q 服从指数分布时这等价于按概率 p 抽样
+# （GPT-SoVITS 原版 PyTorch 推理就是这么做的），但它的 ONNX 导出脚本把 q 写成了
+# randn_like，genie 原样继承：正态噪声有一半是负数、接近 0 的又会把小概率放得很大，
+# 实际分布被严重摊平（模拟：概率 0.9 的 token 只有约 0.48 被选中），表现为抑扬顿挫
+# 飘忽、偶尔过早出结束符或失控。加载时把噪声换成 -log(U)，其余采样参数
+# （top_k 15、温度 1、重复惩罚 1.35，与原版 WebUI 默认一致）不动。
+
+
+def _fix_sampling(proto) -> None:
+    from onnx import TensorProto, helper
+    graph = proto.graph
+    nodes = []
+    for node in graph.node:
+        if node.op_type == "RandomNormalLike":
+            out = node.output[0]
+            nodes += [
+                helper.make_node("RandomUniformLike", list(node.input), [out + "/uniform"], dtype=TensorProto.FLOAT),
+                helper.make_node("Log", [out + "/uniform"], [out + "/log"]),
+                helper.make_node("Neg", [out + "/log"], [out]),
+            ]
+        else:
+            nodes.append(node)
+    del graph.node[:]
+    graph.node.extend(nodes)
+
+
+def _install_sampling_fix() -> None:
+    from genie_tts import ModelManager as model_manager_module
+    import onnx
+    create_session = model_manager_module.InferenceSession
+
+    def session(model, *args, **kwargs):
+        # 解码器由 load_session_with_fp16_conversion 在内存里拼好权重后以 bytes 传进来
+        if isinstance(model, bytes) and b"RandomNormalLike" in model:
+            proto = onnx.load_from_string(model)
+            _fix_sampling(proto)
+            model = proto.SerializeToString()
+        return create_session(model, *args, **kwargs)
+
+    model_manager_module.InferenceSession = session
+
+
+_install_sampling_fix()
+
 # ── 文本前端 ─────────────────────────────────────────────────────────
 #
 # 多语言混读、中文多音字（g2pW）、读音修正表、数字规范化修正，见 text_frontend.py
