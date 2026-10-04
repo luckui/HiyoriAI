@@ -78,15 +78,36 @@ export interface VoicePresetItem {
   refAudioFile?: string;
 }
 
+/** 豆包语音（火山引擎）双向流式合成的参数 */
+export interface DoubaoTTSOptions {
+  /** 旧版控制台的 APP ID；留空则用新版控制台的 API Key 鉴权（填在 apiKey） */
+  appId: string;
+  /**
+   * 资源 ID，决定模型版本和计费：seed-tts-1.0 / seed-tts-2.0（语音合成），
+   * seed-icl-1.0 / seed-icl-2.0（声音复刻）。必须和音色属于同一个资源
+   */
+  resourceId: string;
+  /** 语速 [-50, 100]，100 = 2 倍速 */
+  speechRate?: number;
+  /** 音调 [-12, 12] 个半音 */
+  pitch?: number;
+  /** 合并进 req_params 的额外参数（JSON），例如混音 mix_speaker、情感 audio_params.emotion */
+  extraParams?: string;
+}
+
 export interface TTSProviderConfig {
-  /** 目前仅 http-tts；将来可扩展 websocket 等 */
-  type: 'http-tts';
+  /** http-tts：POST /tts/generate 的 RESTful 服务；doubao-tts：豆包语音双向流式 */
+  type: 'http-tts' | 'doubao-tts';
   /** 显示名："Edge-TTS 本地"、"CosyVoice 远程"… */
   name: string;
-  /** RESTful 端点（不带尾斜杠） */
+  /** RESTful 端点（不带尾斜杠）；豆包为 WebSocket 地址 */
   baseUrl: string;
-  /** Bearer Token，留空则不发 */
+  /** Bearer Token，留空则不发；豆包为 Access Token（旧版控制台）或 API Key（新版控制台） */
   apiKey: string;
+  /** 豆包语音参数（type = doubao-tts 时） */
+  doubao?: DoubaoTTSOptions;
+  /** 这个方案连不上或中途失败时改用的方案（provider key），一般是本地 TTS */
+  fallbackProvider?: string;
   /** 音色 ID */
   speaker: string;
   /** 语言代码 */

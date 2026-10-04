@@ -70,6 +70,11 @@ expose('ttsAPI', {
   isEnabled: () => ipcRenderer.invoke('tts:isEnabled'),
   health: () => ipcRenderer.invoke('tts:health'),
   speak: (text) => ipcRenderer.invoke('tts:speak', text),
+  startStream: (sentences, keepOpen) => ipcRenderer.invoke('tts:stream:start', sentences, keepOpen),
+  pushStream: (id, sentence) => ipcRenderer.invoke('tts:stream:push', id, sentence),
+  finishStream: (id) => ipcRenderer.invoke('tts:stream:finish', id),
+  cancelStream: (id) => ipcRenderer.invoke('tts:stream:cancel', id),
+  onStreamEvent: (cb) => subscribe('tts:stream:event', cb),
   abortSpeak: () => ipcRenderer.invoke('tts:speak:abort'),
   onPlay: (cb) => { subscribe<{ text: string }>('tts:play', (payload) => cb(payload.text)); },
   pauseHearing: () => ipcRenderer.invoke('hearing:pause-for-tts'),
@@ -79,7 +84,7 @@ expose('ttsAPI', {
 expose('ttsSettingsAPI', {
   get: () => ipcRenderer.invoke('tts:config:get'),
   save: (cfg) => ipcRenderer.invoke('tts:config:save', cfg),
-  test: (url) => ipcRenderer.invoke('tts:config:test', url),
+  test: (url, provider) => ipcRenderer.invoke('tts:config:test', url, provider),
   onConfigChanged: (cb) => { subscribe('tts:config-changed', () => cb()); },
 });
 

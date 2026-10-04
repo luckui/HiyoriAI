@@ -1,157 +1,105 @@
 /// <reference types="node" />
 /**
- * TTS 服务模块（主进程）
- *
- * 统一适配器：任何符合 POST /tts/generate 规范的 HTTP TTS 服务均可接入。
- * 不再读取 process.env，改为由 main.ts 调用 configure(provider) 注入配置。
+ * TTS 服务（主进程）：持有当前方案的语音引擎，对外提供
+ *   - openStream：流式朗读（渲染进程播放用，见 electron/speech/）
+ *   - speak：一段文字合成为 WAV（旧接口与非实时场景用）
+ * 由 ttsRuntime.activateTTSProvider 调用 configure 注入方案；方案带备用时自动降级。
  */
 
 import type { TTSProviderConfig } from './tts.config';
-
-// ── 接口定义 ────────────────────────────────────────────────────────
-
-export interface TTSAdapter {
-  readonly name: string;
-  speak(text: string, config: TTSAdapterConfig, signal?: AbortSignal): Promise<ArrayBuffer>;
-}
-
-export interface TTSAdapterConfig {
-  speaker: string;
-  language: string;
-}
-
-// ── 统一 HTTP TTS 适配器 ────────────────────────────────────────────
-
-class HttpTTSAdapter implements TTSAdapter {
-  readonly name: string;
-
-  constructor(
-    private readonly baseUrl: string,
-    private readonly apiKey: string = '',
-  ) {
-    this.name = `http-tts(${baseUrl})`;
-  }
-
-  async speak(text: string, config: TTSAdapterConfig, signal?: AbortSignal): Promise<ArrayBuffer> {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (this.apiKey) headers['Authorization'] = `Bearer ${this.apiKey}`;
-
-    const resp = await fetch(`${this.baseUrl}/tts/generate`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        text,
-        speaker:  config.speaker,
-        language: config.language || 'auto',
-      }),
-      signal: signal ?? AbortSignal.timeout(180_000),
-    });
-
-    if (!resp.ok) {
-      const errText = await resp.text().catch(() => '');
-      throw new Error(`TTS ${resp.status} [${this.baseUrl}]: ${errText.slice(0, 200)}`);
-    }
-
-    return resp.arrayBuffer();
-  }
-}
-
-// ── TTS 服务单例 ────────────────────────────────────────────────────
+import type { SpeechEngine, SpeechHealth, SpeechStream, SpeechStreamHandlers } from './speech/engine';
+import { synthesizeAll } from './speech/engine';
+import { createSpeechEngine } from './speech/createEngine';
+import { FallbackSpeechEngine } from './speech/fallbackEngine';
+import { HttpSpeechEngine } from './speech/httpEngine';
+import { encodeWav } from './speech/wav';
 
 class TTSService {
-  private _adapter: TTSAdapter | null = null;
-  private _config: TTSAdapterConfig = { speaker: '', language: 'Auto' };
+  private engine: SpeechEngine | null = null;
+  private primary: SpeechEngine | null = null;
   private _currentUrl = '';
-  /** 所有正在进行的 speak 请求的 AbortController，用于批量取消 */
-  private _pendingControllers = new Set<AbortController>();
+  private readonly streams = new Set<SpeechStream>();
+  private readonly pendingControllers = new Set<AbortController>();
 
-  /**
-   * 配置当前 TTS provider。传 null 则禁用。
-   */
-  configure(provider: TTSProviderConfig | null): void {
-    if (provider) {
-      const url = provider.baseUrl.replace(/\/$/, '');
-      this._adapter = new HttpTTSAdapter(url, provider.apiKey);
-      this._config = { speaker: provider.speaker, language: provider.language };
-      this._currentUrl = url;
-      console.info(`[TTS] 已配置: url=${url} speaker=${provider.speaker}`);
-    } else {
-      this._adapter = null;
-      this._config = { speaker: '', language: 'Auto' };
-      this._currentUrl = '';
+  /** 配置当前方案（null 则禁用）；fallback 为连不上时改用的方案 */
+  configure(provider: TTSProviderConfig | null, fallback?: TTSProviderConfig | null): void {
+    this.abortAll();
+    this.engine?.dispose?.();
+    this.engine = null;
+    this.primary = null;
+    this._currentUrl = '';
+    if (!provider) {
       console.info('[TTS] 已禁用');
+      return;
     }
+    this.primary = createSpeechEngine(provider);
+    this.engine = fallback ? new FallbackSpeechEngine(this.primary, createSpeechEngine(fallback)) : this.primary;
+    this._currentUrl = provider.baseUrl.replace(/\/$/, '');
+    console.info(`[TTS] 已配置: ${this.engine.name} speaker=${provider.speaker}`);
   }
 
   get isEnabled(): boolean {
-    return this._adapter !== null;
+    return this.engine !== null;
   }
 
   get currentUrl(): string {
     return this._currentUrl;
   }
 
-  /**
-   * 取消所有正在进行的 speak 请求。
-   * 新一轮 playTTS 开始时由渲染进程触发，避免旧请求堆积在服务器队列中。
-   */
+  /** 取消所有进行中的朗读和合成（新一轮播放开始、或用户打断时） */
   abortAll(): void {
-    for (const ctrl of this._pendingControllers) ctrl.abort();
-    this._pendingControllers.clear();
-    console.log('[TTS] abortAll: 已取消所有挂起的 speak 请求');
+    for (const stream of this.streams) stream.cancel();
+    this.streams.clear();
+    for (const ctrl of this.pendingControllers) ctrl.abort();
+    this.pendingControllers.clear();
   }
 
+  openStream(handlers: SpeechStreamHandlers): SpeechStream {
+    if (!this.engine) throw new Error('TTS 未启用');
+    let stream: SpeechStream | null = null;
+    const forget = () => { if (stream) this.streams.delete(stream); };
+    stream = this.engine.open({
+      onAudio: handlers.onAudio,
+      onSentenceStart: handlers.onSentenceStart,
+      onSentenceDone: handlers.onSentenceDone,
+      onEnd: (error) => {
+        forget();
+        handlers.onEnd(error);
+      },
+    });
+    this.streams.add(stream);
+    const opened = stream;
+    return {
+      push: (sentence) => opened.push(sentence),
+      end: () => opened.end(),
+      cancel: () => {
+        forget();
+        opened.cancel();
+      },
+    };
+  }
+
+  /** 一段文字合成为 WAV */
   async speak(text: string): Promise<ArrayBuffer> {
-    if (!this._adapter) {
-      throw new Error('TTS 未启用');
-    }
+    if (!this.engine || !this.primary) throw new Error('TTS 未启用');
     const ctrl = new AbortController();
-    // 单句最长 3 分钟（CPU 推理可能很慢）
     const timer = setTimeout(() => ctrl.abort(new DOMException('timeout', 'TimeoutError')), 180_000);
-    this._pendingControllers.add(ctrl);
-    console.log(`[TTS] speak: url=${this._currentUrl}, speaker=${this._config.speaker}, lang=${this._config.language}, text="${text.slice(0, 50)}"`);
+    this.pendingControllers.add(ctrl);
     try {
-      return await this._adapter.speak(text, this._config, ctrl.signal);
+      // HTTP 服务本来就返回 WAV，不必绕一圈
+      const wav = this.primary instanceof HttpSpeechEngine && this.engine === this.primary
+        ? await this.primary.synthesizeWav(text, ctrl.signal)
+        : await synthesizeAll(this.engine, [text], ctrl.signal).then(({ pcm, sampleRate }) => encodeWav(pcm, sampleRate));
+      return wav.buffer.slice(wav.byteOffset, wav.byteOffset + wav.byteLength) as ArrayBuffer;
     } finally {
       clearTimeout(timer);
-      this._pendingControllers.delete(ctrl);
+      this.pendingControllers.delete(ctrl);
     }
   }
 
-  async health(): Promise<{ ok: boolean; status?: number; body?: string; error?: string }> {
-    if (!this._currentUrl) {
-      return { ok: false, error: 'TTS 未配置' };
-    }
-
-    // 探测策略：
-    //   1. HEAD / — 最轻量，任何 HTTP 响应（含 404）均说明服务进程在线
-    //   2. HEAD /health — 兼容有专用 health 端点的服务
-    //   3. GET /health — 最后降级，获取响应体
-    // GPT-SoVITS 等推理服务在 GPU 忙时 /health 会被阻塞，但 HEAD / 通常仍可达。
-    // 任意 HTTP 状态码均视为"在线"，不要求 resp.ok。
-    const TIMEOUT_MS = 3000;
-    const probes: Array<{ method: string; path: string }> = [
-      { method: 'HEAD', path: '/' },
-      { method: 'HEAD', path: '/health' },
-      { method: 'GET',  path: '/health' },
-    ];
-
-    for (const { method, path } of probes) {
-      try {
-        const resp = await fetch(`${this._currentUrl}${path}`, {
-          method,
-          signal: AbortSignal.timeout(TIMEOUT_MS),
-        });
-        const body = method === 'GET' ? await resp.text().catch(() => '') : undefined;
-        console.log(`[TTS] health: ${method} ${path} → ${resp.status}`);
-        return { ok: true, status: resp.status, body: body?.slice(0, 200) };
-      } catch {
-        // 继续尝试下一个探针
-      }
-    }
-
-    console.log(`[TTS] health: 所有探针均超时，服务不可达 (${this._currentUrl})`);
-    return { ok: false, error: '服务不可达（所有探针超时）' };
+  async health(): Promise<SpeechHealth> {
+    if (!this.engine) return { ok: false, error: 'TTS 未配置' };
+    return this.engine.health();
   }
 }
 

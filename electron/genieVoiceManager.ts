@@ -131,6 +131,11 @@ export function mergeBuiltinTTSProviders(config: TTSConfig, defaults: TTSConfig)
         speaker: uiProv.speaker ?? codeProv.speaker,
         language: uiProv.language ?? codeProv.language,
         voicePresets: uiProv.voicePresets ?? codeProv.voicePresets,
+        fallbackProvider: uiProv.fallbackProvider ?? codeProv.fallbackProvider,
+        // 云端方案的凭证和参数是用户自己的
+        ...(codeProv.type === 'doubao-tts'
+          ? { apiKey: uiProv.apiKey ?? '', doubao: { ...codeProv.doubao!, ...uiProv.doubao } }
+          : {}),
       };
     } else {
       merged.providers[key] = JSON.parse(JSON.stringify(codeProv));

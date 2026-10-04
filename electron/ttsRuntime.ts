@@ -36,8 +36,11 @@ export function activateTTSProvider(): void {
     ttsService.configure(null);
     return;
   }
-  console.log(`[TTS] → 激活 provider "${cfg.activeProvider}": url=${provider.baseUrl}, speaker=${provider.speaker}, engine=${provider.localEngine ?? 'none'}`);
-  ttsService.configure(provider);
+  const fallback = provider.fallbackProvider && provider.fallbackProvider !== cfg.activeProvider
+    ? cfg.providers[provider.fallbackProvider] ?? null
+    : null;
+  console.log(`[TTS] → 激活 provider "${cfg.activeProvider}": url=${provider.baseUrl}, speaker=${provider.speaker}, engine=${provider.localEngine ?? provider.type}, fallback=${fallback ? provider.fallbackProvider : 'none'}`);
+  ttsService.configure(provider, fallback);
 }
 
 export function broadcastTTSChanged(): void {

@@ -83,6 +83,16 @@ const defaultTTSConfig: TTSConfig = {
         { id: 'feibi', name: '菲比', description: 'GPT-SoVITS v2ProPlus · 中文/英文/日文/韩文' },
       ],
     },
+    doubao_tts: {
+      type: 'doubao-tts',
+      name: '豆包语音（云端流式）',
+      baseUrl: 'wss://openspeech.bytedance.com/api/v3/tts/bidirection',
+      apiKey: '',
+      // 音色要和资源 ID 对应：seed-tts-1.0 用 1.0 音色，复刻音色（S_ 开头）用 seed-icl-*
+      speaker: 'zh_female_shuangkuaisisi_moon_bigtts',
+      language: 'Auto',
+      doubao: { appId: '', resourceId: 'seed-tts-1.0' },
+    },
   },
   deletedProviders: [],
 };

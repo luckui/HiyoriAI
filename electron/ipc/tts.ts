@@ -4,6 +4,10 @@
 
 import { dialog, ipcMain, type WebContents } from 'electron';
 import { ttsService } from '../ttsService';
+import { synthesizeAll, type SpeechStream } from '../speech/engine';
+import { createSpeechEngine } from '../speech/createEngine';
+import type { TTSProviderConfig } from '../tts.config';
+import type { TtsStreamEvent } from '../../shared/preloadApi';
 import type { TTSConfig } from '../tts.config';
 import * as ttsServerManager from '../ttsServerManager';
 import { importGenieVoiceFromFolder } from '../genieVoiceManager';
@@ -18,9 +22,54 @@ function logTo(sender: WebContents) {
   };
 }
 
+/** 进行中的流式朗读（渲染进程可以继续往里追加句子） */
+const liveStreams = new Map<number, SpeechStream>();
+let nextStreamId = 0;
+
+function startStream(sender: WebContents, sentences: string[], keepOpen: boolean): number | null {
+  if (!ttsService.isEnabled) return null;
+  const id = ++nextStreamId;
+  const send = (event: TtsStreamEvent) => {
+    if (!sender.isDestroyed()) sender.send('tts:stream:event', event);
+  };
+  const stream = ttsService.openStream({
+    onAudio: ({ sampleRate, pcm }) => send({ id, type: 'audio', sampleRate, pcm }),
+    onSentenceStart: (sentence, atSec) => send({ id, type: 'sentence', sentence, atSec }),
+    onSentenceDone: (sentence) => send({ id, type: 'sentence-done', sentence }),
+    onEnd: (error) => {
+      liveStreams.delete(id);
+      if (error) console.error(`[TTS] 流 ${id} 失败: ${error.message}`);
+      send({ id, type: 'end', ...(error ? { error: error.message } : {}) });
+    },
+  });
+  liveStreams.set(id, stream);
+  for (const sentence of sentences) stream.push(sentence);
+  if (!keepOpen) stream.end();
+  return id;
+}
+
 export function registerTTSIpc(): void {
   // ── 朗读 ────────────────────────────────────────────────
-  ipcMain.handle('tts:speak:abort', () => ttsService.abortAll());
+  ipcMain.handle('tts:speak:abort', () => {
+    ttsService.abortAll();
+    liveStreams.clear();
+  });
+
+  // 流式朗读：音频块经 tts:stream:event 推回发起的窗口
+  ipcMain.handle('tts:stream:start', (e, sentences: string[], keepOpen?: boolean) => {
+    try {
+      return startStream(e.sender, sentences, Boolean(keepOpen));
+    } catch (error) {
+      console.error('[TTS] tts:stream:start 失败:', (error as Error).message);
+      return null;
+    }
+  });
+  ipcMain.handle('tts:stream:push', (_e, id: number, sentence: string) => liveStreams.get(id)?.push(sentence));
+  ipcMain.handle('tts:stream:finish', (_e, id: number) => liveStreams.get(id)?.end());
+  ipcMain.handle('tts:stream:cancel', (_e, id: number) => {
+    liveStreams.get(id)?.cancel();
+    liveStreams.delete(id);
+  });
 
   ipcMain.handle('tts:speak', async (_e, text: string) => {
     console.log(`[TTS] tts:speak 收到请求: enabled=${ttsService.isEnabled}, text="${text.slice(0, 60)}…"`);
@@ -80,7 +129,20 @@ export function registerTTSIpc(): void {
     return { isEnabled: ttsService.isEnabled, runtime };
   });
 
-  ipcMain.handle('tts:config:test', async (_e, url: string) => {
+  ipcMain.handle('tts:config:test', async (_e, url: string, provider?: TTSProviderConfig) => {
+    if (provider?.type === 'doubao-tts') {
+      // 真的合成一句：凭证、资源 ID、音色任一不对都会在这里报出来
+      const engine = createSpeechEngine(provider);
+      const started = Date.now();
+      try {
+        const { pcm, sampleRate } = await synthesizeAll(engine, ['你好。']);
+        return { ok: true, body: `合成成功（${(pcm.length / 2 / sampleRate).toFixed(1)} 秒音频，用时 ${Date.now() - started}ms）` };
+      } catch (error) {
+        return { ok: false, error: (error as Error).message };
+      } finally {
+        engine.dispose?.();
+      }
+    }
     if (!url) return { ok: false, error: '地址为空' };
     try {
       const resp = await fetch(`${url.replace(/\/$/, '')}/health/`, { signal: AbortSignal.timeout(5000) });

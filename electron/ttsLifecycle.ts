@@ -23,11 +23,17 @@ export async function ensureTTSRuntimeReady(
     return { ok: false, detail: `TTS provider not found: ${config.activeProvider}` };
   }
 
+  const installAndStart = deps.installAndStart;
   if (!provider.isLocal) {
+    // 云端方案配了本地备用：顺带把本地服务拉起来，云端断了才接得上；拉不起来不影响主方案
+    const fallback = provider.fallbackProvider ? config.providers[provider.fallbackProvider] : undefined;
+    if (fallback?.isLocal && installAndStart) {
+      const result = await installAndStart(deps.onProgress, fallback.localEngine);
+      if (!result.ok) return { ok: true, detail: `External TTS provider selected; fallback not ready: ${result.detail}` };
+    }
     return { ok: true, detail: 'External TTS provider selected' };
   }
 
-  const installAndStart = deps.installAndStart;
   if (!installAndStart) {
     return { ok: false, detail: 'TTS install/start dependency is not configured' };
   }

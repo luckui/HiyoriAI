@@ -1,12 +1,12 @@
 /**
  * TTS 播放器（渲染进程）
  *
- * 职责：
- *   1. 调用 Electron IPC（ttsAPI.speak）获取 base64 WAV 音频
- *   2. 解码后交给 LAppModel._wavFileHandler.startFromBuffer() 播放 + 口型同步
- *   3. 按句子切分文本，并发发起所有请求，顺序播放——流水线策略降低感知延迟
+ *   1. 按句切分文本，交给主进程开一段流式朗读（ttsAPI.startStream），引擎是什么都一样：
+ *      本地 TTS 按句合成、豆包边合成边返回，送回来的都是 PCM 音频块；
+ *   2. PcmStreamPlayer 把音频块首尾相接地播放，每句第一块真正出声时换表情、显示字幕；
+ *   3. 播放时每帧把音量送给灵动层（口型、重读时点头挑眉）。
  *
- * 用法：收到 AI 回复文本后调用 playTTS(text)
+ * 用法：收到 AI 回复文本后调用 playTTS(text)；要打断就 stopTTS()
  */
 
 import { LAppDelegate } from './lappdelegate';
@@ -17,8 +17,11 @@ import { SerialPlaybackQueue } from './ttsPlaybackQueue';
 import { liveliness } from './liveliness/motor';
 import { rmsOfByteTimeDomain } from './liveliness/dynamics';
 import { performWithoutVoice, spokenSentences, startPerformance } from './speechPerformance';
+import { PcmStreamPlayer } from './pcmStreamPlayer';
+import type { TtsStreamEvent } from '../shared/preloadApi';
 
-// ── 获取当前 Live2D 模型实例 ───────────────────────────────────────
+/** 还不知道一句实际多长时（流式引擎在读完前不知道），按每个字这么多毫秒估计字幕时长 */
+const ESTIMATED_MS_PER_CHAR = 220;
 
 function getLiveModel(): LAppModel | null {
   try {
@@ -28,23 +31,10 @@ function getLiveModel(): LAppModel | null {
   }
 }
 
-// ── base64 → ArrayBuffer ─────────────────────────────────────────
-
-function base64ToBuffer(b64: string): ArrayBuffer {
-  const binary = atob(b64);
-  const bytes  = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes.buffer;
-}
-
 // ── 全局播放通道：所有来源共用同一条串行队列 ─────────────────────
 
 const _playbackQueue = new SerialPlaybackQueue();
 let _nextPlaybackId = 0;
-
-// ── 主入口 ───────────────────────────────────────────────────────
-
-type TtsAPI = Window['ttsAPI'];
 
 // ── WebAudio 共享 AudioContext + 实时音量 ─────────────────────────
 
@@ -58,6 +48,16 @@ function getAudioContext(): AudioContext {
   return _audioCtx;
 }
 
+function startLevelMeter(analyser: AnalyserNode): void {
+  const data = new Uint8Array(analyser.fftSize);
+  const loop = (): void => {
+    analyser.getByteTimeDomainData(data);
+    liveliness.setSpeechLevel(rmsOfByteTimeDomain(data));
+    _rafId = requestAnimationFrame(loop);
+  };
+  _rafId = requestAnimationFrame(loop);
+}
+
 function stopLevelMeter(): void {
   if (_rafId !== null) {
     cancelAnimationFrame(_rafId);
@@ -66,65 +66,16 @@ function stopLevelMeter(): void {
   liveliness.setSpeechLevel(0);
 }
 
-/**
- * 播放一句，同时每帧把音量送给灵动层（口型、重读时点头挑眉都从这里来）。
- * 在音频播放结束时 resolve。
- */
-function playBufferWithLipSync(audioBuffer: AudioBuffer): Promise<void> {
-  return new Promise<void>((resolve) => {
-    const ctx = getAudioContext();
+// ── 当前这一段（打断用）─────────────────────────────────────────
 
-    // Electron/Chromium 长时间无音频后会自动 suspend AudioContext。
-    // resume() 是幂等的，已在 running 状态时立即 resolve。
-    const doPlay = () => {
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 512;
-      const dataArray = new Uint8Array(analyser.fftSize);
+let _current: { streamId: number | null; player: PcmStreamPlayer; abort: () => void } | null = null;
 
-      const source = ctx.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(analyser);
-      analyser.connect(ctx.destination);
-
-      const loop = (): void => {
-        analyser.getByteTimeDomainData(dataArray);
-        liveliness.setSpeechLevel(rmsOfByteTimeDomain(dataArray));
-        _rafId = requestAnimationFrame(loop);
-      };
-
-      source.onended = () => {
-        stopLevelMeter();
-        resolve();
-      };
-
-      source.start();
-      _rafId = requestAnimationFrame(loop);
-    };
-
-    if (ctx.state === 'suspended') {
-      ctx.resume().then(doPlay).catch(() => doPlay());
-    } else {
-      doPlay();
-    }
-  });
+/** 立刻停止正在说的话（之后排队的照常播放） */
+export function stopTTS(): void {
+  _current?.abort();
 }
 
-// ── 单句拉取 + 解码 ─────────────────────────────────────────────
-
-async function _fetchAndDecode(
-  ttsAPI: TtsAPI,
-  sentence: string,
-  audioCtx: AudioContext,
-): Promise<AudioBuffer | null> {
-  try {
-    const result = await ttsAPI.speak(sentence);
-    if (!result?.data) return null;
-    const buf = base64ToBuffer(result.data);
-    return await audioCtx.decodeAudioData(buf.slice(0));
-  } catch {
-    return null;
-  }
-}
+// ── 主入口 ───────────────────────────────────────────────────────
 
 export function playTTS(text: string, onDuration?: (ms: number, sentenceText?: string) => void): Promise<void> {
   const playbackId = ++_nextPlaybackId;
@@ -144,7 +95,6 @@ export function playTTS(text: string, onDuration?: (ms: number, sentenceText?: s
 }
 
 async function playTTSNow(text: string, onDuration?: (ms: number, sentenceText?: string) => void): Promise<void> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const ttsAPI = window.ttsAPI;
   if (!ttsAPI) {
     console.warn('[TTS] 跳过：window.ttsAPI 未注入（preload 未包含？）');
@@ -158,7 +108,7 @@ async function playTTSNow(text: string, onDuration?: (ms: number, sentenceText?:
     return;
   }
 
-  // 串行队列保证上一轮已经结束；这里只清理服务端可能遗留的挂起请求。
+  // 串行队列保证上一轮已经结束；这里只清理主进程可能遗留的合成
   ttsAPI.abortSpeak?.().catch(() => {});
   const model = getLiveModel();
   model?._wavFileHandler.stop();
@@ -172,68 +122,85 @@ async function playTTSNow(text: string, onDuration?: (ms: number, sentenceText?:
     return;
   }
   console.log(`[TTS] 切分为 ${sentences.length} 句:`, sentences);
-  // 表情导演和第一句语音合成同时开始：合成本来就要一两秒，表情基本不增加等待
+  // 表情导演和语音合成同时开始：合成本来就要等一会儿，表情基本不增加等待
   const performance = startPerformance(sentences);
 
   getLiveModel()?.setSpeaking(true);
   ttsAPI.pauseHearing?.().catch(() => {});
 
-  const audioCtx = getAudioContext();
-  let anyPlayed = false;
+  const ctx = getAudioContext();
+  // Electron/Chromium 长时间无音频后会自动 suspend AudioContext
+  if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 512;
+  analyser.connect(ctx.destination);
 
-  // ── 流水线策略：拿到第 i 句就立刻播放，同时在后台预取第 i+1 句 ──────────
-  // 相比旧的"并发全部→等全部→才播放"，这样能：
-  //   1. 第 1 句推理完毕就开始发声，不等后续句子
-  //   2. 旧世代被中断时已播放的句子不受影响，只是后续句子停止
-  //   3. 不会因为等待某一句超时导致整轮静默
-  let prefetch: Promise<AudioBuffer | null> | null = null;
+  const requestedAt = window.performance.now();
+  const player = new PcmStreamPlayer(ctx, analyser, (sentence) => {
+    if (sentence === 0) console.log(`[TTS] 首句出声，距请求 ${Math.round(window.performance.now() - requestedAt)}ms`);
+    const sentenceText = sentences[sentence];
+    // 每句出声时通知字幕：下一句起点已知就用实际时长，否则按字数估计
+    onDuration?.(player.sentenceDurationMs(sentence) ?? (sentenceText?.length ?? 0) * ESTIMATED_MS_PER_CHAR, sentenceText);
+    // 从真正出声开始算「在说话」：等合成的那段时间里，该听歌还听歌
+    liveliness.setSpeaking(true);
+    performance.enter(sentence);
+  });
 
+  let streamId: number | null = null;
+  let resolveEnd: (error?: string) => void = () => {};
+  const streamEnded = new Promise<string | undefined>((resolve) => { resolveEnd = resolve; });
+  // 事件可能比 startStream 的返回值先到：先存着，拿到 ID 再处理
+  const early: TtsStreamEvent[] = [];
+  const handle = (event: TtsStreamEvent) => {
+    if (event.type === 'audio') player.enqueue(event.sampleRate, event.pcm);
+    else if (event.type === 'sentence') player.mark(event.sentence, event.atSec);
+    else if (event.type === 'end') resolveEnd(event.error);
+  };
+  const unsubscribe = ttsAPI.onStreamEvent((event) => {
+    if (streamId === null) early.push(event);
+    else if (event.id === streamId) handle(event);
+  });
+
+  let aborted = false;
+  _current = {
+    streamId: null,
+    player,
+    abort: () => {
+      aborted = true;
+      if (streamId !== null) ttsAPI.cancelStream(streamId).catch(() => {});
+      player.stop();
+      resolveEnd('interrupted');
+    },
+  };
+
+  startLevelMeter(analyser);
   try {
-    for (let i = 0; i < sentences.length; i++) {
-      // 使用上一轮已预取的 Promise，或现在才发请求
-      const fetchNow = prefetch ?? _fetchAndDecode(ttsAPI, sentences[i], audioCtx);
-      prefetch = null;
-
-      // 立即开始预取下一句（与当前句推理并行，降低感知延迟）
-      if (i + 1 < sentences.length) {
-        prefetch = _fetchAndDecode(ttsAPI, sentences[i + 1], audioCtx);
-      }
-
-      const audioBuffer = await fetchNow;
-
-      if (!audioBuffer) {
-        console.warn(`[TTS] 第 ${i + 1} 句 buffer 为空，跳过`);
-        continue;
-      }
-
-      // 每句播放前通知当句文本+实际音频时长，让气泡与口型严格对齐
-      onDuration?.(Math.round(audioBuffer.duration * 1000), sentences[i]);
-      anyPlayed = true;
-
-      console.log(`[TTS] 第 ${i + 1}/${sentences.length} 句开始播放，时长: ${audioBuffer.duration.toFixed(2)}s`);
-      // 从真正出声开始算「在说话」：等第一句合成的那几秒里，该听歌还听歌
-      liveliness.setSpeaking(true);
-      performance.enter(i);
-
-      try {
-        await playBufferWithLipSync(audioBuffer);
-      } catch (e) {
-        console.warn(`[TTS] 第 ${i + 1} 句 WebAudio 播放失败:`, e);
-      }
-
-      console.log(`[TTS] 第 ${i + 1} 句播放完毕`);
+    streamId = await ttsAPI.startStream(sentences);
+    if (streamId === null) {
+      console.warn('[TTS] 无法开始朗读（TTS 未启用或引擎出错）');
+      resolveEnd('unavailable');
+    } else {
+      _current.streamId = streamId;
+      for (const event of early.splice(0)) if (event.id === streamId) handle(event);
     }
+
+    const error = await streamEnded;
+    if (error && !aborted) console.warn(`[TTS] 朗读中途失败: ${error}`);
+    if (!aborted) await player.finish();
   } finally {
+    unsubscribe();
+    _current = null;
     // 无论怎么结束都要复位：卡在「说话中」会让灵动层一直忽略音乐节拍
     stopLevelMeter();
+    analyser.disconnect();
     getLiveModel()?.setSpeaking(false);
     liveliness.setSpeaking(false);
     performance.finish();
   }
 
   ttsAPI.resumeHearing?.().catch(() => {});
-  // 所有句均为空（服务器不可达），通知调用方降级处理
-  if (onDuration && !anyPlayed) onDuration(0);
+  // 一句都没播出来（服务不可达）：通知调用方降级处理
+  if (onDuration && !player.anyAudio) onDuration(0);
   console.log('[TTS] 全部句子播放完成');
 }
 

@@ -19,6 +19,7 @@ import type {
   SkillImportResult,
   SkillsConfig,
   TTSConfig,
+  TTSProviderConfig,
   VoicePresetItem,
   WeChatConfig,
 } from './types/config';
@@ -110,11 +111,31 @@ export interface WeChatAPI {
   onQRLoginUpdate(cb: (state: WeChatQrLoginState) => void): void;
 }
 
+/** 流式朗读推给渲染进程的事件（tts:stream:event） */
+export type TtsStreamEvent =
+  /** 一块 16-bit 单声道 PCM，接在上一块后面播 */
+  | { id: number; type: 'audio'; sampleRate: number; pcm: Uint8Array }
+  /** 第 sentence 句从本段音频的第 atSec 秒开始（可能早于或晚于那段音频送达） */
+  | { id: number; type: 'sentence'; sentence: number; atSec: number }
+  /** 第 sentence 句的音频已全部给出 */
+  | { id: number; type: 'sentence-done'; sentence: number }
+  /** 结束；error 非空表示中途失败 */
+  | { id: number; type: 'end'; error?: string };
+
 export interface TtsAPI {
   isEnabled(): Promise<boolean>;
   health(): Promise<{ ok: boolean; error?: string }>;
   /** 合成一句话，返回 base64 WAV；TTS 未启用或失败时为 null */
   speak(text: string): Promise<{ data: string } | null>;
+  /**
+   * 开始流式朗读，返回流 ID（TTS 未启用时为 null）。音频经 onStreamEvent 陆续送回。
+   * keepOpen 为 true 时之后还能 pushStream 追加句子（边生成边读），最后 finishStream
+   */
+  startStream(sentences: string[], keepOpen?: boolean): Promise<number | null>;
+  pushStream(id: number, sentence: string): Promise<void>;
+  finishStream(id: number): Promise<void>;
+  cancelStream(id: number): Promise<void>;
+  onStreamEvent(cb: (event: TtsStreamEvent) => void): Unsubscribe;
   /** 取消所有挂起的合成请求（新一轮播放开始时调用，防止旧请求堆积在服务器队列） */
   abortSpeak(): Promise<void>;
   /** 主进程请求朗读（直播、Minecraft 等） */
@@ -127,7 +148,8 @@ export interface TtsAPI {
 export interface TtsSettingsAPI {
   get(): Promise<TTSConfig>;
   save(cfg: TTSConfig): Promise<{ isEnabled: boolean; runtime: { ok: boolean; detail?: string } }>;
-  test(url: string): Promise<{ ok: boolean; status?: number; body?: string; error?: string }>;
+  /** 测试方案：HTTP 方案探测地址；豆包方案合成一句话（音色和资源 ID 不匹配也能测出来） */
+  test(url: string, provider?: TTSProviderConfig): Promise<{ ok: boolean; status?: number; body?: string; error?: string }>;
   onConfigChanged(cb: () => void): void;
 }
 

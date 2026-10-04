@@ -1,6 +1,6 @@
 /** 语音合成设置：TTS 方案、总开关（打开时自动部署本地服务）、健康检查、Genie 音色导入 */
 
-import type { TTSConfig } from '../../shared/types/config';
+import type { TTSConfig, TTSProviderConfig } from '../../shared/types/config';
 import { BUILTIN_TTS_PROVIDERS } from './types';
 import { clearSettingsDirty, markSettingsDirty, registerSection } from './sections';
 import { bindPasswordToggle, button, input, runWithButton, select } from './dom';
@@ -70,6 +70,53 @@ function syncFormToCfg(): void {
   p.language = select('tts-language').value;
   // preset 模式从下拉框取音色，text 模式从文本框取
   p.speaker = p.speakerMode === 'preset' ? select('tts-speaker-select').value : input('tts-speaker').value.trim();
+  p.fallbackProvider = select('tts-fallback').value || undefined;
+  if (p.type === 'doubao-tts') {
+    const number = (id: string) => {
+      const value = input(id).value.trim();
+      return value === '' ? undefined : Number(value);
+    };
+    p.doubao = {
+      appId: input('tts-doubao-appid').value.trim(),
+      resourceId: input('tts-doubao-resource').value.trim() || 'seed-tts-1.0',
+      speechRate: number('tts-doubao-rate'),
+      pitch: number('tts-doubao-pitch'),
+      extraParams: (document.getElementById('tts-doubao-extra') as HTMLTextAreaElement).value.trim() || undefined,
+    };
+  }
+}
+
+/** 备用方案下拉：除自己以外的方案 */
+function renderFallbackSelect(p: TTSProviderConfig): void {
+  const sel = select('tts-fallback');
+  sel.innerHTML = '';
+  const none = document.createElement('option');
+  none.value = '';
+  none.textContent = '不使用';
+  sel.appendChild(none);
+  for (const [key, prov] of Object.entries(ttsCfg?.providers ?? {})) {
+    if (key === ttsEditKey) continue;
+    const option = document.createElement('option');
+    option.value = key;
+    option.textContent = prov.name || key;
+    option.selected = key === p.fallbackProvider;
+    sel.appendChild(option);
+  }
+}
+
+function renderDoubaoFields(p: TTSProviderConfig): void {
+  const isDoubao = p.type === 'doubao-tts';
+  const fields = document.getElementById('tts-doubao-fields');
+  if (fields) fields.style.display = isDoubao ? '' : 'none';
+  input('tts-apikey').placeholder = isDoubao ? 'Access Token（旧版控制台）或 API Key（新版控制台）' : '留空则不发送认证头';
+  input('tts-speaker').placeholder = isDoubao ? 'zh_female_shuangkuaisisi_moon_bigtts' : 'xiaoxiao';
+  if (!isDoubao) return;
+  const doubao = p.doubao ?? { appId: '', resourceId: 'seed-tts-1.0' };
+  input('tts-doubao-appid').value = doubao.appId ?? '';
+  input('tts-doubao-resource').value = doubao.resourceId ?? '';
+  input('tts-doubao-rate').value = doubao.speechRate === undefined ? '' : String(doubao.speechRate);
+  input('tts-doubao-pitch').value = doubao.pitch === undefined ? '' : String(doubao.pitch);
+  (document.getElementById('tts-doubao-extra') as HTMLTextAreaElement).value = doubao.extraParams ?? '';
 }
 
 function renderProviderSelect(): void {
@@ -102,9 +149,12 @@ function renderForm(): void {
   input('tts-apikey').value = p.apiKey ?? '';
   select('tts-language').value = p.language ?? 'Auto';
 
-  // 内置方案：name / url / apiKey 只读（由代码控制）
+  // 内置方案：name / url / apiKey 只读（由代码控制）；云端方案的凭证由用户填写
   const isBuiltin = BUILTIN_TTS_PROVIDERS.includes(ttsEditKey);
-  for (const id of ['tts-name', 'tts-url', 'tts-apikey']) input(id).readOnly = isBuiltin;
+  for (const id of ['tts-name', 'tts-url']) input(id).readOnly = isBuiltin;
+  input('tts-apikey').readOnly = isBuiltin && p.type !== 'doubao-tts';
+  renderDoubaoFields(p);
+  renderFallbackSelect(p);
 
   // 音色：preset 模式显示下拉，text 模式显示文本框
   const speakerInput = input('tts-speaker');
@@ -217,9 +267,12 @@ async function runHealthCheck(): Promise<void> {
   dot.className = 's-status-dot s-status-off';
   text.textContent = '连接中…';
   try {
-    const result = await window.ttsSettingsAPI.test(input('tts-url').value.trim());
+    syncFormToCfg();
+    const provider = ttsCfg && ttsEditKey ? ttsCfg.providers[ttsEditKey] : undefined;
+    const result = await window.ttsSettingsAPI.test(input('tts-url').value.trim(), provider);
     dot.className = `s-status-dot ${result.ok ? 's-status-on' : 's-status-err'}`;
-    text.textContent = result.ok ? `✓ 连接成功（HTTP ${result.status}）` : result.error ?? `✗ HTTP ${result.status}`;
+    const success = result.body ?? `连接成功（HTTP ${result.status}）`;
+    text.textContent = result.ok ? `✓ ${success}` : `✗ ${result.error ?? `HTTP ${result.status}`}`;
   } catch (e) {
     dot.className = 's-status-dot s-status-err';
     text.textContent = `✗ ${String(e)}`;

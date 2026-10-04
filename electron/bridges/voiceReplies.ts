@@ -6,6 +6,9 @@ import { existsSync } from 'node:fs';
 import ffmpeg from '@ffmpeg-installer/ffmpeg';
 import type { TTSProviderConfig } from '../tts.config';
 import { hasSpeakableContent, normalizeSpokenText, splitSpokenText } from '../../shared/spokenText';
+import { createSpeechEngine } from '../speech/createEngine';
+import { synthesizeAll } from '../speech/engine';
+import { encodeWav } from '../speech/wav';
 
 export type WeChatVoiceDeliveryMode = 'audio_file' | 'native_voice';
 
@@ -109,6 +112,17 @@ export async function synthesizeBridgeVoice(
   text: string,
   provider: TTSProviderConfig,
 ): Promise<ArrayBuffer> {
+  if (provider.type !== 'http-tts') {
+    // 流式引擎（豆包）：收齐整段 PCM 再封成 WAV
+    const engine = createSpeechEngine(provider);
+    try {
+      const { pcm, sampleRate } = await synthesizeAll(engine, [text]);
+      const wav = encodeWav(pcm, sampleRate);
+      return wav.buffer.slice(wav.byteOffset, wav.byteOffset + wav.byteLength) as ArrayBuffer;
+    } finally {
+      engine.dispose?.();
+    }
+  }
   const baseUrl = provider.baseUrl.replace(/\/+$/, '');
   const resp = await fetch(`${baseUrl}/tts/generate`, {
     method: 'POST',

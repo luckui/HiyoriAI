@@ -400,6 +400,39 @@
                   </select>
                 </label>
               </div>
+              <!-- 豆包语音专用（type = doubao-tts） -->
+              <div id="tts-doubao-fields" style="display:none">
+                <div class="s-row-2">
+                  <label class="s-label">APP ID
+                    <input id="tts-doubao-appid" type="text" class="s-input" placeholder="旧版控制台的 APP ID；新版控制台留空" />
+                  </label>
+                  <label class="s-label">资源 ID
+                    <input id="tts-doubao-resource" type="text" class="s-input" list="tts-doubao-resources" placeholder="seed-tts-1.0" />
+                    <datalist id="tts-doubao-resources">
+                      <option value="seed-tts-1.0">语音合成 1.0</option>
+                      <option value="seed-tts-2.0">语音合成 2.0</option>
+                      <option value="seed-icl-1.0">声音复刻 1.0</option>
+                      <option value="seed-icl-2.0">声音复刻 2.0</option>
+                    </datalist>
+                  </label>
+                </div>
+                <div class="s-row-2">
+                  <label class="s-label">语速（-50 ~ 100）
+                    <input id="tts-doubao-rate" type="number" min="-50" max="100" step="5" class="s-input" placeholder="0" />
+                  </label>
+                  <label class="s-label">音调（-12 ~ 12 个半音）
+                    <input id="tts-doubao-pitch" type="number" min="-12" max="12" step="1" class="s-input" placeholder="0" />
+                  </label>
+                </div>
+                <label class="s-label">额外参数（JSON，可选）
+                  <textarea id="tts-doubao-extra" class="s-input" rows="3" placeholder='{"audio_params":{"emotion":"happy"}}'></textarea>
+                  <span class="s-hint">合并进请求的 req_params，例如混音 mix_speaker（音色填 custom_mix_bigtts）。音色必须和资源 ID 对应</span>
+                </label>
+              </div>
+              <label class="s-label">备用方案
+                <select id="tts-fallback" class="s-input"></select>
+                <span class="s-hint">这个方案连不上或中途失败时，自动改用备用方案接着读（云端方案建议选一个本地方案）</span>
+              </label>
               <div class="s-status-row" style="margin-top:8px">
                 <button id="tts-test-btn" class="s-small-btn">🔍 测试连接</button>
                 <span id="tts-status-dot" class="s-status-dot s-status-off" style="margin-left:6px"></span>

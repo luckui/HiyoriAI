@@ -97,7 +97,7 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const scenarioFile = path.join(__dirname, 'scenarios', `${args.scenario}.probe.js`);
   if (!args.scenario || !existsSync(scenarioFile)) {
-    console.error('用法：npm run ui-probe -- <settings|chat> [--out 文件] [--compare 文件]');
+    console.error('用法：npm run ui-probe -- <settings|chat|tts> [--out 文件] [--compare 文件]');
     process.exit(2);
   }
 
