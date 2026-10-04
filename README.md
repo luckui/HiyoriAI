@@ -72,6 +72,7 @@ Hiyori 是一个运行在 Windows 上的 Live2D AI 助手。她拥有自己的�
 你也可以：
 
 - 导入喜欢的 Live2D 模型，为待机和点击场景挑选动作，再给她换上自己的角色音色。
+- 放一首歌，她会自己听出节拍跟着摇；和她聊天，她说话时会点头、侧身、换表情，害羞时头顶冒出红线，生气时爆出青筋。
 - 从 Discord、飞书或微信联系电脑上的 Hiyori，让她寻找文件、返回截图或处理轻量任务。
 - 让她每天早上叫你起床、定时来聊天，或者安排一个后台 Agent 在指定时间检查和处理事情。
 - 把大量相似工作拆成批量子任务并发执行，全部完成后得到一份汇总结果。
@@ -85,6 +86,17 @@ Hiyori 是一个运行在 Windows 上的 Live2D AI 助手。她拥有自己的�
 - 导入完整 Live2D 模型文件夹，自动读取 `model3.json`、动作与表情资源。
 - 使用模型库自由切换或删除已导入角色。
 - 预览动作和表情，把一个或多个动作分配给待机、点击场景，减少重复感。
+
+### 会听歌、会表演：让角色真正「活」起来
+
+Hiyori 有一层独立的灵动层，在模型自带动作之上实时生成身体、头部、眼神和表情，参考的是 Neuro-sama 那种说话、听歌时都在动的直播感。
+
+- **听歌会跟拍**：实时分析系统声音，自己估计速度和拍点，连几乎没有鼓点的原声歌也能跟上。律动是摇滚式的：上身在拍点上往下送，头晚几十毫秒、更有力地点下去，再慢慢抬起来。
+- **说话有肢体语言**：重音时点头、换一个头部朝向，上半身绕着腰把重心换到另一侧；每句话换一个姿态，句间停顿时歪一下头。动作按说话的投入程度变化，平稳而不抖动。
+- **边说边听不断拍**：她开口时暂停听歌、说完立刻接上；歌曲里节拍一时模糊也会继续摇，歌停了才停下。
+- **对话里的神态**：你在打字或说话时，她看着你、偶尔点头附和；在想的时候眼神飘向斜上方；说话时大部分时间看着你，组织语言时才短暂移开视线。
+- **逐句表情与漫符**：表情导演为每句台词挑选表情（开心、兴奋、害羞、惊讶、难过、生气、得意、思考、好奇），表情出现时连同姿态、眼神和动作幅度一起变化，并在头顶配上对应的漫画符号。
+- **换模型不用重新调**：只使用 Cubism 标准参数，并按每个模型自己的参数范围换算。
 
 ### 从电脑聊到手机
 
@@ -134,8 +146,14 @@ Hiyori 使用统一的 TTS 运行时，同时为桌面朗读、Live2D 口型和�
 | 语音引擎 | 适合场景 | 特点 |
 | --- | --- | --- |
 | **Edge TTS** | 开箱即用 | 资源占用低，适合大多数 Windows 电脑 |
-| **Genie TTS** | 本地角色音色 | GPT-SoVITS ONNX 推理，支持导入 V2 / V2ProPlus 音色 |
+| **Genie TTS** | 本地角色音色 | GPT-SoVITS ONNX 推理，支持导入 V2 / V2ProPlus 音色，中英日混读 |
+| **豆包语音** | 云端、稳定、低延迟 | 火山引擎双向流式合成，约 0.7 秒出声，支持声音复刻音色 |
 | **自定义 HTTP TTS** | 已有语音服务 | 接入兼容 `/tts/generate` 的服务 |
+
+- **流式朗读**：所有引擎都按句边合成边播放，第一句开始说时后面还在合成；口型、表情和打字机字幕都跟着每句真正出声的时刻走。
+- **云端失败自动接替**：可以给云端语音配一个本地备用音色，网络或服务出错时从下一句起无缝换成本地语音。
+- **更准的本地发音**：Genie 的中文前端换成 g2pW 多音字判断，并配有可手动修正的读音表；中、英、日文按片段分别注音，数字和口语儿化按说话习惯处理。
+- **更稳的本地合成**：修正了 Genie 推理中会读出参考音频、偶尔失控或过早结束的问题，以及采样分布被摊平导致抑扬顿挫不稳的问题。
 
 开启语音播报时，应用会自动准备并启动当前语音引擎。Genie TTS 可以从 GPT-SoVITS 模型目录转换和导入音色，语音安装、启动和转换进度会在应用中持续展示。
 
@@ -187,6 +205,8 @@ flowchart LR
 - **多端 Channel Adapter**：Discord、飞书、微信各自处理连接协议，共享回复目标与异步结果路由。
 - **Minecraft 化身运行时**：独立子进程承载 mineflayer 连接、游戏内动作与生存反射，主进程通过命令通道编排。
 - **角色与语音运行时**：Live2D 模型生命周期、动作映射、TTS 服务生命周期、音色转换与跨平台音频编码。
+- **灵动层**：节拍时钟（自相关测速 + 梳状滤波定相位，区分音乐和说话）、按身体链组织的律动、语音驱动的肢体动作与对话神态，全部是可单测的纯计算。
+- **流式语音引擎**：统一的 push / end / cancel 流接口，句子起点以音频时间轴上的标记表示，兼容服务端合并句子；云端与本地引擎可在一段话中途切换。
 - **本地状态管理**：SQLite 持久化会话、任务和摘要记忆；设置界面、配置文件与运行时保持同步。
 
 ### 技术栈
@@ -200,7 +220,7 @@ flowchart LR
 | Minecraft | mineflayer, mineflayer-pathfinder, mineflayer-collectblock, mineflayer-tool, mineflayer-auto-eat, LAN discovery |
 | Automation | Playwright, PowerShell, Node.js, Windows OCR / desktop input |
 | Channels | Discord.js, Lark OpenAPI SDK, WeChat iLink Bot API |
-| Voice | Edge TTS, Genie TTS, GPT-SoVITS conversion, FFmpeg / Opus / Silk |
+| Voice | Edge TTS, Genie TTS (g2pW), Doubao bidirectional streaming TTS, GPT-SoVITS conversion, FFmpeg / Opus / Silk |
 | Persistence | SQLite with `better-sqlite3` |
 
 ## 🚀 快速开始
@@ -255,6 +275,8 @@ Hiyori 当前是一个 Windows 优先、持续开发中的开源项目。桌面 
 - [x] Live2D 桌面角色与聊天界面
 - [x] 自定义模型导入、模型库与动作映射
 - [x] Edge TTS 与 Genie TTS 自定义音色
+- [x] 流式语音合成、豆包云端音色与本地备用
+- [x] 音乐律动、说话肢体语言、对话神态与逐句表情
 - [x] Discord、飞书、微信移动端桥接
 - [x] 飞书语音气泡与微信语音文件回复
 - [x] Codex SDK 项目发现、任务恢复与异步结果回传
@@ -262,7 +284,7 @@ Hiyori 当前是一个 Windows 优先、持续开发中的开源项目。桌面 
 - [x] Minecraft 游戏化身、局域网连接与多步游戏目标
 - [ ] 完整的实时语音对话与移动端语音理解
 - [ ] 一键部署本地 LLM
-- [ ] 表情、情绪与角色行为系统
+- [ ] 更丰富的角色行为：手势、全身动作与唱歌
 - [ ] 更多专业 Agent Runtime
 - [ ] 重新梳理直播能力的扩展边界与互动设计
 
@@ -282,6 +304,7 @@ electron/
 ├── memory/          # 会话摘要与全局精炼记忆
 ├── minecraft/       # Minecraft 游戏化身运行时与动作
 ├── runtimes/        # Codex Provider、任务会话与事件流
+├── speech/          # 流式语音引擎：本地 HTTP、豆包 WebSocket、云端失败回落
 ├── streaming/       # B 站直播实验模块
 ├── tools/           # Agent 工具注册与实现
 ├── agentRunner.ts   # 后台子智能体执行器
@@ -290,6 +313,7 @@ electron/
 └── taskScheduler.ts # 定时提醒与定时 Agent 任务
 patches/             # mineflayer 系列依赖的运行时补丁
 src/                 # Electron Renderer、聊天 UI 与 Live2D Runtime
+└── liveliness/      # 灵动层：节拍时钟、律动、说话动作、对话神态与表情表演
 tts-server/          # Edge TTS 服务
 tts-server-genie/    # Genie TTS 与 GPT-SoVITS 音色转换
 tts-server-nano/     # MOSS-TTS-Nano 实验服务
@@ -305,6 +329,9 @@ stt-server/          # faster-whisper 听觉服务
 - [Live2D Cubism SDK](https://www.live2d.com/)：角色渲染与动画基础。
 - [OpenAI Codex](https://github.com/openai/codex)：专业 Coding Agent 与官方 SDK。
 - [Genie](https://huggingface.co/High-Logic/Genie) 与 [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS)：本地角色语音与音色生态。
+- [g2pW](https://github.com/GitYCC/g2pW)：中文多音字判断。
+- [豆包语音](https://www.volcengine.com/product/tts)：云端流式语音合成与声音复刻。
+- [Neuro-sama](https://www.twitch.tv/vedal987)：说话、听歌时都在动的 AI 主播，是灵动层的参照。
 - [Project AIRI](https://github.com/moeru-ai/airi)：对开源数字角色与 AI 陪伴方向的重要启发。
 - [Hermes Agent](https://github.com/NousResearch/hermes-agent)：早期 Agent 架构与记忆设计参考。
 - [Electron](https://www.electronjs.org/) 与 [Playwright](https://playwright.dev/)：桌面运行时与浏览器自动化。
