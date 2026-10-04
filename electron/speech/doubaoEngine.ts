@@ -12,7 +12,7 @@ import { randomUUID } from 'crypto';
 import { gunzipSync } from 'zlib';
 import WebSocket from 'ws';
 import type { SpeechEngine, SpeechHealth, SpeechStream, SpeechStreamHandlers } from './engine';
-import { decodeFrame, DoubaoEvent, encodeRequest, SentenceAligner, type DoubaoFrame } from './doubaoProtocol';
+import { decodeFrame, DoubaoEvent, encodeRequest, locateSentenceStarts, SentenceAligner, type DoubaoFrame } from './doubaoProtocol';
 
 export const DOUBAO_BIDIRECTIONAL_URL = 'wss://openspeech.bytedance.com/api/v3/tts/bidirection';
 
@@ -249,6 +249,9 @@ class DoubaoSession implements SpeechStream {
   private inServerSentence: Array<{ sentence: number; fraction: number }> = [];
   /** 这段的开始事件没带文本（复刻音色 ICL 2.0 就是这样），要等结束事件里的文本再对齐 */
   private alignAtEnd = false;
+  /** 当前这段的文本和音频：句末按停顿定位我们每句的起点 */
+  private serverText = '';
+  private serverAudio: Buffer[] = [];
   private readonly marked = new Set<number>();
   private stallTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -316,6 +319,8 @@ class DoubaoSession implements SpeechStream {
         this.serverSentenceAt = this.emittedSec;
         this.inServerSentence = [];
         this.alignAtEnd = !text;
+        this.serverText = text;
+        this.serverAudio = [];
         if (this.alignAtEnd) {
           // 不知道这段多长，但它一定从下一句开头开始：先报告这一句，其余等结束事件
           if (this.aligner.next < this.aligner.size) this.markStart(this.aligner.next, this.emittedSec);
@@ -330,7 +335,9 @@ class DoubaoSession implements SpeechStream {
       }
       case DoubaoEvent.TTSResponse:
         if (!this.canceled && frame.audio?.length) {
-          this.handlers.onAudio({ sampleRate: SAMPLE_RATE, pcm: Buffer.from(frame.audio) });
+          const pcm = Buffer.from(frame.audio);
+          this.serverAudio.push(pcm);
+          this.handlers.onAudio({ sampleRate: SAMPLE_RATE, pcm });
           this.emittedSec += frame.audio.length / 2 / SAMPLE_RATE;
         }
         break;
@@ -339,8 +346,20 @@ class DoubaoSession implements SpeechStream {
         if (this.alignAtEnd) {
           this.alignAtEnd = false;
           const text = (frame.json as { text?: string } | undefined)?.text ?? '';
+          this.serverText = text;
           this.inServerSentence = this.aligner.start(text);
         }
+        const inner = this.inServerSentence.filter((s) => s.fraction > 0);
+        if (inner.length && duration > 0) {
+          // 按字数比例会偏早：把标点和音频里的停顿对上，取重新开口的时刻
+          let audio = Buffer.concat(this.serverAudio);
+          if (audio.byteOffset % 2) audio = Buffer.from(audio); // Int16Array 要求两字节对齐
+          const samples = new Int16Array(audio.buffer, audio.byteOffset, Math.floor(audio.length / 2));
+          const length = SentenceAligner.measure(this.serverText);
+          const starts = locateSentenceStarts(samples, SAMPLE_RATE, this.serverText, inner.map((s) => Math.round(s.fraction * length)));
+          inner.forEach((s, k) => { s.fraction = starts[k] / duration; });
+        }
+        this.serverAudio = [];
         for (const { sentence, fraction } of this.inServerSentence.splice(0)) {
           this.markStart(sentence, this.serverSentenceAt + fraction * duration);
         }
