@@ -43,6 +43,8 @@ export interface ResearchItem {
   source: string;
   /** 直播里点这个视频的观众 */
   by?: string;
+  /** 送礼点播需要整段转写，即使当前热门任务使用 auto 策略 */
+  fullTranscript?: boolean;
   status: ItemStatus;
   note?: string;
   transcript?: TranscriptSource;
@@ -189,22 +191,23 @@ export class ResearchRunner extends EventEmitter {
    * 直播里观众点的视频：插到当前任务最前面。没有任务在跑就先记着，
    * 下一个任务（比如切到情报站时开的热门快照）开始时排在最前面。
    */
-  async request(bvid: string, by?: string, opts: { startNow?: boolean } = {}): Promise<ResearchItem> {
+  async request(bvid: string, by?: string, opts: { startNow?: boolean; fullTranscript?: boolean } = {}): Promise<ResearchItem> {
     const v = await this.deps.client.video(bvid);
     const item: ResearchItem = {
       bvid, title: v.title, upName: v.upName, duration: v.duration, source: '观众点的', by, status: 'queued',
       stageSafe: !rejectReason({ title: v.title, tid: v.tid, tname: v.tname, desc: v.desc }),
+      fullTranscript: opts.fullTranscript,
     };
     if (!this.running && opts.startNow) {
       // 情报站里点的、手上又没任务：马上开一个只做它的任务
       this.waiting = this.waiting.filter((w) => w.bvid !== bvid);
       this.waiting.unshift(item);
-      const job = await this.start({ kind: 'videos', target: bvid, transcribe: 'auto', fromRequest: true });
+      const job = await this.start({ kind: 'videos', target: bvid, transcribe: opts.fullTranscript ? 'all' : 'auto', fromRequest: true });
       return job.items[0] ?? item;
     }
     if (!this.running) {
       const already = this.waiting.find((w) => w.bvid === bvid);
-      if (already) return already;
+      if (already) { already.fullTranscript ||= opts.fullTranscript; return already; }
       this.waiting.push(item);
       this.log({ text: `[queue] 记下：${v.title.slice(0, 24)}${by ? `（${by} 点的）` : ''}，下个任务开始时先做` });
       return item;
@@ -213,6 +216,7 @@ export class ResearchRunner extends EventEmitter {
     const existing = job.items.find((i) => i.bvid === bvid);
     if (existing) {
       existing.by ??= by;
+      existing.fullTranscript ||= opts.fullTranscript;
       // 还没轮到就提到最前面
       if (existing.status === 'queued') {
         job.items.splice(job.items.indexOf(existing), 1);
@@ -286,6 +290,7 @@ export class ResearchRunner extends EventEmitter {
   }
 
   private policy(job: ResearchJob, item: ResearchItem): AsrPolicy {
+    if (item.fullTranscript) return { mode: 'full' };
     if (job.spec.transcribe === 'all') return { mode: 'full' };
     return item.duration <= AUTO_ASR_MAX_SEC ? { mode: 'full' } : { mode: 'none' };
   }

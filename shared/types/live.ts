@@ -159,12 +159,14 @@ export const DEFAULT_BOARD_TEXT = [
 ].join('\n');
 
 /** 开了送礼私信时公告板自动加的一行 */
-export const BOARD_GIFT_LINE = '🎁 送任意礼物再发 BV 号：这个视频的字幕和分析私信给你';
+export const BOARD_GIFT_LINE = '🎁 任意礼物 + BV 号：私信发送视频分析';
+export const BOARD_FOLLOW_LINE = '💌 关注 Hiyori：继续收到完整视频字幕';
 
 /** 画面上、提示词里实际用的公告：开了送礼私信就补上那一行 */
 export function boardLines(board: LiveBoard | undefined, giftDm: boolean): string[] {
   const lines = (board?.text ?? DEFAULT_BOARD_TEXT).split('\n').map((l) => l.trim()).filter(Boolean);
   if (giftDm && !lines.some((l) => l.includes('礼物'))) lines.push(BOARD_GIFT_LINE);
+  if (giftDm && !lines.some((l) => l.includes('完整') && l.includes('字幕'))) lines.push(BOARD_FOLLOW_LINE);
   return lines;
 }
 

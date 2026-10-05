@@ -162,6 +162,8 @@ export function initBiliResearch(deps: BiliResearchDeps): ResearchRunner {
     cached: (bvid) => library?.cached(bvid) ?? null,
     resolveLink: (text) => client.resolveLink(text),
     send: (uid, text) => client.sendMessage(uid, text),
+    follows: (uid) => client.followsMe(uid),
+    pendingFile: path.join(deps.dataDir, 'bili-research', 'gift-dm-pending.json'),
     log: (text) => {
       deps.broadcast('live:terminal', { text });
       console.info(`[GiftDm] ${text.replace(/^\[dm\]\s*/, '')}`);
@@ -172,9 +174,12 @@ export function initBiliResearch(deps: BiliResearchDeps): ResearchRunner {
     },
   });
   giftDm = dm;
+  void dm.pollFollowers();
+  setInterval(() => { void dm.pollFollowers(); }, 60_000).unref();
   streamerSession.setEventTap((event) => {
     if (event.kind === 'gift') dm.onGift(event.user);
     else if (event.kind === 'chat') dm.onChat(event.user, event.text);
+    else if (event.kind === 'follow') dm.onFollow(event.user);
   });
 
   registerSegment(biliIntelSegment({

@@ -341,6 +341,16 @@ export class BiliVideoClient {
     return this.post('https://api.bilibili.com/x/v2/reply/add', { type: 1, oid: aid, message, plat: 1 });
   }
 
+  /** 查询观众是否关注了当前登录的主播；无法确认时由调用方保守处理。 */
+  async followsMe(viewerId: string): Promise<boolean | null> {
+    if (!/^\d+$/.test(viewerId)) return null;
+    const s = await this.auth();
+    if (!s.loggedIn || !s.uid) return null;
+    const data = await this.get<{ be_relation?: { attribute?: number } }>(`https://api.bilibili.com/x/web-interface/relation?mid=${viewerId}`);
+    const attribute = data.be_relation?.attribute;
+    return typeof attribute === 'number' ? attribute === 2 || attribute === 6 : null;
+  }
+
   /**
    * 发一条文字私信（web 端接口，要 Wbi 签名）。失败抛 DmError，常见的：
    * 21047 对方回复或关注之前只能发 1 条，25003 对方隐私设置不收，21020 / 21046 发太快。

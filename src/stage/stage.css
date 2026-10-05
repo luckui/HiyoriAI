@@ -1288,6 +1288,9 @@ body.stage-mode[data-stage-segment="watch"] #stage-panel {
   backdrop-filter: none;
   color: var(--cy-ink);
 }
+body.stage-mode.stage-board[data-stage-segment="watch"] #stage-panel {
+  bottom: calc(24px + var(--board-height, 0px));
+}
 body.stage-mode[data-stage-segment="watch"] .sp-label {
   border-radius: 2px;
   background: var(--cy-pink);
@@ -1321,12 +1324,12 @@ body.stage-mode[data-stage-segment="watch"] #stage-panel-title { color: #fff; fo
 }
 .si-stats b { color: var(--cy-cyan, var(--st-accent)); font-weight: 700; }
 
-/* ── 公告板：左上角的 README（控制台里改）。有公告板时弹幕栏往下挪、她再往下一点 ── */
+/* ── 公告板：右侧视频详情下方的 README（控制台里改） ── */
 #ide-board {
   position: absolute;
-  left: 8px;
-  top: 36px;
-  width: 292px;
+  right: 16px;
+  bottom: 16px;
+  width: 276px;
   box-sizing: border-box;
   overflow: hidden;
   background: rgba(16, 8, 30, 0.92);
@@ -1354,10 +1357,3 @@ body.stage-mode[data-stage-segment="watch"] #stage-panel-title { color: #fff; fo
   margin-top: 3px;
 }
 #board-lines li:last-child { color: var(--cy-yellow); }
-body.stage-mode.stage-board[data-stage-segment="watch"] #stage-chat {
-  top: var(--board-bottom, 196px);
-  bottom: 324px;
-}
-body.stage-mode.stage-board[data-stage-segment="watch"] #canvas-container { top: 400px; }
-body.stage-mode.stage-board[data-stage-segment="watch"] .cy-ring { top: 450px; }
-body.stage-mode.stage-board[data-stage-segment="watch"] .cy-kana { top: 404px; }

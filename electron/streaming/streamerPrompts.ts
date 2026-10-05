@@ -69,13 +69,13 @@ function roomLines(ctx: TopicContext): string[] {
     lines.push('观众问你在干嘛、能怎么玩，照公告的意思用自己的话说，别照念；同一个人说过一次就别再重复介绍玩法。观众想让你看某个视频但只说了关键词或标题：请他发 BV 号或视频链接，说关键词搜索以后会支持。');
   }
   if (ctx.doing) lines.push(`你手上正在做：${ctx.doing}`);
-  if (ctx.giftDm) lines.push('送礼私信解析是开着的真功能（观众送任意礼物、再发 BV 号，你研究完把字幕和分析私信给他）：只在谢礼物、或者有人问起时提，平时别主动推销。');
+  if (ctx.giftDm) lines.push('送礼私信解析是开着的真功能（观众送任意礼物、再发 BV 号，你研究完私信视频分析和字幕节选；关注 Hiyori 后继续私信完整字幕，若视频没有可用字幕要如实说明）：只在谢礼物、或者有人问起时提，平时别主动推销。');
   return lines;
 }
 
 /** 谢礼物时顺口提一句私信解析 */
 function giftDmHow(ctx: TopicContext): string {
-  return ctx.giftDm ? '顺便告诉送礼的人：发个 BV 号或视频链接给你，你研究完把字幕和分析私信给他（已经发过的就说做好了会私信他）。' : '';
+  return ctx.giftDm ? '顺便告诉送礼的人：发个 BV 号或视频链接给你，你研究完私信视频分析；关注 Hiyori 后可以继续收到完整字幕（已经发过的就说做好了会私信他）。' : '';
 }
 
 const HEAT_TEXT = { quiet: '直播间人不多，弹幕很慢', normal: '弹幕不快不慢', busy: '弹幕刷得很快' } as const;

@@ -43,18 +43,18 @@ function renderBoard(state: { board: { show: boolean }; lines: string[] }): void
   }));
 }
 
-/** 弹幕栏接在公告板下面（公告行数不定；切到情报站布局时才有高度） */
-function followBoardHeight(): void {
+/** 视频详情放在公告板上方；公告内容可变，按实际高度留出间距 */
+function trackBoardHeight(): void {
   const box = document.getElementById('ide-board');
   if (!box) return;
   new ResizeObserver(() => {
-    if (box.offsetHeight) document.body.style.setProperty('--board-bottom', `${36 + box.offsetHeight + 8}px`);
+    document.body.style.setProperty('--board-height', `${box.offsetHeight}px`);
   }).observe(box);
 }
 
 export function initCyber(): void {
   const api = window.liveAPI;
-  followBoardHeight();
+  trackBoardHeight();
   if (api?.getBoard) {
     void api.getBoard().then(renderBoard);
     api.onBoard(renderBoard);
