@@ -95,6 +95,7 @@ interface Showing {
 interface Discussion {
   by: string;
   title: string;
+  context: string;
   since: number;
   lastChatAt: number;
 }
@@ -368,7 +369,7 @@ class BiliIntelSegment implements LiveSegmentPlugin {
     const job = this.deps.runner.current;
     const s = this.showing;
     const progress = job ? `研究任务「${job.title}」做了 ${job.items.filter((i) => i.status === 'done').length}/${job.items.length}` : '';
-    if (this.discussion) return `在和${this.discussion.by}聊刚讲完的《${this.discussion.title}》`;
+    if (this.discussion) return `在和${this.discussion.by}聊刚讲完的《${this.discussion.title}》${this.discussion.context ? `；研究要点：${this.discussion.context}` : ''}`;
     if (s) return `在情报站给大家讲《${s.dossier.video.title.slice(0, 30)}》（${progress}）`;
     const working = job?.items.find((i) => i.status === 'working');
     if (job && (job.status === 'running' || job.status === 'preparing')) return `在帮主人研究 B 站视频：${progress}${working ? `，正在处理《${working.title.slice(0, 24)}》` : ''}`;
@@ -492,7 +493,9 @@ class BiliIntelSegment implements LiveSegmentPlugin {
   private finish(s: Showing, now: number): void {
     this.presented.push(s.item);
     if (s.item.by) {
-      this.discussion = { by: s.item.by, title: s.dossier.video.title.slice(0, 30), since: now, lastChatAt: 0 };
+      const a = s.item.analysis;
+      const context = [a?.summary, a?.whyHot, a?.audience].filter(Boolean).join('；').slice(0, 150);
+      this.discussion = { by: s.item.by, title: s.dossier.video.title.slice(0, 30), context, since: now, lastChatAt: 0 };
       this.recentDiscussion = this.discussion;
     }
     const settings = this.deps.settings();
