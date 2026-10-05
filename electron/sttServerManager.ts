@@ -78,3 +78,15 @@ export function getConfig(): STTServerConfig {
 export function getWebSocketUrl(): string {
   return `ws://127.0.0.1:${STT_PORT}`;
 }
+
+/**
+ * 转写整个音频文件用的 Python（B 站视频没字幕时）：STT 装好了就用它的 venv；
+ * 开发时也可以用 HIYORI_ASR_PYTHON 指一个装了 faster-whisper 的 Python。没有返回 null。
+ */
+export async function fileAsrCommand(): Promise<{ python: string; script: string; model: string; language: string } | null> {
+  const status = await service.getStatus();
+  const script = `${status.serverDir}/transcribe_file.py`;
+  const python = status.installed ? service.pythonExe : process.env.HIYORI_ASR_PYTHON;
+  // 视频什么语言都有：让 whisper 自己认（language 空串）
+  return python ? { python, script, model: currentConfig.model, language: '' } : null;
+}

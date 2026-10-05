@@ -12,6 +12,10 @@ import { join } from 'path';
 import {
   LIVE_SEGMENTS,
   LIVE_THEMES,
+  researchSpecProblem,
+  boardLines,
+  DEFAULT_BOARD_TEXT,
+  type LiveBoard,
   type LiveCaptureSource,
   type LiveConfig,
   type LiveFocus,
@@ -20,6 +24,7 @@ import {
   type LiveStageState,
   type LiveStatus,
   type LiveTheme,
+  type ResearchSpecInput,
 } from '../../shared/types/live';
 import { getLiveConfig, persistAppConfig, setLiveConfig } from '../config/runtimeConfig';
 import { broadcastToWindows, sendToRenderer } from '../mainWindow';
@@ -31,6 +36,8 @@ import * as show from '../streaming/showRunner';
 import { listSegments } from '../streaming/segments/registry';
 import { LiveMemory } from '../streaming/memory/liveMemory';
 import { LiveMemoryStore } from '../streaming/memory/liveMemoryStore';
+import { giftDmService, initBiliResearch, researchFolders, researchRunner, summarizeJob, syncPlayerCookies } from '../biliResearch/runtime';
+import type { ResearchSpec } from '../biliResearch/research';
 import type { Topic } from '../streaming/attention/topics';
 import { getAgentMode, setAgentMode } from '../agentMode';
 import { sendChatMessage } from '../aiService';
@@ -113,11 +120,20 @@ function syncAutoReply(): void {
 function setPhase(next: LiveStagePhase): LiveStageState {
   const prev = phase;
   if (next === prev) return broadcastStage();
+  // 准备中 / 开场 / 直播中都要她在：没开 AI 互动就顺手开（会连上直播间）
+  if (next !== 'off' && next !== 'ending' && !(streamerController.isRunning && streamerSession.running)) {
+    const started = startAi();
+    if (!started.ok) broadcastToWindows('live:notice', `AI 互动开不了：${started.detail}`);
+  }
   phase = next;
   setStageWindow(next !== 'off');
   if (next === 'opening' || prev === 'off') showLog.reset();
   // 一场的记录：开场开始记，回到桌宠时写汇总；节目单只在直播中跑
-  if (next === 'opening' || next === 'live') show.beginRecording();
+  if (next === 'opening' || next === 'live') {
+    // 新的一场：送礼私信的名额、计数清零（beginRecording 同一场只记一次，这里也一样）
+    if (!show.isRecording()) giftDmService()?.reset();
+    show.beginRecording();
+  }
   if (next === 'live') show.startRundown();
   else show.stopRundown();
   syncAutoReply();
@@ -242,7 +258,48 @@ async function ownerSay(text: string): Promise<{ ok: boolean; reply?: string; de
   }
 }
 
+/** 测试观众的 uid：只认纯数字（测私信要用真实 uid） */
+function testUid(uid: unknown): string | undefined {
+  const s = String(uid ?? '').trim();
+  return /^\d{1,20}$/.test(s) ? s : undefined;
+}
+
+/** 公告板：存的原文 + 画面上实际显示的行（开了送礼私信会补一行） */
+function boardState(): { board: LiveBoard; lines: string[] } {
+  const live = getLiveConfig();
+  const board = live.board ?? { text: DEFAULT_BOARD_TEXT, show: true };
+  return { board, lines: boardLines(board, !!live.patrol?.giftDm) };
+}
+
+/** 控制台传来的研究设置：只认识的字段、合理的范围 */
+function cleanSpec(input: ResearchSpecInput | undefined): ResearchSpec | null {
+  if (!input || !['hot', 'up', 'search', 'videos'].includes(input.kind)) return null;
+  const target = String(input.target ?? '').trim().slice(0, 2000);
+  const limit = Math.floor(Number(input.limit));
+  return {
+    kind: input.kind,
+    ...(target ? { target } : {}),
+    ...(limit > 0 ? { limit: Math.min(500, limit) } : {}),
+    ...(input.transcribe === 'auto' || input.transcribe === 'all' ? { transcribe: input.transcribe } : {}),
+  };
+}
+
 export function registerLiveIpc(): void {
+  // B站研究（情报站环节）要先注册，节目单读回来时才认得它
+  initBiliResearch({
+    dataDir: app.getPath('userData'),
+    cookie: () => getLiveConfig().cookie,
+    settings: () => ({ like: !!getLiveConfig().patrol?.like, comment: !!getLiveConfig().patrol?.comment, visionProvider: getLiveConfig().patrol?.visionProvider }),
+    spec: () => cleanSpec(getLiveConfig().research) ?? { kind: 'hot' },
+    giftDm: () => !!getLiveConfig().patrol?.giftDm,
+    sendToStage: sendToRenderer,
+    broadcast: broadcastToWindows,
+  });
+  // 回观众时她要知道：公告板写了什么、手上在干嘛、送礼私信开没开
+  streamerSession.setStageContext(() => {
+    const { board, lines } = boardState();
+    return { board: board.show ? lines : undefined, doing: show.currentActivity(), giftDm: !!getLiveConfig().patrol?.giftDm };
+  });
   show.initShowRunner({
     dataDir: app.getPath('userData'),
     // 环节自带布局：换环节时画面跟着换（主播手动切走则环节暂停）
@@ -272,8 +329,10 @@ export function registerLiveIpc(): void {
       roomId: Math.max(0, Math.floor(Number(cfg.roomId) || 0)),
       cookie: String(cfg.cookie ?? '').trim(),
       background: String(cfg.background ?? getLiveConfig().background ?? ''),
+      patrol: getLiveConfig().patrol,
     });
     persistAppConfig();
+    syncPlayerCookies(getLiveConfig().cookie).catch((err) => console.warn('[Live] 同步播放器 Cookie 失败:', (err as Error).message));
     // 已连着就按新设置重连；roomId 清空则断开
     if (liveHub.currentConfig) return getLiveConfig().roomId ? liveHub.connect(getLiveConfig()) : liveHub.disconnect();
     return liveHub.status();
@@ -340,10 +399,27 @@ export function registerLiveIpc(): void {
     return true;
   });
   // 没开播时测试：以测试观众的身份发一条弹幕（和真实弹幕走同一条路）
-  ipcMain.handle('live:test-chat', (_e, name: string, text: string) => {
+  ipcMain.handle('live:test-chat', (_e, name: string, text: string, uid?: string) => {
     if (!streamerSession.running) return false;
-    streamerSession.ingestTest(String(name || '测试观众').slice(0, 20), String(text ?? '').slice(0, 200));
+    streamerSession.ingestTest(String(name || '测试观众').slice(0, 20), String(text ?? '').slice(0, 200), testUid(uid));
     return true;
+  });
+  ipcMain.handle('live:test-event', (_e, event: { kind?: string; name?: string; uid?: string; gift?: string }) => {
+    if (event?.kind !== 'enter' && event?.kind !== 'gift') return false;
+    return streamerSession.ingestTestEvent(event.kind, String(event.name || '测试观众').slice(0, 20), testUid(event.uid), event.gift ? String(event.gift).slice(0, 20) : undefined);
+  });
+
+  // 「现在的环节」：choice 是环节 id，歌回 / 游戏回这种带布局的写成 free-chat@sing
+  ipcMain.handle('live:segment:switch', (_e, choice: string) => {
+    const [segmentId, layout] = String(choice ?? '').split('@');
+    const layouts: LiveSegment[] = ['chat', 'sing', 'game', 'watch'];
+    // AI 互动没开时她没法口播过渡：直接切
+    const canSpeak = streamerController.isRunning && streamerSession.running && streamerSession.autoReply;
+    return show.switchSegment({
+      segmentId,
+      minutes: 60,
+      ...(layouts.includes(layout as LiveSegment) ? { params: { layout } } : {}),
+    }, !canSpeak);
   });
 
   // 节目单
@@ -366,6 +442,67 @@ export function registerLiveIpc(): void {
     return liveMemory?.store.counts() ?? null;
   });
   ipcMain.handle('live:show:summary', () => show.lastShowSummary());
+  // B 站巡逻：点赞 / 评论开关、日报
+  ipcMain.handle('live:patrol:settings', () => {
+    const p = getLiveConfig().patrol;
+    return { like: !!p?.like, comment: !!p?.comment, giftDm: !!p?.giftDm };
+  });
+  ipcMain.handle('live:patrol:set-settings', (_e, next: { like?: boolean; comment?: boolean; giftDm?: boolean }) => {
+    const patrol = { ...getLiveConfig().patrol, like: !!next?.like, comment: !!next?.comment, giftDm: !!next?.giftDm };
+    setLiveConfig({ ...getLiveConfig(), patrol });
+    persistAppConfig();
+    // 公告板会跟着加 / 去掉送礼那一行
+    broadcastToWindows('live:board', boardState());
+    return { like: patrol.like, comment: patrol.comment, giftDm: patrol.giftDm };
+  });
+  // 公告板
+  ipcMain.handle('live:board:get', () => boardState());
+  ipcMain.handle('live:board:set', (_e, input: { text?: string; show?: boolean }) => {
+    const text = String(input?.text ?? '').slice(0, 1000).trim();
+    setLiveConfig({ ...getLiveConfig(), board: { text: text || DEFAULT_BOARD_TEXT, show: input?.show !== false } });
+    persistAppConfig();
+    const state = boardState();
+    broadcastToWindows('live:board', state);
+    return state;
+  });
+  // B站研究任务
+  ipcMain.handle('research:start', async (_e, input: ResearchSpecInput) => {
+    const runner = researchRunner();
+    if (!runner) return { ok: false, detail: '研究模块没起来' };
+    const spec = cleanSpec(input);
+    if (!spec) return { ok: false, detail: '不认识的任务种类' };
+    const problem = researchSpecProblem(spec);
+    if (problem) return { ok: false, detail: problem };
+    // 开了什么就记成「研究什么」：之后情报站自己开任务也照这个
+    setLiveConfig({ ...getLiveConfig(), research: spec });
+    persistAppConfig();
+    const job = await runner.start(spec);
+    return job.status === 'failed' ? { ok: false, detail: job.error, job: summarizeJob(job) } : { ok: true, job: summarizeJob(job) };
+  });
+  ipcMain.handle('research:spec', () => cleanSpec(getLiveConfig().research) ?? { kind: 'hot' });
+  ipcMain.handle('research:set-spec', (_e, input: ResearchSpecInput) => {
+    const spec = cleanSpec(input) ?? { kind: 'hot' as const };
+    setLiveConfig({ ...getLiveConfig(), research: spec });
+    persistAppConfig();
+    return spec;
+  });
+  ipcMain.handle('research:stop', async () => {
+    await researchRunner()?.stop();
+    return summarizeJob(researchRunner()?.current ?? null);
+  });
+  ipcMain.handle('research:status', () => summarizeJob(researchRunner()?.current ?? null));
+  ipcMain.handle('research:list', () => researchRunner()?.list() ?? []);
+  ipcMain.handle('research:report', async (_e, id?: string) => {
+    const result = await researchRunner()?.report(id || undefined);
+    return result ? { file: result.file, markdown: result.markdown } : null;
+  });
+  ipcMain.handle('research:open', async (_e, what: 'reports' | 'videos' | 'file', file?: string) => {
+    const folders = researchFolders();
+    if (!folders) return false;
+    if (what === 'file' && file && file.startsWith(folders.reports)) await shell.openPath(file);
+    else await shell.openPath(what === 'videos' ? folders.videos : folders.reports);
+    return true;
+  });
   ipcMain.handle('live:show:open-logs', async () => {
     const dir = show.logsDir();
     if (!dir) return false;

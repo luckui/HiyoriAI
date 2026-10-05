@@ -153,6 +153,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       // TTS 语音管理
       "manage_tts",              // 管理本地 TTS 语音合成服务
       "manage_hearing",          // 管理听觉系统（STT 语音识别）
+      "bili_research",           // B 站视频研究：批量收集、转录、分析、出报告
       "manage_live2d",           // 控制 Live2D 角色情绪与动作
 
       // 独立任务
@@ -189,6 +190,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "write_file",              // Skill: 写入文件
       "manage_tts",              // 管理本地 TTS 语音合成服务
       "manage_hearing",          // 管理听觉系统（STT 语音识别）
+      "bili_research",           // B 站视频研究：批量收集、转录、分析、出报告
       "manage_live2d",           // 控制 Live2D 角色情绪与动作
       
       // 异步任务
@@ -250,6 +252,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       // Skills
       "manage_tts",              // 管理本地 TTS 语音合成服务
       "manage_hearing",          // 管理听觉系统（STT 语音识别）
+      "bili_research",           // B 站视频研究：批量收集、转录、分析、出报告
       "manage_live2d",           // 控制 Live2D 角色情绪与动作
       
       // 异步任务
@@ -327,6 +330,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "manage_hearing",
       "manage_live2d",
       "manage_bilibili_live",
+      "bili_research",
       "watch_bilibili_video",    // 观看B站视频并获取元数据（Streamer专用）
       "browser_open",
       "browser_read_page",

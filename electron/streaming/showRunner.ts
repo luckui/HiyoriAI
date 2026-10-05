@@ -71,7 +71,7 @@ export function sanitizeRundown(items: unknown[]): LiveRundownItem[] {
 
 function broadcastState(): void {
   if (!deps || !director) return;
-  deps.broadcast('live:director', director.state(Date.now()));
+  deps.broadcast('live:director', directorState());
   deps.broadcast('live:panel', director.panel());
 }
 
@@ -107,6 +107,11 @@ export function initShowRunner(d: ShowRunnerDeps): void {
 // ── 开播 / 下播 ─────────────────────────────────────────
 
 /** 开始记录这一场（开场动画开始，或没开画面时手动开始节目单） */
+/** 这一场正在记录（开场后、谢幕前） */
+export function isRecording(): boolean {
+  return !!recorder?.active;
+}
+
 export function beginRecording(now = Date.now()): void {
   if (!recorder || recorder.active) return;
   recorder.begin(now);
@@ -149,7 +154,18 @@ export function rundownTitles(): string[] {
 // ── 控制台 ───────────────────────────────────────────────
 
 export function directorState(): LiveDirectorState | null {
-  return director?.state(Date.now()) ?? null;
+  return director ? { ...director.state(Date.now()), rehearsal: streamerSession.running && streamerSession.rehearsal } : null;
+}
+
+/** 主播在控制台选「现在的环节」（直播中说一句过渡就切过去；开播前就是第一个环节） */
+export function switchSegment(item: LiveRundownItem, immediate = false): LiveDirectorState | null {
+  director?.jumpTo(item, Date.now(), { immediate });
+  return directorState();
+}
+
+/** 她手上正在做什么（写进回观众的提示词） */
+export function currentActivity(): string | null {
+  return director?.activity() ?? null;
 }
 
 export function currentPanel(): StagePanelState | null {

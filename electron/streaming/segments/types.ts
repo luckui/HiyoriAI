@@ -37,6 +37,8 @@ export interface SegmentContext {
   /** 本环节已经说了几拍 */
   beats: number;
   heat: RoomHeat;
+  /** 素材在后台准备好了（档案查完、点播排上）：让舞台面板刷新一下 */
+  changed(): void;
 }
 
 export interface LiveSegmentPlugin {
@@ -51,6 +53,8 @@ export interface LiveSegmentPlugin {
   onSpoken?(beat: SegmentBeat, text: string, ctx: SegmentContext, now: number): void;
   onChat?(event: LiveChatEvent, ctx: SegmentContext, now: number): boolean;
   panel?(): Omit<StagePanelState, 'segmentId'> | null;
+  /** 她手上正在做什么（一句话，回观众时参考，比如「在讲第 3 个视频《xx》」） */
+  activity?(): string | null;
   /** 环节觉得可以结束了，比如素材用完 */
   isDone?(ctx: SegmentContext, now: number): boolean;
   stop(): Promise<void>;

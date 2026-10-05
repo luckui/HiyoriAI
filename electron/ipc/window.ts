@@ -4,6 +4,7 @@
 
 import { app, BrowserWindow, ipcMain, screen, type Rectangle } from 'electron';
 import { join } from 'path';
+import { LIVE_PLAYER_PARTITION } from '../../shared/types/live';
 import { setToolEventListener } from '../aiService';
 import { initLive2DBridge } from '../live2dBridge';
 import { getMainWindow, sendToRenderer, setMainWindow } from '../mainWindow';
@@ -38,6 +39,27 @@ export function setStageWindow(on: boolean, size = { width: 1280, height: 720 })
   }
 }
 
+/** 舞台的 <webview> 只许放 B 站视频页 / 播放器：独立会话、不带 preload、不许弹窗和跳到别的站 */
+function guardWebviews(win: BrowserWindow): void {
+  win.webContents.on('will-attach-webview', (event, prefs, params) => {
+    if (!/^https:\/\/(www|player)\.bilibili\.com\//.test(params.src) && params.src !== 'about:blank') {
+      event.preventDefault();
+      return;
+    }
+    delete prefs.preload;
+    prefs.nodeIntegration = false;
+    prefs.contextIsolation = true;
+    prefs.autoplayPolicy = 'no-user-gesture-required';
+    params.partition = LIVE_PLAYER_PARTITION;
+  });
+  win.webContents.on('did-attach-webview', (_event, guest) => {
+    guest.setWindowOpenHandler(() => ({ action: 'deny' }));
+    guest.on('will-navigate', (e, url) => {
+      if (!/^https:\/\/([a-z0-9-]+\.)*bilibili\.com\//.test(url)) e.preventDefault();
+    });
+  });
+}
+
 export function createMainWindow(): BrowserWindow {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
   const win = new BrowserWindow({
@@ -54,9 +76,12 @@ export function createMainWindow(): BrowserWindow {
       nodeIntegration: false,
       contextIsolation: true,
       webSecurity: false,
+      // 直播间画面放 B 站视频片段（巡逻环节）；能挂什么由 will-attach-webview 把关
+      webviewTag: true,
     },
   });
   setMainWindow(win);
+  guardWebviews(win);
   initLive2DBridge(win);
 
   // 启动时用 screen-saver 层级，确保盖过全屏应用和其他 alwaysOnTop 窗口

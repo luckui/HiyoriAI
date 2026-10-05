@@ -394,6 +394,8 @@ body.stage-phase-opening:not(.stage-revealed) #stage-game {
 body.stage-phase-ending #stage-chat,
 body.stage-phase-ending #stage-header,
 body.stage-phase-ending #stage-alerts,
-body.stage-phase-ending #stage-game {
+body.stage-phase-ending #stage-game,
+body.stage-phase-ending #ide,
+body.stage-phase-ending #stage-watch {
   opacity: 0;
 }

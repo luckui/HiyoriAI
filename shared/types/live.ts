@@ -127,10 +127,52 @@ export interface LiveConfig {
   cookie: string;
   /** 直播间画面的背景：本地视频或图片的路径；空串用内置动态背景 */
   background: string;
+  /** B 站巡逻时用主人的账号点赞 / 留评论（默认都关） */
+  patrol?: LivePatrolSettings & { visionProvider?: string };
+  /** 控制台「B站研究」里选的研究什么：情报站环节开始、手上又没任务时按它开 */
+  research?: ResearchSpecInput;
+  /** 直播间公告板（情报站画面左上角；她回观众时也参考它） */
+  board?: LiveBoard;
+}
+
+/** 情报站的互动开关 */
+export interface LivePatrolSettings {
+  /** 讲过的视频用主人的账号点赞 */
+  like: boolean;
+  /** 讲过的视频留评论（每场最多 3 条） */
+  comment: boolean;
+  /** 观众送任意礼物、再发 BV 号：把这个视频的字幕和分析私信给他 */
+  giftDm?: boolean;
+}
+
+/** 公告板：第一行是标题，其余一行一条 */
+export interface LiveBoard {
+  text: string;
+  show: boolean;
+}
+
+export const DEFAULT_BOARD_TEXT = [
+  '📡 B站情报站 · Hiyori 打工中',
+  '她在帮主人搜集 B 站视频、转录文案、研究流行文化',
+  '💬 随便和她聊天都行，她边干活边回',
+  '🎬 想让她研究某个视频：发 BV 号或视频链接',
+].join('\n');
+
+/** 开了送礼私信时公告板自动加的一行 */
+export const BOARD_GIFT_LINE = '🎁 送任意礼物再发 BV 号：这个视频的字幕和分析私信给你';
+
+/** 画面上、提示词里实际用的公告：开了送礼私信就补上那一行 */
+export function boardLines(board: LiveBoard | undefined, giftDm: boolean): string[] {
+  const lines = (board?.text ?? DEFAULT_BOARD_TEXT).split('\n').map((l) => l.trim()).filter(Boolean);
+  if (giftDm && !lines.some((l) => l.includes('礼物'))) lines.push(BOARD_GIFT_LINE);
+  return lines;
 }
 
 /** 连接直播间只需要这几项 */
 export type LiveConnection = Pick<LiveConfig, 'platform' | 'roomId' | 'cookie'>;
+
+/** 舞台上放 B 站视频（巡逻环节）的 webview 会话：和主窗口分开，只放 B 站 Cookie */
+export const LIVE_PLAYER_PARTITION = 'persist:bili-player';
 
 /** 画面主题：一整套背景场景、配色和弹幕风格 */
 export type LiveTheme = 'sakura' | 'starlight' | 'arcade';
@@ -142,12 +184,13 @@ export const LIVE_THEMES: Record<LiveTheme, { name: string; icon: string }> = {
 };
 
 /** 节目形式：决定画面布局、默认主题和她聊天的方向 */
-export type LiveSegment = 'chat' | 'sing' | 'game';
+export type LiveSegment = 'chat' | 'sing' | 'game' | 'watch';
 
 export const LIVE_SEGMENTS: Record<LiveSegment, { icon: string; title: string; topic: string; theme: LiveTheme }> = {
   chat: { icon: '💬', title: '聊天回', topic: '和观众闲聊', theme: 'sakura' },
   sing: { icon: '🎤', title: '歌回', topic: '歌回：聊音乐、聊想唱的歌', theme: 'starlight' },
   game: { icon: '🎮', title: '游戏回', topic: '游戏回：边玩游戏边和观众聊', theme: 'arcade' },
+  watch: { icon: '📡', title: 'B站情报站', topic: 'B站情报站：帮主人收集、转录、分析 B 站视频，边干活边陪大家聊', theme: 'starlight' },
 };
 
 /**
@@ -225,12 +268,14 @@ export interface LiveDirectorState {
   running: boolean;
   /** 环节暂停出拍、也不计时 */
   paused: boolean;
+  /** 直播间没开播：排练模式，没人在看也照常演（真开播了才省着来） */
+  rehearsal?: boolean;
   /** 为什么暂停：layout 画面切到了别的布局（比如临时切到游戏回），audience 直播间没人在看 */
   pausedFor?: 'layout' | 'audience';
   rundown: LiveRundownItem[];
   /** 正在跑第几项；-1 表示还没开始或已经走完 */
   index: number;
-  current?: { segmentId: string; title: string; elapsedMs: number; plannedMs: number; beats: number };
+  current?: { segmentId: string; title: string; layout: LiveSegment; elapsedMs: number; plannedMs: number; beats: number };
 }
 
 /** 舞台面板：角落里「现在在做：××」的小卡片，加上环节自己的内容（由 renderer 表里按 kind 画） */
@@ -282,4 +327,43 @@ export interface LiveShowSummary {
   segments: Array<{ segmentId: string; title: string; ms: number; beats: number }>;
   highlights: Array<{ t: number; why: string }>;
   options: Required<LiveShowSummaryOptions>;
+}
+
+/** 研究什么：热门快照 / 某个 UP 主的全部投稿 / 关键词搜索 / 指定视频 */
+export interface ResearchSpecInput {
+  kind: 'hot' | 'up' | 'search' | 'videos';
+  /** UP 主名字或 mid / 关键词 / BV 号（热门不用填） */
+  target?: string;
+  limit?: number;
+  /** 没字幕的要不要本地转写：all 都转，auto 长视频不转；不填按种类默认 */
+  transcribe?: 'all' | 'auto';
+}
+
+/** 除了热门，其他种类都要填目标 */
+export function researchSpecProblem(spec: ResearchSpecInput): string | null {
+  if (spec.kind === 'hot' || spec.target?.trim()) return null;
+  return { up: '要填 UP 主名字或 mid', search: '要填关键词', videos: '要填 BV 号' }[spec.kind];
+}
+
+/** B站研究任务的概况（控制台显示用） */
+export interface ResearchJobSummary {
+  id: string;
+  title: string;
+  status: 'preparing' | 'running' | 'done' | 'stopped' | 'failed';
+  kind: 'hot' | 'up' | 'search' | 'videos';
+  /** 开这个任务时的设置（控制台对比「改了没有」） */
+  spec: ResearchSpecInput;
+  done: number;
+  skipped: number;
+  total: number;
+  /** 正在处理的视频 */
+  working?: string;
+  reportFile?: string;
+  error?: string;
+}
+
+/** 研究过程的一行输出（舞台的终端）；id 相同的行原地更新（进度条） */
+export interface ResearchLogLine {
+  text: string;
+  id?: string;
 }

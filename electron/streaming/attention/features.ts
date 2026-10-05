@@ -17,6 +17,10 @@ export interface ChatFeatures {
   trendKey: string;
   /** 去掉 [表情] 后的有效字数 */
   length: number;
+  /** 发了 B 站视频（BV 号或 b23 短链）：任何环节里都会排进研究队列 */
+  videoLink: boolean;
+  /** 想让她看 / 搜某个视频，但没给 BV 号或链接（要引导他发） */
+  videoAsk: boolean;
 }
 
 const HER_NAMES = /hiyori|ひより|日和/i;
@@ -28,6 +32,13 @@ const LOW_CONTENT_CHARS = /^[哈呵嘿嘻h6草艹w？?!！。.…,，~～+＋=0-
 const LOW_CONTENT_PHRASES = /^(好耶|牛|牛逼|nb|yyds|绝了|笑死|乐|典|确实|对对对|是的|真的|好家伙|可爱|好可爱|awsl|tql|233+|hhh+|xswl|吗喽|啊这)$/i;
 
 const EMOTE = /\[[^\]\s]{1,16}\]/g;
+/** 想让她看 / 搜某个视频的说法（没带 BV 号时要引导他发） */
+const VIDEO_ASK = [
+  /(搜|查|找)(一下|一搜|一查|下|搜|查)/,
+  /(看看|看一下|看下|研究|分析|解析|讲讲|锐评|聊聊).{0,14}(视频|这期|那期|新作|投稿|MV|mv|番|up主|UP主|的新)/,
+  /(有没有|知道|看过).{0,14}(视频|up主|UP主)/,
+  /(帮我|给我|替我).{0,6}(看|搜|查|研究|分析)/,
+];
 
 export function stripEmotes(text: string): string {
   return text.replace(EMOTE, '').trim();
@@ -56,6 +67,8 @@ export function chatFeatures(text: string): ChatFeatures {
     addressesHer: ADDRESS.test(body),
     greeting: GREETING.test(compact),
     lowContent,
+    videoLink: /BV[0-9A-Za-z]{10}|b23\.tv\//.test(body),
+    videoAsk: !/BV[0-9A-Za-z]{10}|b23\.tv\//.test(body) && VIDEO_ASK.some((re) => re.test(body)),
     trendKey: trendKeyOf(text),
     length: [...compact].length,
   };

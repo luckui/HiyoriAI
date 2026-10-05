@@ -50,6 +50,11 @@ import type {
   LiveRundownItem,
   LiveShowSummary,
   StagePanelState,
+  ResearchJobSummary,
+  ResearchLogLine,
+  ResearchSpecInput,
+  LiveBoard,
+  LivePatrolSettings,
   LiveStatus,
   LiveTheme,
   LiveUpdate,
@@ -330,7 +335,17 @@ export interface LiveAPI {
   /** 清空直播记忆（说过「别记我」的名单保留） */
   clearMemory(): Promise<{ viewers: number; streams: number; memes: number; tastes: number } | null>;
   /** 测试：以测试观众身份发一条弹幕（AI 互动开着时才有效） */
-  testChat(name: string, text: string): Promise<boolean>;
+  testChat(name: string, text: string, uid?: string): Promise<boolean>;
+  /** 没开播时测试：以某个测试观众的身份进场、送礼（uid 填了就用它，测试私信用） */
+  testEvent(event: { kind: 'enter' | 'gift'; name: string; uid?: string; gift?: string }): Promise<boolean>;
+  getBoard(): Promise<{ board: LiveBoard; lines: string[] }>;
+  setBoard(board: LiveBoard): Promise<{ board: LiveBoard; lines: string[] }>;
+  /** 公告板改了（舞台显示用） */
+  onBoard(cb: (state: { board: LiveBoard; lines: string[] }) => void): Unsubscribe;
+  /** 「现在的环节」：直播中说一句过渡就切过去，开播前就是第一个环节（choice 如 bili-intel、free-chat@game） */
+  switchSegment(choice: string): Promise<LiveDirectorState | null>;
+  /** 主进程的提示（比如 AI 互动开不了） */
+  onNotice(cb: (text: string) => void): Unsubscribe;
   /** 节目单：能选的环节 + 导演当前状态 */
   getRundown(): Promise<{ segments: LiveSegmentInfo[]; state: LiveDirectorState | null }>;
   /** 保存节目单（正在跑时下一场才生效） */
@@ -346,6 +361,33 @@ export interface LiveAPI {
   onDirector(cb: (state: LiveDirectorState) => void): Unsubscribe;
   getPanel(): Promise<StagePanelState | null>;
   onPanel(cb: (panel: StagePanelState | null) => void): Unsubscribe;
+  /** B 站巡逻：用主人的账号点赞 / 留评论（默认都关） */
+  getPatrolSettings(): Promise<LivePatrolSettings>;
+  setPatrolSettings(next: LivePatrolSettings): Promise<LivePatrolSettings>;
+  /** B站研究任务：热门快照 / UP 主全部投稿 / 关键词搜索 / 指定视频 */
+  startResearch(spec: ResearchSpecInput): Promise<{ ok: boolean; detail?: string; job?: ResearchJobSummary | null }>;
+  /** 控制台里选的研究什么（存进配置；情报站自己开任务时用它） */
+  getResearchSpec(): Promise<ResearchSpecInput>;
+  setResearchSpec(spec: ResearchSpecInput): Promise<ResearchSpecInput>;
+  stopResearch(): Promise<ResearchJobSummary | null>;
+  getResearch(): Promise<ResearchJobSummary | null>;
+  /** 之前的研究任务（新的在前） */
+  listResearch(): Promise<Array<{ id: string; title: string; status: string; createdAt: number; reportFile?: string; done: number; total: number }>>;
+  onResearch(cb: (job: ResearchJobSummary | null) => void): Unsubscribe;
+  /** 生成（或重新生成）报告；不给 id 是当前任务 */
+  researchReport(id?: string): Promise<{ file: string; markdown: string } | null>;
+  onResearchReport(cb: (report: { id: string; title: string; file: string }) => void): Unsubscribe;
+  /** 打开报告文件夹 / 字幕文件夹 / 某份报告 */
+  openResearch(what: 'reports' | 'videos' | 'file', file?: string): Promise<boolean>;
+  /** 研究过程的输出（舞台终端） */
+  onTerminal(cb: (line: ResearchLogLine) => void): Unsubscribe;
+  /** 舞台播放器（巡逻环节放视频片段）：主进程下命令，舞台放完回报 */
+  onPlayer(cb: (cmd:
+    | { action: 'play'; id: number; bvid: string; cid: number; startSec: number; clipSec: number }
+    | { action: 'open'; bvid: string; title: string }
+    | { action: 'stop' }) => void): Unsubscribe;
+  /** 放完了：played 是不是真的放了，frames 是放的时候截的画面（data URL） */
+  playerDone(id: number, played: boolean, frames?: string[]): void;
   /** 上一场的指标汇总 */
   getShowSummary(): Promise<{ summary: LiveShowSummary; file: string | null } | null>;
   onShowSummary(cb: (result: { summary: LiveShowSummary; file: string | null }) => void): Unsubscribe;

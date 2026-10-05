@@ -27,8 +27,13 @@ const SEGMENTS: SegmentDefinition[] = [
 
 export const segmentRegistry = new Map(SEGMENTS.map((s) => [s.id, s]));
 
+/** 要运行时依赖（B 站会话、LLM、播放器）的环节在启动时注册 */
+export function registerSegment(def: SegmentDefinition): void {
+  segmentRegistry.set(def.id, def);
+}
+
 export function listSegments(): LiveSegmentInfo[] {
-  return SEGMENTS.map(({ id, title, description }) => ({ id, title, description }));
+  return [...segmentRegistry.values()].map(({ id, title, description }) => ({ id, title, description }));
 }
 
 /** 每个环节一个 JSON 文件；读写失败只打日志，不影响直播 */

@@ -14,6 +14,14 @@
       <!-- ===== 直播间画面：背景层（在 Live2D 之下），只在 body.stage-mode 时显示 ===== -->
       <div id="stage-back" aria-hidden="true">
         <div id="stage-scene"></div>
+        <!-- 情报站的赛博背景（只在 watch 布局显示）：霓虹网格、她身后的光环、竖排大字、跟着声音跳的音量柱 -->
+        <div id="stage-cyber">
+          <div class="cy-sky"></div>
+          <div class="cy-grid-wrap"><div class="cy-grid"></div></div>
+          <div class="cy-kana" data-text="ヒヨリ情報局">ヒヨリ情報局</div>
+          <div class="cy-ring"></div>
+          <div id="cy-eq"></div>
+        </div>
         <video id="stage-video" muted loop playsinline></video>
         <div id="stage-image"></div>
         <canvas id="stage-particles"></canvas>
@@ -54,6 +62,41 @@
         <div id="stage-game">
           <video id="stage-game-video" muted playsinline></video>
           <div id="stage-game-empty">🎮 在控制台选择游戏窗口</div>
+        </div>
+        <!-- B站情报站：平铺窗口管理器式的外壳（顶栏、浏览器、文件树、终端、字幕坞），只在 watch 布局显示 -->
+        <div id="ide">
+          <div id="ide-titlebar">
+            <span class="wb-logo" data-text="HIYORI//OS">HIYORI//OS</span>
+            <span class="wb-ws"><i>1</i><i class="on">2</i><i>3</i><i>4</i></span>
+            <span id="ide-title">hiyori-intel</span>
+            <span class="wb-mod">♪ <span id="ide-cava"></span></span>
+            <span class="wb-mod" id="ide-clock"></span>
+          </div>
+          <div id="ide-browserbar">
+            <span class="ide-tab-chip"><span id="ide-tab">bilibili</span></span>
+            <span class="ide-url-box"><span id="ide-url">https://www.bilibili.com/</span></span>
+          </div>
+          <div id="ide-explorer">
+            <div class="ide-section"><span class="pl pl-a">ranger</span><span class="pl pl-b">~/research</span></div>
+            <div id="ide-job"></div>
+            <div id="stage-playlist"></div>
+          </div>
+          <div id="stage-terminal">
+            <div class="ide-section"><span class="pl pl-a">zsh</span><span class="pl pl-b">hiyori@arch</span><span class="pl pl-c">~/bili-intel</span></div>
+            <div id="term-lines"></div>
+          </div>
+          <!-- 公告板：观众一眼看到她在干嘛、怎么玩（控制台里改） -->
+          <div id="ide-board" hidden>
+            <div class="ide-section"><span class="pl pl-a">cat</span><span class="pl pl-b">README.md</span></div>
+            <div id="board-title"></div>
+            <ul id="board-lines"></ul>
+          </div>
+          <!-- 字幕坞：她不说话时显示空提示符；说话时字幕（#typewriter-overlay）盖在上面 -->
+          <div id="ide-dock"><span class="dock-prompt">hiyori ❯</span><span class="term-cursor"></span></div>
+          <div id="ide-scan"></div>
+        </div>
+        <div id="stage-watch">
+          <div id="stage-watch-empty">🌐 准备打开 B 站…</div>
         </div>
         <section id="stage-chat">
           <div id="stage-chat-title">💌 弹幕</div>

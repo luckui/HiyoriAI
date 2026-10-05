@@ -20,6 +20,7 @@
     </div>
     <div id="live-stats" class="live-stats"></div>
     <div id="live-notice" class="live-notice" hidden></div>
+    <div id="live-guide" class="live-guide"></div>
     <div class="live-phases" title="直播间画面：OBS / 直播姬采集「Hiyori 直播间」窗口">
       <button data-phase="waiting">⏳ 准备中</button>
       <button data-phase="opening">▶ 开场</button>
@@ -30,10 +31,12 @@
     <div class="live-controls">
       <button id="ctl-ai" class="live-toggle" title="她自己挑弹幕、礼物、进场来回应">🤖 AI 互动</button>
       <button id="ctl-mic" class="live-toggle" title="主人语音同台：按住「说话」或空格（游戏里按 F8 开始、再按一下说完），她会马上停下来接你的话">🎙 主人麦克风</button>
-      <select id="ctl-segment" title="节目形式（会换成该节目的默认主题）">
-        <option value="chat">💬 聊天回</option>
-        <option value="sing">🎤 歌回</option>
-        <option value="game">🎮 游戏回</option>
+      <select id="ctl-segment" title="现在的环节：直播中切换，她会口播一句过渡再换过去；开播前选的就是开场后的第一个环节">
+        <option value="topic-cards">💬 话题卡</option>
+        <option value="free-chat">💬 自由聊天</option>
+        <option value="bili-intel">📡 B站情报站</option>
+        <option value="free-chat@sing">🎤 歌回</option>
+        <option value="free-chat@game">🎮 游戏回</option>
       </select>
       <select id="ctl-theme" title="画面主题">
         <option value="sakura">🌸 樱花午后</option>
@@ -64,6 +67,58 @@
       </div>
       <div id="show-summary" class="show-summary" hidden></div>
     </details>
+    <details id="board" class="rundown">
+      <summary>
+        <span class="rundown-label">📌 公告板</span>
+        <span id="board-now" class="rundown-now">显示中</span>
+      </summary>
+      <div class="rs-explain">挂在情报站画面左上角；她欢迎观众、回答「你在干嘛」时也照这个意思说。第一行是标题，一行一条。开了「送礼私信解析」会自动加一行。</div>
+      <textarea id="board-text" class="board-text" rows="5"></textarea>
+      <div class="rundown-actions">
+        <label><input type="checkbox" id="board-show" checked /> 显示在画面上</label>
+        <button id="board-save" class="live-btn rs-main">保存</button>
+        <button id="board-reset" class="live-btn">恢复默认</button>
+        <span id="board-hint" class="rundown-hint"></span>
+      </div>
+    </details>
+    <details id="research" class="rundown">
+      <summary>
+        <span class="rundown-label">🔬 B站研究</span>
+        <span id="research-now" class="rundown-now">⏸ 空闲</span>
+      </summary>
+      <div class="rs-explain">研究在后台跑，和节目单互不影响：节目单停了、下播了，研究照样做完并出报告。<br>直播里由 <b>📡 B站情报站</b> 环节来讲研究结果。</div>
+      <div class="rundown-actions">
+        <select id="rs-kind" title="研究什么（情报站自己开任务时也按这里）">
+          <option value="hot">热门快照</option>
+          <option value="up">UP 主全部投稿</option>
+          <option value="search">关键词搜索</option>
+          <option value="videos">指定视频</option>
+        </select>
+        <input id="rs-target" class="rs-input" placeholder="UP 主名字 / 关键词 / BV 号" />
+        <input id="rs-limit" class="rs-limit" type="number" min="1" max="500" placeholder="数量" />
+        <select id="rs-transcribe" title="没有字幕的视频要不要本地转写">
+          <option value="">转写：默认</option>
+          <option value="all">没字幕都转写</option>
+          <option value="auto">长视频不转写</option>
+        </select>
+      </div>
+      <div class="rundown-actions">
+        <button id="rs-toggle" class="live-btn rs-main">▶ 开始研究</button>
+        <button id="rs-switch" class="live-btn" hidden title="停掉正在跑的任务，按上面的设置重新开始">↻ 换成上面的设置</button>
+        <button id="rs-report" class="live-btn">📄 出报告</button>
+        <button id="rs-open" class="live-btn">报告文件夹</button>
+        <button id="rs-videos" class="live-btn">字幕文件夹</button>
+      </div>
+      <div class="rundown-actions" title="情报站讲过的视频用你的 B 站账号点赞 / 评论">
+        <label><input type="checkbox" id="pt-like" /> 讲过的视频点赞</label>
+        <label><input type="checkbox" id="pt-comment" /> 留评论（每场最多 3 条）</label>
+      </div>
+      <div class="rundown-actions" title="观众送任意礼物、再发 BV 号（顺序反过来也行）：她研究完把字幕和分析私信给他。用你的 B 站账号发；B 站规定对方回复或关注前只能收到 1 条；每场最多 20 条">
+        <label><input type="checkbox" id="pt-giftdm" /> 🎁 送礼私信解析（送礼 + 发 BV 号 → 私信字幕和分析）</label>
+      </div>
+      <div id="rs-context" class="live-guide"></div>
+      <div id="rs-hint" class="show-summary" hidden></div>
+    </details>
   </header>
 
   <div id="live-ambient" class="live-ambient"></div>
@@ -72,7 +127,7 @@
   <button id="live-jump" class="live-jump" hidden>有新消息 ↓</button>
 
   <form id="owner-form" class="owner-form">
-    <input id="owner-input" type="text" autocomplete="off" placeholder="对 Hiyori 说…（观众听不到你）；「/弹幕 内容」发测试弹幕" />
+    <input id="owner-input" type="text" autocomplete="off" placeholder="对 Hiyori 说…（观众听不到你）；测试：/弹幕 [名字：]内容　/进场 名字　/礼物 名字[#uid]" />
     <button id="owner-send" type="submit" class="live-btn">发送</button>
     <button id="ptt" type="button" class="live-btn ptt" hidden title="按住说话（也可以按住空格；游戏里按 F8）">🎙 按住说话</button>
   </form>

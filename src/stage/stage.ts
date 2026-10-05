@@ -18,6 +18,9 @@ import { ParticleField } from './particles';
 import { buildTheme, THEME_BURST_COLORS, type ThemeScene } from './themes';
 import { clearSequence, playEnding, playOpening, showWaiting } from './sequences';
 import { renderPanel } from './panels';
+import { initWatchPlayer, stopWatchPlayer } from './watchPlayer';
+import { initStageTerminal } from './terminal';
+import { cyberFrame, initCyber } from './cyber';
 import './stage.css';
 
 const MAX_CHAT = 9;
@@ -31,11 +34,12 @@ const FRAMING = {
   chat: { scale: 2.15, offsetY: -0.6 },
   sing: { scale: 1.9, offsetY: -0.5 },
   game: { scale: 2.0, offsetY: -0.62 },
+  watch: { scale: 2.0, offsetY: -0.62 },
   ending: { scale: 2.0, offsetY: -0.58 },
 };
 
 /** 她看向弹幕栏的方向（x 正为观众的右边，y 正为上） */
-const CHAT_GAZE = { chat: { x: -0.8, y: -0.1 }, sing: { x: 0.8, y: -0.1 }, game: { x: 0.2, y: 0.7 } };
+const CHAT_GAZE = { chat: { x: -0.8, y: -0.1 }, sing: { x: 0.8, y: -0.1 }, game: { x: 0.2, y: 0.7 }, watch: { x: 0.2, y: 0.7 } };
 
 let state: LiveStageState | null = null;
 let halfBodyBefore: boolean | null = null;
@@ -106,6 +110,7 @@ function apply(next: LiveStageState): void {
     back = fx = null;
   }
   if (!next.on) {
+    stopWatchPlayer();
     applyCapture(null);
     applyBackground('');
     return;
@@ -118,6 +123,8 @@ function apply(next: LiveStageState): void {
   applyTheme(next);
   applyBackground(next.background);
   applyCapture(next.segment === 'game' ? next.capture?.id ?? null : null);
+  // 离开巡逻回就别放了
+  if (prev?.segment === 'watch' && next.segment !== 'watch') stopWatchPlayer();
   if (prev?.phase !== next.phase) applyPhase(next);
 }
 
@@ -239,6 +246,7 @@ function startLoop(): void {
     }
     fx?.frame(dt);
     scene?.frame?.(pulse, now / 1000);
+    cyberFrame(pulse, now / 1000);
     rafId = requestAnimationFrame(loop);
   };
   rafId = requestAnimationFrame(loop);
@@ -547,6 +555,9 @@ export function initStage(): void {
   api.onFocus(onFocus);
   api.onPanel(renderPanel);
   api.onOwnerVoice(onOwnerVoice);
+  initWatchPlayer();
+  initStageTerminal();
+  initCyber();
   void api.getPanel().then(renderPanel);
   api.onUpdate((update) => {
     if (!isStageMode()) return;

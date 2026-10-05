@@ -29,6 +29,8 @@ export interface DirectorHooks {
 
 interface Running {
   item: LiveRundownItem;
+  /** 这个环节用的画面布局：节目单项里指定的（params.layout），否则用环节自己的 */
+  layout: LiveSegment;
   def: SegmentDefinition;
   plugin: LiveSegmentPlugin;
   ctx: SegmentContext;
@@ -94,7 +96,7 @@ export class SegmentDirector implements BeatSource {
   /** 暂停时不出拍、不计时 */
   private get paused(): boolean {
     const cur = this.current;
-    return !!cur && (this.empty || (this.stageLayout !== null && cur.plugin.layout !== this.stageLayout));
+    return !!cur && (this.empty || (this.stageLayout !== null && cur.layout !== this.stageLayout));
   }
 
   /** 换暂停条件：先把暂停前的时间算进去 */
@@ -116,6 +118,25 @@ export class SegmentDirector implements BeatSource {
     if (this.empty === !present) return;
     this.repause(now, () => { this.empty = !present; });
     this.hooks.onAudience?.(present, now);
+  }
+
+  /**
+   * 主播在控制台选「现在的环节」：直播中就插在当前环节后面，说一句过渡就换过去；
+   * 还没开始就把它换成节目单的第一项（开场后先做它）。
+   */
+  jumpTo(item: LiveRundownItem, now: number, opts: { immediate?: boolean } = {}): void {
+    if (!this.registry.has(item.segmentId)) return;
+    const next = { ...item, minutes: Math.max(1, item.minutes) };
+    if (!this.running) {
+      this.rundown = [next, ...this.rundown.slice(1)];
+      this.hooks.onChange?.();
+      return;
+    }
+    this.rundown.splice(this.index + 1, 0, next);
+    // 她能说话就口播一句过渡再换；不能说话（AI 互动没开）就直接换
+    if (this.current && !opts.immediate) this.transitionDue = true;
+    else this.advance(now);
+    this.hooks.onChange?.();
   }
 
   /** 控制台「下一环节」：说一句过渡就换 */
@@ -163,6 +184,8 @@ export class SegmentDirector implements BeatSource {
     const beat = cur.pending!;
     cur.pending = null;
     cur.speaking = beat;
+    // 要开口了：面板换成这一拍的内容（比如要介绍的视频）
+    this.hooks.onChange?.();
     return { kind: 'segment', segmentId: cur.def.id, segmentTitle: cur.def.title, beat, recap: [...cur.recap] };
   }
 
@@ -181,8 +204,11 @@ export class SegmentDirector implements BeatSource {
 
   /** 弹幕先给环节看；环节消费了（作答、点播）就不再当普通聊天 */
   onChat(event: LiveChatEvent, now: number): boolean {
-    const cur = this.live(now);
-    if (!cur?.ready || !cur.plugin.onChat) return false;
+    // 还在准备素材、或者刚才没人在看（暂停中）也先给环节看：点播只是排进队列，
+    // 而且这条弹幕本身就说明有人来了
+    const cur = this.running ? this.current : null;
+    if (!cur?.plugin.onChat) return false;
+    this.tick(now);
     const used = cur.plugin.onChat(event, cur.ctx, now);
     if (used) {
       cur.pending = null; // 素材可能变了（插队的视频、换了的话题卡）
@@ -203,9 +229,16 @@ export class SegmentDirector implements BeatSource {
       rundown: this.rundown.map((i) => ({ ...i })),
       index: this.index,
       current: cur
-        ? { segmentId: cur.def.id, title: cur.def.title, elapsedMs: cur.elapsedMs, plannedMs: cur.plannedMs, beats: cur.ctx.beats }
+        ? { segmentId: cur.def.id, title: cur.def.title, layout: cur.layout, elapsedMs: cur.elapsedMs, plannedMs: cur.plannedMs, beats: cur.ctx.beats }
         : undefined,
     };
+  }
+
+  /** 她手上正在做什么：环节自己说的，没有就是环节名 */
+  activity(): string | null {
+    const cur = this.current;
+    if (!this.running || !cur) return null;
+    return (cur.ready ? cur.plugin.activity?.() : null) ?? `在「${cur.def.title}」环节`;
   }
 
   panel(): StagePanelState | null {
@@ -250,14 +283,18 @@ export class SegmentDirector implements BeatSource {
       return null;
     }
     const plugin = def.create();
-    const ctx: SegmentContext = { params: item.params ?? {}, storage: this.hooks.storage(def.id), startedAt: now, beats: 0, heat: 'quiet' };
+    const ctx: SegmentContext = {
+      params: item.params ?? {}, storage: this.hooks.storage(def.id), startedAt: now, beats: 0, heat: 'quiet',
+      changed: () => { if (this.current?.ctx === ctx) this.hooks.onChange?.(); },
+    };
+    const layout = isLayout(item.params?.layout) ? item.params.layout : plugin.layout;
     const run: Running = {
-      item, def, plugin, ctx,
+      item, def, plugin, ctx, layout,
       elapsedMs: 0, tickedAt: now, plannedMs: item.minutes * 60_000,
       ready: false, pending: null, speaking: null, recap: [],
     };
     this.current = run;
-    this.hooks.onSegment?.('start', { segmentId: def.id, title: def.title, layout: plugin.layout }, now);
+    this.hooks.onSegment?.('start', { segmentId: def.id, title: def.title, layout }, now);
     const failed = (err: unknown) => {
       console.warn(`[SegmentDirector] 环节 ${def.id} 启动失败:`, (err as Error).message);
       // 起不来就直接跳到下一项（还是会口播过渡）
@@ -278,7 +315,11 @@ export class SegmentDirector implements BeatSource {
     const cur = this.current;
     if (!cur) return;
     this.current = null;
-    this.hooks.onSegment?.('stop', { segmentId: cur.def.id, title: cur.def.title, layout: cur.plugin.layout }, now);
+    this.hooks.onSegment?.('stop', { segmentId: cur.def.id, title: cur.def.title, layout: cur.layout }, now);
     cur.plugin.stop().catch((err) => console.warn(`[SegmentDirector] 环节 ${cur.def.id} 停止失败:`, (err as Error).message));
   }
+}
+
+function isLayout(value: unknown): value is LiveSegment {
+  return value === 'chat' || value === 'sing' || value === 'game' || value === 'watch';
 }

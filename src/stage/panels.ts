@@ -62,3 +62,55 @@ registerPanelRenderer('topic-card', (body, data) => {
   for (let i = 1; i <= card.steps; i++) dots.append(el('span', i <= card.step ? 'on' : ''));
   body.append(dots);
 });
+
+// ── B站情报站：标题栏的任务名、文件树、视频详情 ────────────────────────
+
+interface IntelPanel {
+  stage: string;
+  job: { title: string; done: number; total: number; status: string } | null;
+  video: { title: string; up: string; duration: string; view: string; like: string; coin: string; favorite: string; danmaku: string; source: string } | null;
+  tree: Array<{ title: string; by: string; state: string }>;
+}
+
+const TREE_ICON: Record<string, string> = { told: '✓', done: '✓', now: '▶', working: '⟳', queued: '·', skipped: '✗', failed: '✗' };
+
+registerPanelRenderer('bili-intel', (body, data) => {
+  const p = data as IntelPanel;
+  const title = document.getElementById('ide-title');
+  if (title) title.textContent = p.job ? `hiyori-intel — ${p.job.title}  (${p.job.done}/${p.job.total})` : 'hiyori-intel';
+  const job = document.getElementById('ide-job');
+  if (job) {
+    if (p.job) {
+      const bar = el('div', 'ide-progress');
+      const fill = el('i');
+      fill.style.width = `${p.job.total ? Math.round((p.job.done / p.job.total) * 100) : 0}%`;
+      bar.append(fill);
+      job.replaceChildren(
+        el('div', 'ide-job-title', `📁 ${p.job.title}`),
+        bar,
+        el('div', 'ide-job-meta', `${p.job.done}/${p.job.total} · ${{ preparing: '准备中', running: '研究中', done: '已完成', stopped: '已停止', failed: '失败' }[p.job.status] ?? p.job.status}`),
+      );
+    } else {
+      job.replaceChildren();
+    }
+  }
+  const tree = document.getElementById('stage-playlist');
+  tree?.replaceChildren(...p.tree.map((item) => {
+    const row = el('div', `spl-row spl-${item.state}`);
+    row.append(el('span', 'spl-icon', TREE_ICON[item.state] ?? '·'), el('span', 'spl-name', `${item.title}.txt`));
+    if (item.by) row.append(el('span', 'spl-by', `🙋${item.by}`));
+    return row;
+  }));
+  if (!p.video) {
+    body.append(el('div', 'si-up', p.stage === 'discuss' ? '💬 在和观众聊刚才那条' : '⟳ 研究进行中…'));
+    return;
+  }
+  const v = p.video;
+  const stats = el('div', 'si-stats');
+  for (const [label, value] of [['▶', v.view], ['👍', v.like], ['🪙', v.coin], ['⭐', v.favorite], ['💬', v.danmaku], ['⏱', v.duration]]) {
+    const cell = el('span', '', `${label} `);
+    cell.append(el('b', '', value));
+    stats.append(cell);
+  }
+  body.append(el('div', 'si-title', v.title), el('div', 'si-up', `${v.up} · ${v.source}`), stats);
+});

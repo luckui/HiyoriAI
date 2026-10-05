@@ -9,6 +9,7 @@
  * 醒目留言和上舰无论多忙都要说到；弹幕会随时间「凉掉」，过一会儿再回就不自然了。
  *
  * 直播间没人在看时什么都不做（省 LLM 和 TTS）：不出环节拍、不冷场找话，等有人来了再说。
+ * 直播间没开播时是排练（主人在测试）：不管有没有人都照常演。
  *
  * 有环节在跑时（见 segments/），没人说话也不用硬聊：环节的「一拍」和普通弹幕交替着说，
  * 房间越安静环节拍越多；醒目留言、上舰、点名提问仍然排在环节前面。
@@ -130,6 +131,8 @@ export class LiveAttention {
   private trendCooldown = new Map<string, number>();
 
   private users = new Map<string, UserMemory>();
+  /** 这场已经打过招呼的人（欢迎过或回过他的话） */
+  private greeted = new Set<string>();
   private chatTimes: number[] = [];
   /** 没话题时多久开始自己找话说；可在直播中调整 */
   idleAfterMs = TUNING.idleAfterMs;
@@ -143,6 +146,7 @@ export class LiveAttention {
   private lastAudienceAt = -Infinity;
   private online: number | undefined;
   private anchorId = '';
+  private rehearsal = false;
   /** 上次看时有没有人：从没人到有人，先回应来的人，再接着说环节 */
   private hadAudience = true;
   private justWoke = false;
@@ -154,9 +158,13 @@ export class LiveAttention {
 
   // ── 输入 ─────────────────────────────────────────────
 
-  observe(event: LiveEvent, isUpdate: boolean, now: number): void {
-    // 主播自己（比如开着自己的直播间页面）不算观众
+  /** 有观众动静（主播自己，比如开着自己直播间的页面，不算） */
+  noteAudience(event: LiveEvent, now: number): void {
     if (!this.anchorId || event.user.id !== this.anchorId) this.lastAudienceAt = now;
+  }
+
+  observe(event: LiveEvent, isUpdate: boolean, now: number): void {
+    this.noteAudience(event, now);
     switch (event.kind) {
       case 'chat': if (!isUpdate) this.observeChat(event, now); break;
       case 'superchat': if (!isUpdate) this.superchats.push(event); break;
@@ -184,7 +192,17 @@ export class LiveAttention {
     this.anchorId = id ?? '';
   }
 
+  /** 直播间没开播（测试、排练）：没人在看也照常演 */
+  setRehearsal(on: boolean): void {
+    this.rehearsal = on;
+  }
+
+  get isRehearsal(): boolean {
+    return this.rehearsal;
+  }
+
   audiencePresent(now: number): boolean {
+    if (this.rehearsal) return true;
     return now - this.lastAudienceAt < TUNING.audience.activityMs || (this.online ?? 0) >= TUNING.audience.minOnline;
   }
 
@@ -322,6 +340,11 @@ export class LiveAttention {
       else if (features.length <= 3) base -= 0.15;
     }
     if (features.greeting) tags.push('打招呼');
+    if (this.greeted.has(uid)) tags.push('这场已经打过招呼了：别再欢迎，也别问是不是第一次来');
+    // 情报站以外的环节收到视频：研究队列已经接了（streamerSession），这里让她如实回一句
+    if (features.videoLink) { base += 0.3; tags.push('发了B站视频，已排进研究队列，情报站环节里会讲'); }
+    // 想让她看视频却只给了关键词：引导他发 BV 号（关键词搜索以后会支持）
+    else if (features.videoAsk) { base += 0.25; tags.push('想让你看某个视频但没给BV号：请他发BV号或视频链接，关键词搜索以后会支持'); }
     // 身份只放大内容分：舰长刷「哈哈哈」也还是没话可接（有的房间几乎人人是舰长）
     const guard = event.user.guardLevel ?? 0;
     if (GUARD_TAG[guard]) { base *= 1.25; tags.push(GUARD_TAG[guard]); }
@@ -363,7 +386,10 @@ export class LiveAttention {
           const text = burst.sort((a, b) => a.at - b.at).map((o) => o.text).join(' ');
           picks.push({ event: c.event, text, tags: [...new Set(burst.flatMap((o) => o.tags))], score });
         }
-        for (const uid of taken) this.remember(uid, now).answeredAt = now;
+        for (const uid of taken) {
+          this.remember(uid, now).answeredAt = now;
+          this.greeted.add(uid);
+        }
         this.chats = this.chats.filter((o) => !taken.has(o.uid));
         return { kind: 'chat', picks };
       },
@@ -468,6 +494,7 @@ export class LiveAttention {
       build: () => {
         const ranked = eligible.sort((a, b) => notability(b.user) - notability(a.user));
         this.enters = [];
+        for (const e of ranked) this.greeted.add(e.user.id || e.user.name);
         return { kind: 'welcome', users: ranked.slice(0, 3).map((e) => e.user), more: Math.max(0, ranked.length - 3) };
       },
     };

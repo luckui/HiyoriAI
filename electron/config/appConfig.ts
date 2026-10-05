@@ -169,8 +169,37 @@ export function normalizeAppConfig(raw: unknown, defaults: AppConfigDefaults): A
       roomId: Math.max(0, Math.floor(normalizeNumber(liveInput.roomId, base.live.roomId))),
       cookie: normalizeString(liveInput.cookie, base.live.cookie).trim(),
       background: normalizeString(liveInput.background, base.live.background),
+      ...normalizeLiveExtras(liveInput),
     },
   };
+}
+
+/** 直播配置里的可选项：情报站互动开关、看图模型，研究什么，公告板 */
+function normalizeLiveExtras(input: Record<string, unknown>): Pick<LiveConfig, 'patrol' | 'research' | 'board'> {
+  const out: Pick<LiveConfig, 'patrol' | 'research' | 'board'> = {};
+  if (isObject(input.board) && typeof input.board.text === 'string') {
+    out.board = { text: input.board.text.slice(0, 1000), show: normalizeBoolean(input.board.show, true) };
+  }
+  if (isObject(input.patrol)) {
+    const p = input.patrol;
+    out.patrol = {
+      like: normalizeBoolean(p.like, false),
+      comment: normalizeBoolean(p.comment, false),
+      ...(p.giftDm === true ? { giftDm: true } : {}),
+      ...(typeof p.visionProvider === 'string' && p.visionProvider ? { visionProvider: p.visionProvider } : {}),
+    };
+  }
+  if (isObject(input.research) && ['hot', 'up', 'search', 'videos'].includes(input.research.kind as string)) {
+    const r = input.research;
+    const limit = Math.floor(normalizeNumber(r.limit, 0));
+    out.research = {
+      kind: r.kind as NonNullable<LiveConfig['research']>['kind'],
+      ...(typeof r.target === 'string' && r.target.trim() ? { target: r.target.trim() } : {}),
+      ...(limit > 0 ? { limit } : {}),
+      ...(r.transcribe === 'all' || r.transcribe === 'auto' ? { transcribe: r.transcribe } : {}),
+    };
+  }
+  return out;
 }
 
 function sanitizeLlmConfig(config: AIConfig): AIConfig {

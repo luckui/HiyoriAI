@@ -58,6 +58,7 @@ import manageLive2dTool from './impl/manageLive2d';
 import asyncTaskTool from './impl/asyncTask';
 import scheduleTaskTool from './impl/scheduleTask';
 import manageBilibiliLiveTool from './impl/manageBilibiliLive';
+import biliResearchTool from './impl/biliResearch';
 import watchBilibiliVideoTool from './impl/watchBilibiliVideo';  // B站视频观看工具
 import { runtimeTools } from './impl/runtime';
 
@@ -103,6 +104,7 @@ const registry = new ToolRegistry()
   .register(manageHearingTool)
   .register(manageLive2dTool)
   .register(manageBilibiliLiveTool)
+  .register(biliResearchTool)
   .register(asyncTaskTool)
   .register(scheduleTaskTool)
   .register(watchBilibiliVideoTool);  // B站视频观看

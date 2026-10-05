@@ -160,6 +160,21 @@ async function requestCompletion(
  * @param tools    - 传入工具 schema 数组时启用 function calling；不传则禁用
  * @param signal   - 可选的 AbortSignal，用于中断请求
  */
+/**
+ * 去掉落单的代理项：截断文字时把 emoji 切成两半，JSON 里就会出现 \ud83d 这种半个字符，
+ * 有的服务商（实测 DeepSeek）直接 400「unexpected end of hex escape」。
+ */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+function wellFormedMessage(message: ChatMessage): ChatMessage {
+  const fix = (text: string) => text.replace(LONE_SURROGATE, '');
+  if (typeof message.content === 'string') return { ...message, content: fix(message.content) } as ChatMessage;
+  if (Array.isArray(message.content)) {
+    return { ...message, content: message.content.map((part) => (part.type === 'text' ? { ...part, text: fix(part.text) } : part)) } as ChatMessage;
+  }
+  return message;
+}
+
 export async function fetchCompletion(
   provider: LLMProviderConfig,
   messages: ChatMessage[],
@@ -171,7 +186,7 @@ export async function fetchCompletion(
 
   const body = JSON.stringify({
     model: provider.model,
-    messages,
+    messages: messages.map(wellFormedMessage),
     max_tokens: options.maxTokens ?? provider.maxTokens ?? 1024,
     temperature: options.temperature ?? provider.temperature ?? 0.85,
     ...(withTools ? { tools } : {}),

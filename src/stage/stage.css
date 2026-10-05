@@ -507,7 +507,8 @@ body.stage-mode[data-stage-segment="game"] #stage-room {
 }
 
 /* 谢幕：不管什么布局，她都站到右半边 */
-body.stage-mode.stage-phase-ending #canvas-container {
+/* 带上 [data-stage-segment]：要压过各布局自己的位置 */
+body.stage-mode.stage-phase-ending[data-stage-segment] #canvas-container {
   left: 46%;
   top: 0;
   right: 0;
@@ -646,3 +647,717 @@ body:not(.stage-phase-live) #stage-owner {
 @keyframes so-blink {
   50% { opacity: 0.4; }
 }
+
+/* ══ 布局：B站情报站 —— 平铺窗口管理器风（ricing 的 Arch 桌面那种）：
+   顶栏（工作区、任务名、cava、时钟），左边弹幕和她，中间浏览器 + 终端 + 字幕坞，右边文件树。
+   画布 1280×720；窗口之间 8px 间隙，细霓虹边框。 ══ */
+
+body.stage-mode[data-stage-segment="watch"] {
+  --cy-bg: #07050f;
+  --cy-panel: rgba(9, 7, 20, 0.86);
+  --cy-pink: #ff3d9a;
+  --cy-cyan: #2de2e6;
+  --cy-violet: #9d5cff;
+  --cy-yellow: #f9e46b;
+  --cy-green: #4dff9a;
+  --cy-ink: #e9e4ff;
+  --cy-dim: #7d74a8;
+  --cy-mono: "JetBrains Mono", "Cascadia Code", "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace;
+  --cy-edge: rgba(45, 226, 230, 0.42);
+  --cy-glow: 0 0 0 1px rgba(45, 226, 230, 0.08), 0 0 16px rgba(45, 226, 230, 0.16);
+}
+
+/* ── 背景层：主题场景、自定义背景都让位给赛博背景 ── */
+
+#stage-cyber { display: none; }
+body.stage-mode[data-stage-segment="watch"] #stage-cyber {
+  display: block;
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--cy-bg);
+}
+body.stage-mode[data-stage-segment="watch"] #stage-scene,
+body.stage-mode[data-stage-segment="watch"] #stage-video {
+  display: none;
+}
+body.stage-mode[data-stage-segment="watch"] #stage-particles { opacity: 0.45; }
+
+#stage-cyber > * { position: absolute; pointer-events: none; }
+
+.cy-sky {
+  inset: 0;
+  background:
+    radial-gradient(ellipse 40% 50% at 12% 85%, rgba(255, 61, 154, 0.35), transparent 70%),
+    radial-gradient(ellipse 45% 40% at 88% 10%, rgba(45, 226, 230, 0.18), transparent 70%),
+    radial-gradient(ellipse 60% 50% at 50% 110%, rgba(157, 92, 255, 0.35), transparent 70%),
+    linear-gradient(180deg, #0b0718 0%, #120a26 55%, #1a0b2e 100%);
+}
+
+/* 透视地面网格，慢慢往前滚 */
+.cy-grid-wrap {
+  left: -20%;
+  right: -20%;
+  bottom: 0;
+  height: 46%;
+  perspective: 320px;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to top, #000 30%, transparent);
+  mask-image: linear-gradient(to top, #000 30%, transparent);
+}
+.cy-grid {
+  position: absolute;
+  inset: -100% 0 0 0;
+  transform: rotateX(62deg);
+  transform-origin: 50% 100%;
+  background-image:
+    linear-gradient(rgba(255, 61, 154, 0.55) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(45, 226, 230, 0.4) 1px, transparent 1px);
+  background-size: 48px 48px;
+  animation: cy-grid-run 3.2s linear infinite;
+}
+@keyframes cy-grid-run {
+  to { background-position: 0 48px, 0 0; }
+}
+
+/* 她身后：竖排描边大字 + 霓虹光环 */
+.cy-kana {
+  left: 236px;
+  top: 340px;
+  /* 一字一行竖排（writing-mode 下雅黑的片假名会横躺） */
+  width: 1em;
+  font: 900 54px/1.08 "Microsoft YaHei UI", sans-serif;
+  word-break: break-all;
+  text-align: center;
+  color: transparent;
+  -webkit-text-stroke: 1.5px rgba(255, 61, 154, 0.55);
+  animation: cy-glitch 6s steps(1) infinite;
+}
+.cy-ring {
+  left: 22px;
+  top: 404px;
+  width: 250px;
+  height: 250px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 61, 154, 0.75);
+  box-shadow: 0 0 22px rgba(255, 61, 154, 0.55), inset 0 0 22px rgba(255, 61, 154, 0.35);
+}
+.cy-ring::before,
+.cy-ring::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+}
+.cy-ring::before {
+  inset: 16px;
+  border: 2px dashed rgba(45, 226, 230, 0.6);
+  animation: spl-spin 24s linear infinite;
+}
+.cy-ring::after {
+  inset: -14px;
+  border: 1px solid transparent;
+  border-top-color: var(--cy-cyan);
+  border-bottom-color: var(--cy-pink);
+  animation: spl-spin 7s linear infinite reverse;
+}
+
+/* 音量柱：跟她的声音跳（cyber.ts），横贯底部，从窗口缝里和她身后透出来 */
+#cy-eq {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 190px;
+  display: flex;
+  align-items: flex-end;
+  gap: 5px;
+  padding: 0 6px;
+  opacity: 0.8;
+}
+#cy-eq i {
+  flex: 1;
+  height: 100%;
+  background: linear-gradient(0deg, var(--cy-pink), var(--cy-violet) 55%, var(--cy-cyan));
+  box-shadow: 0 0 10px rgba(255, 61, 154, 0.45);
+  transform-origin: 50% 100%;
+  transform: scaleY(0.1);
+}
+
+/* 故障闪：偶尔错位一下，粉青两色分离 */
+@keyframes cy-glitch {
+  0%, 91%, 100% { transform: none; text-shadow: none; }
+  92% { transform: translate(-3px, 1px) skewX(-8deg); text-shadow: 3px 0 var(--cy-cyan), -3px 0 var(--cy-pink); }
+  94% { transform: translate(3px, -1px); text-shadow: -2px 0 var(--cy-cyan), 2px 0 var(--cy-pink); }
+  96% { transform: translate(-1px, 0) skewX(6deg); }
+}
+
+/* ── 前景：外壳 ── */
+
+#ide { display: none; }
+body.stage-mode[data-stage-segment="watch"] #ide { display: block; }
+
+/* 整屏扫描线（她和字幕在更上层，不受影响） */
+#ide-scan {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.18) 0 1px, transparent 1px 3px);
+  opacity: 0.5;
+}
+
+/* 顶栏：waybar */
+#ide-titlebar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  background: rgba(5, 3, 12, 0.92);
+  border-bottom: 1px solid rgba(255, 61, 154, 0.5);
+  box-shadow: 0 0 14px rgba(255, 61, 154, 0.25);
+  font: 700 12px var(--cy-mono);
+  color: var(--cy-ink);
+}
+.wb-logo {
+  padding: 1px 8px;
+  background: var(--cy-pink);
+  color: #0a0612;
+  letter-spacing: 1px;
+  clip-path: polygon(0 0, 100% 0, calc(100% - 7px) 100%, 0 100%);
+  animation: cy-glitch 9s steps(1) infinite;
+}
+.wb-ws { display: flex; gap: 3px; }
+.wb-ws i {
+  width: 20px;
+  text-align: center;
+  font-style: normal;
+  color: var(--cy-dim);
+  border-bottom: 2px solid transparent;
+}
+.wb-ws i.on {
+  color: var(--cy-cyan);
+  border-bottom-color: var(--cy-cyan);
+  text-shadow: 0 0 8px var(--cy-cyan);
+}
+#ide-title {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--cy-ink);
+}
+.wb-mod {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  height: 18px;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--cy-cyan);
+}
+#ide-cava {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 14px;
+}
+#ide-cava i {
+  width: 3px;
+  height: 100%;
+  background: linear-gradient(0deg, var(--cy-pink), var(--cy-cyan));
+  transform-origin: 50% 100%;
+  transform: scaleY(0.1);
+}
+#ide-clock { color: var(--cy-yellow); }
+
+/* 在线人数、点赞：挪进顶栏 cava 左边，去掉胶囊 */
+body.stage-mode[data-stage-segment="watch"] #stage-stats {
+  z-index: 1;
+  top: 4px;
+  right: 222px;
+  gap: 6px;
+}
+body.stage-mode[data-stage-segment="watch"] .stage-pill {
+  padding: 0 8px;
+  border: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  font: 700 12px/20px var(--cy-mono);
+  color: var(--cy-ink);
+}
+body.stage-mode[data-stage-segment="watch"] .stage-pill b { color: var(--cy-pink); }
+
+/* 窗口通用：细霓虹边 + 角标 */
+body.stage-mode[data-stage-segment="watch"] #stage-chat,
+#ide-explorer,
+#stage-terminal,
+body.stage-mode[data-stage-segment="watch"] #stage-watch,
+#ide-browserbar {
+  box-sizing: border-box;
+  border: 1px solid var(--cy-edge);
+  border-radius: 3px;
+  box-shadow: var(--cy-glow);
+}
+
+.ide-section {
+  height: 22px;
+  display: flex;
+  align-items: stretch;
+  font: 700 11px/22px var(--cy-mono);
+  color: var(--cy-dim);
+  border-bottom: 1px solid rgba(45, 226, 230, 0.18);
+  background: rgba(45, 226, 230, 0.05);
+}
+/* powerline 段 */
+.pl {
+  position: relative;
+  padding: 0 12px 0 10px;
+  margin-right: 8px;
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 50%, calc(100% - 8px) 100%, 0 100%);
+}
+.pl-a { background: var(--cy-pink); color: #0a0612; }
+.pl-b { background: rgba(157, 92, 255, 0.85); color: #fff; margin-left: -10px; padding-left: 16px; }
+.pl-c { background: rgba(45, 226, 230, 0.2); color: var(--cy-cyan); margin-left: -10px; padding-left: 16px; }
+
+/* 浏览器：地址栏 + 页面 */
+#ide-browserbar {
+  position: absolute;
+  left: 308px;
+  width: 664px;
+  top: 36px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px;
+  border-bottom: none;
+  border-radius: 3px 3px 0 0;
+  background: rgba(9, 7, 20, 0.94);
+  font: 11px var(--cy-mono);
+  color: var(--cy-dim);
+}
+.ide-tab-chip {
+  max-width: 200px;
+  padding: 1px 8px;
+  background: rgba(255, 61, 154, 0.16);
+  border-left: 2px solid var(--cy-pink);
+  color: #ffd2e8;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ide-url-box {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 8px;
+  color: var(--cy-cyan);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ide-url-box::before { content: ":open "; color: var(--cy-dim); }
+
+#stage-watch {
+  display: none;
+  position: absolute;
+  overflow: hidden;
+  background: #fff;
+}
+body.stage-mode[data-stage-segment="watch"] #stage-watch {
+  display: block;
+  left: 308px;
+  top: 62px;
+  width: 664px;
+  height: 374px;
+  border-top: none;
+  border-radius: 0 0 3px 3px;
+}
+#stage-watch-view {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+#stage-watch-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0b0818;
+  font: 700 16px var(--cy-mono);
+  color: var(--cy-dim);
+}
+
+/* 演示打开视频时的光标 */
+#ide-cursor {
+  position: absolute;
+  left: -4px;
+  top: -2px;
+  z-index: 3;
+  opacity: 0;
+  transform: translate(330px, 180px);
+  transition: transform 0.65s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
+}
+#ide-cursor.show { opacity: 1; }
+#ide-cursor.click::after {
+  content: "";
+  position: absolute;
+  left: -10px;
+  top: -10px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 3px solid var(--cy-pink, var(--st-accent));
+  animation: ide-click 0.35s ease-out forwards;
+}
+@keyframes ide-click {
+  from { transform: scale(0.3); opacity: 1; }
+  to { transform: scale(1.4); opacity: 0; }
+}
+
+/* 终端：最新的行贴底，旧的从上面滚出去 */
+#stage-terminal {
+  position: absolute;
+  left: 308px;
+  width: 664px;
+  top: 444px;
+  bottom: 100px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--cy-panel);
+  font: 12px/1.5 var(--cy-mono);
+  color: #cfe9ff;
+}
+#term-lines {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
+  padding: 4px 12px 6px;
+}
+.term-line {
+  flex: none;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.term-line .tag { color: var(--cy-cyan, #7fb4ff); }
+.term-line.rule { color: var(--cy-yellow, #f0c674); }
+.term-line.warn .tag { color: #ff8a5c; }
+.term-line.good .tag { color: var(--cy-green, #9ece6a); }
+.term-line.llm .tag { color: var(--cy-pink, #c792ea); }
+.term-line.llm { color: #ffd2e8; }
+.term-cursor::after {
+  content: "▋";
+  color: var(--cy-pink, inherit);
+  animation: so-blink 1s steps(1) infinite;
+}
+
+/* 字幕坞：终端下面；空着时是一个闪烁的提示符 */
+#ide-dock {
+  position: absolute;
+  left: 308px;
+  width: 664px;
+  bottom: 8px;
+  height: 84px;
+  box-sizing: border-box;
+  padding: 12px 16px;
+  border: 1px dashed rgba(255, 61, 154, 0.45);
+  border-radius: 3px;
+  background: rgba(9, 7, 20, 0.7);
+  font: 700 14px var(--cy-mono);
+  color: var(--cy-pink);
+}
+.dock-prompt { margin-right: 6px; text-shadow: 0 0 8px var(--cy-pink); }
+
+/* 文件树：ranger */
+#ide-explorer {
+  position: absolute;
+  right: 8px;
+  width: 292px;
+  top: 36px;
+  bottom: 8px;
+  overflow: hidden;
+  background: var(--cy-panel);
+  font: 12px var(--cy-mono);
+  color: var(--cy-ink);
+}
+#ide-job {
+  padding: 8px 12px 6px;
+  font-weight: 700;
+  color: #fff;
+}
+.ide-job-title {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--cy-yellow);
+}
+.ide-progress {
+  height: 6px;
+  margin-top: 6px;
+  background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.1) 0 6px, transparent 6px 8px);
+  overflow: hidden;
+}
+.ide-progress i {
+  display: block;
+  height: 100%;
+  background: repeating-linear-gradient(90deg, var(--cy-pink) 0 6px, transparent 6px 8px);
+  box-shadow: 0 0 8px var(--cy-pink);
+  transition: width 0.6s;
+}
+.ide-job-meta {
+  margin-top: 4px;
+  font-weight: 400;
+  color: var(--cy-dim);
+}
+#stage-playlist { padding: 2px 6px; }
+.spl-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 2px 6px;
+  color: #cfcfe8;
+  white-space: nowrap;
+}
+.spl-icon { flex: none; width: 14px; text-align: center; color: var(--cy-dim); }
+.spl-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.spl-by { flex: none; font-size: 11px; color: var(--cy-pink); }
+.spl-told, .spl-skipped, .spl-failed { opacity: 0.45; }
+.spl-done .spl-icon { color: var(--cy-green); }
+.spl-working .spl-icon { color: var(--cy-yellow); animation: spl-spin 1.2s linear infinite; display: inline-block; }
+@keyframes spl-spin { to { transform: rotate(360deg); } }
+/* 选中行：ranger 那样整行反色 */
+.spl-now {
+  background: var(--cy-cyan);
+  color: #05030c;
+  font-weight: 700;
+}
+.spl-now .spl-icon,
+.spl-now .spl-by { color: #05030c; }
+
+/* 左边：弹幕在上，她在下 */
+body.stage-mode[data-stage-segment="watch"] #stage-chat {
+  left: 8px;
+  right: auto;
+  top: 36px;
+  width: 292px;
+  bottom: 364px;
+  background: var(--cy-panel);
+  backdrop-filter: none;
+}
+body.stage-mode[data-stage-segment="watch"] #stage-chat-title {
+  padding: 0 10px;
+  height: 22px;
+  font: 700 11px/22px var(--cy-mono);
+  letter-spacing: 1px;
+  color: var(--cy-cyan);
+  border-bottom: 1px solid rgba(45, 226, 230, 0.18);
+  background: rgba(45, 226, 230, 0.05);
+}
+body.stage-mode[data-stage-segment="watch"] #stage-chat-title::after {
+  content: "  tail -f danmaku.log";
+  color: var(--cy-dim);
+  font-weight: 400;
+}
+body.stage-mode[data-stage-segment="watch"] #stage-chat-list {
+  gap: 6px;
+  padding: 4px 10px 8px;
+}
+body.stage-mode[data-stage-segment="watch"] .sc-avatar {
+  width: 28px;
+  height: 28px;
+  line-height: 26px;
+  font-size: 13px;
+  border-radius: 4px;
+  border: 1px solid var(--cy-edge);
+  box-shadow: none;
+}
+body.stage-mode[data-stage-segment="watch"] .sc-name { font: 700 11px var(--cy-mono); margin-left: 2px; }
+body.stage-mode[data-stage-segment="watch"] .sc-medal { border-radius: 2px; }
+body.stage-mode[data-stage-segment="watch"] .sc-bubble {
+  padding: 4px 10px;
+  border-radius: 2px;
+  border-left: 2px solid var(--name-color, var(--cy-cyan));
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: none;
+  color: var(--cy-ink);
+  font-size: 14px;
+}
+body.stage-mode[data-stage-segment="watch"] .sc-item.focused .sc-bubble {
+  transform: none;
+  background: rgba(255, 61, 154, 0.16);
+  border-left-color: var(--cy-pink);
+  box-shadow: 0 0 0 1px var(--cy-pink), 0 0 14px rgba(255, 61, 154, 0.5);
+}
+body.stage-mode[data-stage-segment="watch"] .sc-item.focused .sc-name::after {
+  content: "◀ REPLYING";
+  border-radius: 2px;
+  background: var(--cy-pink);
+  color: #0a0612;
+  font: 700 10px/16px var(--cy-mono);
+  animation: so-blink 1.2s ease-in-out infinite;
+}
+body.stage-mode[data-stage-segment="watch"] #stage-ticker {
+  min-height: 26px;
+  padding: 4px 10px 6px;
+  font: 11px var(--cy-mono);
+  color: var(--cy-dim);
+  border-top: 1px dashed rgba(45, 226, 230, 0.25);
+}
+
+/* 她：左下，站在光环前面。直播中整块提到前景之上，字幕才不会被终端、坞盖住 */
+body.stage-mode[data-stage-segment="watch"] #canvas-container {
+  left: 0;
+  right: 980px;
+  top: 360px;
+  bottom: 0;
+  overflow: visible;
+}
+body.stage-mode.stage-phase-live[data-stage-segment="watch"] #canvas-container {
+  z-index: 4;
+}
+
+/* 字幕：落在字幕坞里，像终端里她打出来的一行 */
+body.stage-mode[data-stage-segment="watch"] #typewriter-overlay {
+  left: 308px;
+  right: auto;
+  width: 664px;
+  bottom: 8px;
+  min-height: 84px;
+  max-height: 180px;
+  box-sizing: border-box;
+  padding: 10px 16px 12px;
+  border-radius: 3px;
+  border: 1px solid var(--cy-pink);
+  background: rgba(10, 6, 22, 0.97);
+  box-shadow: 0 0 0 1px rgba(255, 61, 154, 0.25), 0 0 20px rgba(255, 61, 154, 0.45), inset 0 0 26px rgba(255, 61, 154, 0.12);
+  font: 700 20px/1.5 "Microsoft YaHei UI", "PingFang SC", sans-serif;
+  color: #fff;
+  text-align: left;
+  text-shadow: 0 0 10px rgba(255, 120, 200, 0.45);
+}
+body.stage-mode[data-stage-segment="watch"] #typewriter-overlay::before {
+  content: "hiyori ❯";
+  float: left;
+  margin: 3px 10px 0 0;
+  font: 700 14px/24px var(--cy-mono);
+  color: var(--cy-pink);
+  text-shadow: 0 0 8px var(--cy-pink);
+}
+
+body.stage-mode[data-stage-segment="watch"] #stage-header {
+  display: none;
+}
+body.stage-mode[data-stage-segment="watch"] #stage-alerts {
+  left: 320px;
+  right: 320px;
+  top: 80px;
+}
+body.stage-mode[data-stage-segment="watch"] #stage-owner {
+  top: 40px;
+}
+
+/* 视频详情：文件树下面 */
+body.stage-mode[data-stage-segment="watch"] #stage-panel {
+  z-index: 2;
+  top: auto;
+  left: auto;
+  right: 16px;
+  bottom: 16px;
+  width: 276px;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 2px;
+  background: rgba(16, 9, 34, 0.96);
+  border: 1px solid var(--cy-pink);
+  box-shadow: 0 0 16px rgba(255, 61, 154, 0.3);
+  backdrop-filter: none;
+  color: var(--cy-ink);
+}
+body.stage-mode[data-stage-segment="watch"] .sp-label {
+  border-radius: 2px;
+  background: var(--cy-pink);
+  color: #0a0612;
+  font-family: var(--cy-mono);
+}
+body.stage-mode[data-stage-segment="watch"] #stage-panel-title { color: #fff; font-size: 14px; }
+.si-title {
+  margin-top: 6px;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.35;
+  color: #fff;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.si-up {
+  margin-top: 3px;
+  font-size: 12px;
+  color: #b9b2d6;
+}
+.si-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px 8px;
+  margin-top: 8px;
+  font: 12px var(--cy-mono, Consolas, monospace);
+  color: #ddd;
+}
+.si-stats b { color: var(--cy-cyan, var(--st-accent)); font-weight: 700; }
+
+/* ── 公告板：左上角的 README（控制台里改）。有公告板时弹幕栏往下挪、她再往下一点 ── */
+#ide-board {
+  position: absolute;
+  left: 8px;
+  top: 36px;
+  width: 292px;
+  box-sizing: border-box;
+  overflow: hidden;
+  background: rgba(16, 8, 30, 0.92);
+  border: 1px solid var(--cy-pink);
+  border-radius: 3px;
+  box-shadow: 0 0 16px rgba(255, 61, 154, 0.35);
+  font: 12px/1.55 "Microsoft YaHei UI", var(--cy-mono);
+  color: var(--cy-ink);
+}
+#ide-board[hidden] { display: none; }
+#board-title {
+  padding: 7px 10px 3px;
+  font: 800 14px/1.35 "Microsoft YaHei UI", sans-serif;
+  color: #fff;
+  text-shadow: 0 0 10px rgba(255, 61, 154, 0.7);
+}
+#board-lines {
+  margin: 0;
+  padding: 0 10px 8px;
+  list-style: none;
+}
+#board-lines li {
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid rgba(45, 226, 230, 0.55);
+  margin-top: 3px;
+}
+#board-lines li:last-child { color: var(--cy-yellow); }
+body.stage-mode.stage-board[data-stage-segment="watch"] #stage-chat {
+  top: var(--board-bottom, 196px);
+  bottom: 324px;
+}
+body.stage-mode.stage-board[data-stage-segment="watch"] #canvas-container { top: 400px; }
+body.stage-mode.stage-board[data-stage-segment="watch"] .cy-ring { top: 450px; }
+body.stage-mode.stage-board[data-stage-segment="watch"] .cy-kana { top: 404px; }

@@ -16,7 +16,10 @@ import type {
   LiveStatus,
   LiveTheme,
   LiveUser,
+  ResearchJobSummary,
+  ResearchSpecInput,
 } from '../../shared/types/live';
+import { researchSpecProblem } from '../../shared/types/live';
 
 import { disablePtt, enablePtt, pttDown, pttState, pttToggle, pttUp, type PttState } from './ptt';
 
@@ -162,6 +165,8 @@ function formatCount(n: number | undefined): string {
 }
 
 function renderStatus(status: LiveStatus): void {
+  statusNow = status;
+  renderGuide();
   const dot = document.getElementById('live-dot')!;
   dot.className = `live-dot ${status.state === 'connected' ? 'on' : status.state === 'idle' ? '' : 'busy'}`;
   const anchor = document.getElementById('live-anchor')!;
@@ -247,12 +252,136 @@ function bindControls(): void {
 
 // ── 控制台 ─────────────────────────────────────────────
 
+// ── 开播引导 ───────────────────────────────────────────
+
+let stageNow: LiveStageState | null = null;
+let statusNow: LiveStatus | null = null;
+let directorNow: LiveDirectorState | null = null;
+let researchNow: ResearchJobSummary | null = null;
+
+/** 环节默认的布局：和它不一样的写成 id@布局（歌回、游戏回） */
+const DEFAULT_LAYOUT: Record<string, string> = { 'topic-cards': 'chat', 'free-chat': 'chat', 'bili-intel': 'watch' };
+
+function choiceOf(segmentId: string, layout?: string): string {
+  return layout && layout !== (DEFAULT_LAYOUT[segmentId] ?? layout) ? `${segmentId}@${layout}` : segmentId;
+}
+
+/** 根据现在的状态告诉主人下一步该做什么 */
+function renderGuide(): void {
+  const guide = document.getElementById('live-guide');
+  if (!guide) return;
+  const stage = stageNow;
+  const connected = statusNow && statusNow.state !== 'idle';
+  const cur = directorNow?.current;
+  let html: string;
+  if (!connected) {
+    html = '① 先点右上角 <b>连接</b>（房间号在设置 › 直播里填）';
+  } else if (!stage || stage.phase === 'off') {
+    html = '② 选好下面的 <b>现在的环节</b>（开场后先做它），再点 <b>⏳ 准备中</b> 或 <b>▶ 开场</b>，AI 互动会自动打开。<br>直播间没开播也能这样排练。';
+  } else if (stage.phase === 'waiting') {
+    html = '准备中：画面是待机页。推流准备好了点 <b>▶ 开场</b>（放开场动画，放完自动进入直播中）。';
+  } else if (stage.phase === 'opening') {
+    html = '开场动画中，放完自动进入直播中，她会先打招呼。';
+  } else if (stage.phase === 'ending') {
+    html = '谢幕中：她在道别。结束后点 <b>✕</b> 回到桌宠，会写这一场的记录。';
+  } else if (!stage.aiRunning) {
+    html = '直播中，但 <b>AI 互动</b>没开：她不会说话。点 <b>🤖 AI 互动</b> 打开。';
+  } else if (directorNow?.pausedFor === 'audience') {
+    html = '直播中 · 现在没人在看，她先歇着（省钱），有人进来或发弹幕就开始。';
+  } else {
+    html = `直播中${directorNow?.rehearsal ? '（<b>排练模式</b>：直播间没开播，没人也照常演；发「/弹幕 内容」试互动）' : ''} · 现在的环节：<b>${cur?.title ?? '自由聊天'}</b>`;
+  }
+  guide.innerHTML = html;
+}
+
+function renderDirector(next: LiveDirectorState | null): void {
+  directorNow = next;
+  const select = document.getElementById('ctl-segment') as HTMLSelectElement | null;
+  if (select && next) {
+    const cur = next.current;
+    const first = next.rundown[0];
+    const value = cur ? choiceOf(cur.segmentId, cur.layout) : first ? choiceOf(first.segmentId, first.params?.layout as string | undefined) : '';
+    if (value && [...select.options].some((o) => o.value === value)) select.value = value;
+  }
+  renderResearchContext();
+  renderGuide();
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+}
+
+/** 研究面板里填的设置 */
+let researchForm: ResearchSpecInput = { kind: 'hot' };
+
+function researchRunning(job: ResearchJobSummary | null): boolean {
+  return !!job && (job.status === 'running' || job.status === 'preparing');
+}
+
+function describeSpec(spec: ResearchSpecInput): string {
+  const t = spec.target?.trim();
+  return { hot: 'B站热门快照', up: `UP 主「${t}」的全部投稿`, search: `关键词「${t}」`, videos: '指定的视频' }[spec.kind];
+}
+
+/** 填的设置和正在跑的任务不一样（没填的数量、转写不算不一样） */
+function formDiffers(job: ResearchJobSummary): boolean {
+  const f = researchForm;
+  return f.kind !== job.spec.kind
+    || (f.target?.trim() ?? '') !== (job.spec.target ?? '')
+    || (!!f.limit && f.limit !== job.spec.limit)
+    || (!!f.transcribe && f.transcribe !== job.spec.transcribe);
+}
+
+/** 研究面板：一个主按钮（开始 ↔ 停止）+ 一句话说清现在什么状态、和直播什么关系 */
+function renderResearchContext(): void {
+  const box = document.getElementById('rs-context');
+  const toggle = document.getElementById('rs-toggle') as HTMLButtonElement | null;
+  const swap = document.getElementById('rs-switch') as HTMLButtonElement | null;
+  if (!box || !toggle || !swap) return;
+  const job = researchNow;
+  const running = researchRunning(job);
+  const problem = researchSpecProblem(researchForm);
+  const showing = directorNow?.current?.segmentId === 'bili-intel';
+
+  toggle.textContent = running ? '■ 停止研究' : '▶ 开始研究';
+  toggle.classList.toggle('stop', running);
+  toggle.disabled = !running && !!problem;
+  toggle.title = running ? '停掉正在跑的任务（已经做完的保留，可以出报告）' : problem ?? `开始研究：${describeSpec(researchForm)}`;
+  swap.hidden = !(running && job && formDiffers(job));
+  swap.disabled = !!problem;
+
+  const next = problem
+    ? `⚠ 上面的设置${problem}；不填的话情报站会退回做热门快照。`
+    : `情报站开始时手上没任务，会自动研究 <b>${escapeHtml(describeSpec(researchForm))}</b>；也可以现在先点开始，开播前攒好素材。`;
+  let html: string;
+  if (running) {
+    html = showing
+      ? '📡 她正在情报站里讲这批视频，做完一条讲一条。'
+      : '研究在后台跑，直播里还没讲。要讲：把上面的 <b>现在的环节</b> 切到 <b>📡 B站情报站</b>。';
+    if (!swap.hidden) html += '<br>上面的设置改过了：点 <b>↻ 换成上面的设置</b> 才会生效（会停掉当前任务）。';
+  } else if (job?.status === 'done') {
+    html = `这批做完了${job.reportFile ? '，报告已写好' : '，可以点 📄 出报告'}。${showing ? '她讲完做完的就进下一个环节。' : ''}<br>${next}`;
+  } else if (job?.status === 'stopped') {
+    html = `任务停了（做完的 ${job.done} 条保留，可以出报告）。${showing ? '她讲完做完的就进下一个环节。' : ''}<br>${next}`;
+  } else if (job?.status === 'failed') {
+    html = `上个任务开不了：${escapeHtml(job.error ?? '未知错误')}<br>${next}`;
+  } else {
+    html = next;
+  }
+  box.innerHTML = html;
+}
+
 function renderStage(stage: LiveStageState): void {
+  stageNow = stage;
+  renderGuide();
   document.querySelectorAll<HTMLButtonElement>('.live-phases button').forEach((btn) => {
     btn.classList.toggle('on', btn.dataset.phase === stage.phase && stage.phase !== 'off');
   });
-  document.getElementById('ctl-ai')!.classList.toggle('on', stage.aiRunning);
-  (document.getElementById('ctl-segment') as HTMLSelectElement).value = stage.segment;
+  const ai = document.getElementById('ctl-ai')!;
+  ai.classList.toggle('on', stage.aiRunning);
+  // 开着时写「互动中」：开播阶段会自动打开，免得主人以为还要再点一下（一点就关了）
+  ai.textContent = stage.aiRunning ? '🤖 AI 互动中' : '🤖 开启 AI 互动';
+  ai.title = stage.aiRunning ? '她正在自己回应直播间；点一下暂停' : '打开后她会自己挑弹幕、礼物、进场来回应（点准备中 / 开场 / 直播中也会自动打开）';
   (document.getElementById('ctl-theme') as HTMLSelectElement).value = stage.theme;
   const capture = document.getElementById('ctl-capture')!;
   capture.hidden = stage.segment !== 'game';
@@ -309,6 +438,7 @@ function bindConsole(): void {
   const api = window.liveAPI;
   let stage: LiveStageState | null = null;
   api.onStage((s) => { stage = s; renderStage(s); });
+  api.onNotice((text) => showNotice(text));
   void api.getStage().then((s) => { stage = s; renderStage(s); });
 
   document.querySelectorAll<HTMLButtonElement>('.live-phases button').forEach((btn) => {
@@ -326,7 +456,9 @@ function bindConsole(): void {
     if (!result.ok && result.detail) showNotice(result.detail);
   });
   document.getElementById('ctl-segment')!.addEventListener('change', async (e) => {
-    renderStage(await api.setSegment((e.target as HTMLSelectElement).value as LiveSegment));
+    const choice = (e.target as HTMLSelectElement).value;
+    renderDirector(await api.switchSegment(choice));
+    if (stage?.phase === 'live' && stage.aiRunning) showNotice('她说完手上这句，会口播一句过渡再切过去');
   });
   document.getElementById('ctl-theme')!.addEventListener('change', async (e) => {
     renderStage(await api.setTheme((e.target as HTMLSelectElement).value as LiveTheme));
@@ -342,10 +474,24 @@ function bindConsole(): void {
     const text = input.value.trim();
     if (!text) return;
     input.value = '';
-    // 「/弹幕 内容」：以测试观众身份发一条弹幕，没开播也能试她怎么接
-    const test = text.match(/^\/弹幕\s+(.+)$/);
-    if (test) {
-      if (!(await api.testChat('测试观众', test[1]))) showNotice('先打开 AI 互动，再发测试弹幕');
+    // 测试命令：没开播也能试她怎么接。名字后面可以带 #uid（测私信要用真实 uid）
+    //   /弹幕 内容　/弹幕 小明：内容　/进场 小明　/礼物 小明#123456 [礼物名]
+    const who = (raw: string) => {
+      const m = raw.trim().match(/^([^#\s]+)(?:#(\d+))?$/);
+      return m ? { name: m[1], uid: m[2] } : { name: raw.trim() || '测试观众', uid: undefined };
+    };
+    const chat = text.match(/^\/弹幕\s+(?:([^：:\s]{1,30})[：:]\s*)?(.+)$/);
+    const event = text.match(/^\/(进场|礼物)\s+(\S+)(?:\s+(\S+))?$/);
+    if (chat || event) {
+      let ok: boolean;
+      if (chat) {
+        const v = who(chat[1] ?? '测试观众');
+        ok = await api.testChat(v.name, chat[2], v.uid);
+      } else {
+        const v = who(event![2]);
+        ok = await api.testEvent({ kind: event![1] === '进场' ? 'enter' : 'gift', name: v.name, uid: v.uid, gift: event![3] });
+      }
+      if (!ok) showNotice('先打开 AI 互动，再发测试弹幕');
       return;
     }
     ownerRow('你：', text);
@@ -390,6 +536,126 @@ function renderSummary(result: { summary: LiveShowSummary; file: string | null }
   const open = el('button', 'live-btn', '打开记录文件夹');
   open.addEventListener('click', () => void window.liveAPI.openShowLogs());
   box.append(open);
+}
+
+const RESEARCH_STATUS = { preparing: '⏳ 准备中', running: '🔬 研究中', done: '✅ 已完成', stopped: '⏹ 已停止', failed: '⚠ 开不了' } as const;
+
+/** B站研究：开任务、看进度、出报告；情报站讲过的视频要不要点赞评论 */
+function bindResearch(): void {
+  const api = window.liveAPI;
+  const like = document.getElementById('pt-like') as HTMLInputElement;
+  const comment = document.getElementById('pt-comment') as HTMLInputElement;
+  const giftDm = document.getElementById('pt-giftdm') as HTMLInputElement;
+  void api.getPatrolSettings().then((s) => { like.checked = s.like; comment.checked = s.comment; giftDm.checked = !!s.giftDm; });
+  const save = () => void api.setPatrolSettings({ like: like.checked, comment: comment.checked, giftDm: giftDm.checked });
+  for (const box of [like, comment, giftDm]) box.addEventListener('change', save);
+
+  const now = document.getElementById('research-now')!;
+  const hint = document.getElementById('rs-hint')!;
+  const kind = document.getElementById('rs-kind') as HTMLSelectElement;
+  const target = document.getElementById('rs-target') as HTMLInputElement;
+  const limit = document.getElementById('rs-limit') as HTMLInputElement;
+  const transcribe = document.getElementById('rs-transcribe') as HTMLSelectElement;
+  const say = (text: string) => {
+    hint.hidden = !text;
+    hint.textContent = text;
+    if (text) hint.dataset.sticky = '1';
+    else delete hint.dataset.sticky;
+  };
+  const render = (job: ResearchJobSummary | null) => {
+    researchNow = job;
+    renderResearchContext();
+    now.classList.toggle('on', researchRunning(job));
+    now.classList.toggle('warn', job?.status === 'failed');
+    now.textContent = job
+      ? `${RESEARCH_STATUS[job.status]} · ${job.title} ${job.done}/${job.total}${job.working && job.status === 'running' ? ` · ${job.working.slice(0, 16)}` : ''}`
+      : '⏸ 空闲';
+  };
+
+  // 填的设置：改了就存（情报站自己开任务时照它），不用先点开始
+  const readForm = (): ResearchSpecInput => ({
+    kind: kind.value as ResearchSpecInput['kind'],
+    target: target.value.trim() || undefined,
+    limit: Number(limit.value) || undefined,
+    transcribe: (transcribe.value || undefined) as ResearchSpecInput['transcribe'],
+  });
+  const placeholder = () => {
+    target.placeholder = { hot: '（不用填）', up: 'UP 主名字或 mid', search: '关键词', videos: 'BV 号，多个用空格分开' }[kind.value] ?? '';
+    target.disabled = kind.value === 'hot';
+  };
+  let saveTimer: number | null = null;
+  const formChanged = () => {
+    researchForm = readForm();
+    placeholder();
+    renderResearchContext();
+    if (saveTimer !== null) clearTimeout(saveTimer);
+    saveTimer = window.setTimeout(() => void api.setResearchSpec(researchForm), 400);
+  };
+  for (const input of [kind, transcribe]) input.addEventListener('change', formChanged);
+  for (const input of [target, limit]) input.addEventListener('input', formChanged);
+  void api.getResearchSpec().then((spec) => {
+    kind.value = spec.kind;
+    target.value = spec.target ?? '';
+    limit.value = spec.limit ? String(spec.limit) : '';
+    transcribe.value = spec.transcribe ?? '';
+    researchForm = readForm();
+    placeholder();
+    renderResearchContext();
+  });
+
+  void api.getResearch().then(render);
+  api.onResearch(render);
+  api.onResearchReport((r) => {
+    say(`📄 报告写好了：${r.title}`);
+    void api.getResearch().then(render);
+  });
+  const start = async () => {
+    say('');
+    const result = await api.startResearch(readForm());
+    if (!result.ok) say(`开不了：${result.detail ?? '未知错误'}`);
+    if (result.job) render(result.job);
+  };
+  document.getElementById('rs-toggle')!.addEventListener('click', async () => {
+    if (researchRunning(researchNow)) render(await api.stopResearch());
+    else await start();
+  });
+  document.getElementById('rs-switch')!.addEventListener('click', () => void start());
+  document.getElementById('rs-report')!.addEventListener('click', async () => {
+    say('写报告中…（会请 LLM 总结流量风向）');
+    const report = await api.researchReport();
+    if (!report) return say('还没有研究任务');
+    say('');
+    void api.openResearch('file', report.file);
+  });
+  document.getElementById('rs-open')!.addEventListener('click', () => void api.openResearch('reports'));
+  document.getElementById('rs-videos')!.addEventListener('click', () => void api.openResearch('videos'));
+}
+
+/** 公告板：改文字、显示 / 隐藏 */
+function bindBoard(): void {
+  const api = window.liveAPI;
+  const text = document.getElementById('board-text') as HTMLTextAreaElement;
+  const show = document.getElementById('board-show') as HTMLInputElement;
+  const now = document.getElementById('board-now')!;
+  const hint = document.getElementById('board-hint')!;
+  let dirty = false;
+  const render = (state: { board: { text: string; show: boolean }; lines: string[] }) => {
+    now.textContent = state.board.show ? `显示中 · ${state.lines[0] ?? ''}` : '不显示';
+    if (dirty) return;
+    text.value = state.board.text;
+    show.checked = state.board.show;
+  };
+  text.addEventListener('input', () => { dirty = true; hint.textContent = '改了还没保存'; });
+  const save = async (value: string) => {
+    dirty = false;
+    render(await api.setBoard({ text: value, show: show.checked }));
+    hint.textContent = '已保存';
+  };
+  document.getElementById('board-save')!.addEventListener('click', () => void save(text.value));
+  document.getElementById('board-reset')!.addEventListener('click', () => void save(''));
+  show.addEventListener('change', () => void save(text.value));
+  void api.getBoard().then(render);
+  api.onBoard(render);
 }
 
 function bindRundown(): void {
@@ -441,6 +707,7 @@ function bindRundown(): void {
 
   const renderState = (next: LiveDirectorState | null) => {
     state = next;
+    renderDirector(next);
     if (!next) return;
     if (!dirty) draft = next.rundown.map((i) => ({ ...i }));
     const cur = next.current;
@@ -545,6 +812,8 @@ async function init(): Promise<void> {
   bindControls();
   bindConsole();
   bindRundown();
+  bindResearch();
+  bindBoard();
   bindPtt();
   window.liveAPI.onUpdate((update) => {
     addEvents(update.events);

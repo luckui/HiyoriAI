@@ -383,3 +383,69 @@ body {
   font-weight: 700;
 }
 .ptt.transcribing { opacity: 0.6; }
+
+/* ── B站研究 ─────────────────────────────────────────── */
+
+.rs-input {
+  flex: 1;
+  min-width: 120px;
+}
+.rs-limit { width: 56px; }
+#research select,
+#research input {
+  padding: 2px 4px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+/* 开播引导：下一步做什么 */
+.live-guide {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(255, 126, 179, 0.1);
+  border-left: 3px solid var(--accent);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.live-guide b { color: var(--accent); }
+
+/* B站研究：和节目单的关系、主按钮 */
+.rs-explain {
+  margin: 6px 0 2px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted, #888);
+}
+.rs-explain b { color: var(--text); }
+.live-btn.rs-main {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 700;
+}
+.live-btn.rs-main.stop {
+  border-color: #e0605a;
+  color: #e0605a;
+}
+.live-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.rundown-now.warn { color: #e0605a; }
+
+/* 公告板编辑 */
+.board-text {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 6px 0 2px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: 12px/1.5 inherit;
+  resize: vertical;
+}

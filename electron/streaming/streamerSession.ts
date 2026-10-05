@@ -3,11 +3,37 @@ import { fetchCompletion } from '../llmClient';
 import type { StreamerReply, StreamerSessionConfig, StreamerStatus } from './types';
 import { LiveAttention, type BeatSource } from './attention/attention';
 import type { Topic } from './attention/topics';
-import type { LiveChatEvent } from '../../shared/types/live';
+import type { LiveChatEvent, LiveEvent } from '../../shared/types/live';
 import { liveHub } from './liveHub';
 import { SESSION_SYSTEM_PROMPT, topicPrompt } from './streamerPrompts';
 import type { LiveMemory } from './memory/liveMemory';
 import { distillStream } from './memory/liveMemoryDistill';
+
+/**
+ * 直播幕后的一次 LLM 调用（不进对话、不朗读）：下播提炼记忆、巡逻打分。用当前对话模型，关掉深度思考。
+ */
+export async function backstageLlm(system: string, user: string): Promise<string> {
+  const provider = aiConfig.providers[aiConfig.activeProvider];
+  if (!provider) throw new Error(`missing provider: ${aiConfig.activeProvider}`);
+  const data = await fetchCompletion(provider, [
+    { role: 'system' as const, content: system },
+    { role: 'user' as const, content: user },
+    // 研究报告的总结 JSON 比较长：给够，免得截断后解析失败
+  ], undefined, undefined, { disableThinking: true, maxTokens: 2000 });
+  return data.choices[0]?.message.content ?? '';
+}
+
+const VIDEO_LINK = /BV[0-9A-Za-z]{10}|b23\.tv\//;
+
+/** 直播间现在的情况（回观众时参考） */
+export interface StageContext {
+  /** 公告板（画面上观众看得到的） */
+  board?: string[];
+  /** 她现在在干什么（环节给的一句话） */
+  doing?: string | null;
+  /** 开了送礼私信解析 */
+  giftDm?: boolean;
+}
 
 /** 提示词里带上她最近说过的几句，免得翻来覆去一个开头 */
 const RECENT_LINES = 4;
@@ -29,6 +55,12 @@ class StreamerSessionManager {
   private memory: LiveMemory | null = null;
   /** 下播提炼时附上的本场数据 */
   private showSummary: (() => string) | null = null;
+  /** 弹幕里的 B 站视频（环节没接的）交给研究队列 */
+  private videoRequest: ((event: LiveChatEvent) => void) | null = null;
+  /** 每条新事件都先给它看一眼（送礼私信要认礼物和 BV 号），不拦截 */
+  private eventTap: ((event: LiveEvent) => void) | null = null;
+  /** 她现在在干什么、直播间公告：写进回观众的提示词里 */
+  private stageContext: (() => StageContext) | null = null;
 
   get running(): boolean {
     return !!this.config;
@@ -54,7 +86,13 @@ class StreamerSessionManager {
     this.unsubscribe = liveHub.subscribe((event, isUpdate) => {
       const now = Date.now();
       this.memory?.observe(event, isUpdate, now);
-      if (event.kind === 'chat' && !isUpdate && this.director?.onChat(event, now)) return;
+      if (!isUpdate) this.eventTap?.(event);
+      // 被环节拿走的弹幕（点播、作答）也说明有人在看
+      if (event.kind === 'chat' && !isUpdate && this.director?.onChat(event, now)) {
+        this.attention.noteAudience(event, now);
+        return;
+      }
+      if (event.kind === 'chat' && !isUpdate && VIDEO_LINK.test(event.text)) this.videoRequest?.(event);
       this.attention.observe(event, isUpdate, now);
     });
     return this.status();
@@ -90,7 +128,22 @@ class StreamerSessionManager {
     const live = liveHub.status(now);
     this.attention.setOnline(live.stats.online);
     this.attention.setAnchorId(live.room?.anchorId);
+    // 直播间明确没开播：主人在排练，没人也照常演
+    this.attention.setRehearsal(live.stats.live === false);
     return this.attention.next(now);
+  }
+
+  setEventTap(tap: ((event: LiveEvent) => void) | null): void {
+    this.eventTap = tap;
+  }
+
+  setStageContext(context: (() => StageContext) | null): void {
+    this.stageContext = context;
+  }
+
+  /** 弹幕里发了 B 站视频、当前环节又没接时怎么办（交给研究队列） */
+  setVideoRequestHandler(handler: ((event: LiveChatEvent) => void) | null): void {
+    this.videoRequest = handler;
   }
 
   setMemory(memory: LiveMemory | null, showSummary?: () => string): void {
@@ -104,15 +157,8 @@ class StreamerSessionManager {
     if (!memory) return;
     const herLines = this.replies.filter((r) => r.reply).map((r) => r.reply!);
     const summary = this.showSummary?.();
-    const provider = aiConfig.providers[aiConfig.activeProvider];
-    if (!provider) return;
-    const llm = async (system: string, user: string) => {
-      const data = await fetchCompletion(provider, [
-        { role: 'system' as const, content: system },
-        { role: 'user' as const, content: user },
-      ], undefined, undefined, { disableThinking: true });
-      return data.choices[0]?.message.content ?? '';
-    };
+    if (!aiConfig.providers[aiConfig.activeProvider]) return;
+    const llm = backstageLlm;
     const pending = memory.store.pendingStreams();
     for (const id of pending) {
       try {
@@ -129,6 +175,11 @@ class StreamerSessionManager {
   setDirector(director: (BeatSource & { onChat(event: LiveChatEvent, now: number): boolean }) | null): void {
     this.director = director;
     this.attention.setBeatSource(director);
+  }
+
+  /** 现在是不是排练模式（直播间没开播） */
+  get rehearsal(): boolean {
+    return this.attention.isRehearsal;
   }
 
   speechStarted(): void {
@@ -149,6 +200,7 @@ class StreamerSessionManager {
     const now = Date.now();
     const memory = this.memory;
     const room = memory?.roomContext(now);
+    const stage = this.stageContext?.();
     const reply: StreamerReply = {
       id: topic.id,
       createdAt: now,
@@ -161,6 +213,9 @@ class StreamerSessionManager {
         today: memory ? `${new Date(now).getMonth() + 1}月${new Date(now).getDate()}日` : undefined,
         tastes: room?.tastes,
         memes: room?.memes,
+        board: stage?.board,
+        doing: stage?.doing ?? undefined,
+        giftDm: stage?.giftDm,
       }),
     };
     try {
@@ -185,18 +240,26 @@ class StreamerSessionManager {
   }
 
   /** 调试用：注入一条测试弹幕（走和真实弹幕一样的路径） */
-  ingestTest(uname: string, text: string): StreamerStatus {
+  ingestTest(uname: string, text: string, uid?: string): StreamerStatus {
     if (this.config) {
       liveHub.ingest({
         id: `test:${Date.now()}:${Math.random().toString(16).slice(2)}`,
         platform: this.config.platform,
         kind: 'chat',
         ts: Date.now(),
-        user: { id: `test-${uname}`, name: uname },
+        user: { id: uid || `test-${uname}`, name: uname },
         text,
       });
     }
     return this.status();
+  }
+
+  /** 测试：某个测试观众进场、送礼（uid 填真实的才能测私信） */
+  ingestTestEvent(kind: 'enter' | 'gift', uname: string, uid?: string, giftName = '小花花'): boolean {
+    if (!this.config) return false;
+    const base = { id: `test:${Date.now()}:${Math.random().toString(16).slice(2)}`, platform: this.config.platform, ts: Date.now(), user: { id: uid || `test-${uname}`, name: uname } };
+    liveHub.ingest(kind === 'gift' ? { ...base, kind: 'gift', giftName, count: 1, valueYuan: 0.1 } : { ...base, kind: 'enter' });
+    return true;
   }
 
   setAutoReply(enabled: boolean): boolean {
