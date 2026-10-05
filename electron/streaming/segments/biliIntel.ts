@@ -125,6 +125,8 @@ class BiliIntelSegment implements LiveSegmentPlugin {
   private ready: Array<{ item: ResearchItem; dossier: VideoDossier }> = [];
   private showing: Showing | null = null;
   private discussion: Discussion | null = null;
+  /** 收尾后保留一小段时间，让点播者迟到的回复仍能接回原视频。 */
+  private recentDiscussion: Discussion | null = null;
   private wrapUpDue: Discussion | null = null;
   private notices: SegmentBeat[] = [];
   private offered: { key: string; beat: SegmentBeat } | null = null;
@@ -316,6 +318,11 @@ class BiliIntelSegment implements LiveSegmentPlugin {
     if (!BV_PATTERN.test(event.text) && !B23_PATTERN.test(event.text)) {
       // 陪聊中：有人说话就接着聊（这条照常交给注意力层去回）
       if (this.discussion) this.discussion.lastChatAt = now;
+      else if (this.recentDiscussion && event.user.name === this.recentDiscussion.by
+        && now - this.recentDiscussion.since < DISCUSS_MAX_MS) {
+        this.discussion = { ...this.recentDiscussion, lastChatAt: now };
+        this.wrapUpDue = null;
+      }
       return false;
     }
     const who = event.user.masked ? '' : event.user.name;
@@ -361,8 +368,8 @@ class BiliIntelSegment implements LiveSegmentPlugin {
     const job = this.deps.runner.current;
     const s = this.showing;
     const progress = job ? `研究任务「${job.title}」做了 ${job.items.filter((i) => i.status === 'done').length}/${job.items.length}` : '';
-    if (s) return `在情报站给大家讲《${s.dossier.video.title.slice(0, 30)}》（${progress}）`;
     if (this.discussion) return `在和${this.discussion.by}聊刚讲完的《${this.discussion.title}》`;
+    if (s) return `在情报站给大家讲《${s.dossier.video.title.slice(0, 30)}》（${progress}）`;
     const working = job?.items.find((i) => i.status === 'working');
     if (job && (job.status === 'running' || job.status === 'preparing')) return `在帮主人研究 B 站视频：${progress}${working ? `，正在处理《${working.title.slice(0, 24)}》` : ''}`;
     return '在情报站，手上这批视频做完了';
@@ -484,7 +491,10 @@ class BiliIntelSegment implements LiveSegmentPlugin {
   /** 讲完一条：点的观众就开始陪聊；按设置点赞留评论 */
   private finish(s: Showing, now: number): void {
     this.presented.push(s.item);
-    if (s.item.by) this.discussion = { by: s.item.by, title: s.dossier.video.title.slice(0, 30), since: now, lastChatAt: 0 };
+    if (s.item.by) {
+      this.discussion = { by: s.item.by, title: s.dossier.video.title.slice(0, 30), since: now, lastChatAt: 0 };
+      this.recentDiscussion = this.discussion;
+    }
     const settings = this.deps.settings();
     const v = s.dossier.video;
     if (settings.like) {
