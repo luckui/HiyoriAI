@@ -155,11 +155,11 @@ export const DEFAULT_BOARD_TEXT = [
   '📡 B站情报站 · Hiyori 打工中',
   '她在帮主人搜集 B 站视频、转录文案、研究流行文化',
   '💬 随便和她聊天都行，她边干活边回',
-  '🎬 想让她研究某个视频：发 BV 号或视频链接',
+  '🎬 点播视频：发 BV 号；短链被吞就发「短码 + 链接末尾那串」',
 ].join('\n');
 
 /** 开了送礼私信时公告板自动加的一行 */
-export const BOARD_GIFT_LINE = '🎁 任意礼物 + BV 号：私信发送视频分析';
+export const BOARD_GIFT_LINE = '🎁 任意礼物 + BV 号/短码：私信发送视频分析';
 export const BOARD_FOLLOW_LINE = '💌 关注 Hiyori：继续收到完整视频字幕';
 
 /** 画面上、提示词里实际用的公告：开了送礼私信就补上那一行 */

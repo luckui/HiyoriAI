@@ -344,7 +344,7 @@ export class LiveAttention {
     // 情报站以外的环节收到视频：研究队列已经接了（streamerSession），这里让她如实回一句
     if (features.videoLink) { base += 0.3; tags.push('发了B站视频，已排进研究队列，情报站环节里会讲'); }
     // 想让她看视频却只给了关键词：引导他发 BV 号（关键词搜索以后会支持）
-    else if (features.videoAsk) { base += 0.25; tags.push('想让你看某个视频但没给BV号：请他发BV号或视频链接，关键词搜索以后会支持'); }
+    else if (features.videoAsk) { base += 0.25; tags.push('想让你看某个视频但没给BV号：请他发BV号，或把b23.tv/后面的短码写成「短码 xxx」；关键词搜索以后会支持'); }
     // 身份只放大内容分：舰长刷「哈哈哈」也还是没话可接（有的房间几乎人人是舰长）
     const guard = event.user.guardLevel ?? 0;
     if (GUARD_TAG[guard]) { base *= 1.25; tags.push(GUARD_TAG[guard]); }

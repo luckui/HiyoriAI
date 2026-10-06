@@ -8,6 +8,7 @@ import { liveHub } from './liveHub';
 import { SESSION_SYSTEM_PROMPT, topicPrompt } from './streamerPrompts';
 import type { LiveMemory } from './memory/liveMemory';
 import { distillStream } from './memory/liveMemoryDistill';
+import { ViewerVideoShare } from './videoShare';
 
 /**
  * 直播幕后的一次 LLM 调用（不进对话、不朗读）：下播提炼记忆、巡逻打分。用当前对话模型，关掉深度思考。
@@ -59,6 +60,7 @@ class StreamerSessionManager {
   private videoRequest: ((event: LiveChatEvent) => void) | null = null;
   /** 每条新事件都先给它看一眼（送礼私信要认礼物和 BV 号），不拦截 */
   private eventTap: ((event: LiveEvent) => void) | null = null;
+  private readonly videoShare = new ViewerVideoShare();
   /** 她现在在干什么、直播间公告：写进回观众的提示词里 */
   private stageContext: (() => StageContext) | null = null;
 
@@ -72,6 +74,7 @@ class StreamerSessionManager {
 
   start(config: StreamerSessionConfig, cookie: string): StreamerStatus {
     this.stop();
+    this.videoShare.reset();
     const idleAfterMs = this.attention.idleAfterMs;
     this.config = { ...config, autoReply: config.autoReply ?? false };
     this.startedAt = Date.now();
@@ -86,14 +89,15 @@ class StreamerSessionManager {
     this.unsubscribe = liveHub.subscribe((event, isUpdate) => {
       const now = Date.now();
       this.memory?.observe(event, isUpdate, now);
-      if (!isUpdate) this.eventTap?.(event);
+      const routed = event.kind === 'chat' && !isUpdate ? this.videoShare.normalize(event, now) : event;
+      if (!isUpdate) this.eventTap?.(routed);
       // 被环节拿走的弹幕（点播、作答）也说明有人在看
-      if (event.kind === 'chat' && !isUpdate && this.director?.onChat(event, now)) {
-        this.attention.noteAudience(event, now);
+      if (routed.kind === 'chat' && !isUpdate && this.director?.onChat(routed, now)) {
+        this.attention.noteAudience(routed, now);
         return;
       }
-      if (event.kind === 'chat' && !isUpdate && VIDEO_LINK.test(event.text)) this.videoRequest?.(event);
-      this.attention.observe(event, isUpdate, now);
+      if (routed.kind === 'chat' && !isUpdate && VIDEO_LINK.test(routed.text)) this.videoRequest?.(routed);
+      this.attention.observe(routed, isUpdate, now);
     });
     return this.status();
   }
