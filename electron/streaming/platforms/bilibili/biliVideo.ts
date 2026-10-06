@@ -319,6 +319,10 @@ export class BiliVideoClient {
     return this.account.comment(aid, message);
   }
 
+  publishTextDynamic(text: string): Promise<string> {
+    return this.account.publishTextDynamic(text);
+  }
+
   /** 查询观众是否关注了当前登录的主播；无法确认时由调用方保守处理。 */
   followsMe(viewerId: string): Promise<boolean | null> {
     return this.account.followsMe(viewerId);

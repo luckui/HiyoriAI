@@ -27,7 +27,7 @@ export class DmError extends Error {
 export class BiliAccountActions {
   constructor(private readonly session: () => Promise<BiliSession>) {}
 
-  private async post(url: string, form: Record<string, string | number>): Promise<void> {
+  private async post(url: string, form: Record<string, string | number>, alreadyLikedIsOk = false): Promise<void> {
     const s = await this.session();
     const csrf = cookieValue(s.cookie, 'bili_jct');
     if (!s.loggedIn || !csrf) throw new Error('没有登录 Cookie（或缺 bili_jct），不能点赞评论');
@@ -39,16 +39,47 @@ export class BiliAccountActions {
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
     const json = (await res.json()) as ApiResponse<unknown>;
-    // 65006：已经赞过
-    if (json.code !== 0 && json.code !== 65006) throw new Error(`B 站返回 ${json.code} ${json.message ?? ''}`);
+    // 65006：已经赞过；只对点赞视为成功。
+    if (json.code !== 0 && !(alreadyLikedIsOk && json.code === 65006)) throw new Error(`B 站返回 ${json.code} ${json.message ?? ''}`);
   }
 
   like(aid: number): Promise<void> {
-    return this.post('https://api.bilibili.com/x/web-interface/archive/like', { aid, like: 1 });
+    return this.post('https://api.bilibili.com/x/web-interface/archive/like', { aid, like: 1 }, true);
   }
 
   comment(aid: number, message: string): Promise<void> {
     return this.post('https://api.bilibili.com/x/v2/reply/add', { type: 1, oid: aid, message, plat: 1 });
+  }
+
+  /** 发布纯文字动态，返回动态 ID。调用方决定内容与发布时机。 */
+  async publishTextDynamic(text: string): Promise<string> {
+    const content = text.trim();
+    if (!content) throw new Error('动态内容不能为空');
+    const s = await this.session();
+    const csrf = cookieValue(s.cookie, 'bili_jct');
+    if (!s.loggedIn || !csrf) throw new Error('没有登录 Cookie（或缺 bili_jct），不能发动态');
+    const dynReq = {
+      content: { contents: [{ raw_text: content, type: 1, biz_id: '' }] },
+      pics: [], scene: 2,
+      meta: { app_meta: { from: 'create.dynamic.web', mobi_app: 'web' } },
+      option: { aigc: 2, private_pub: 0 },
+    };
+    const headers = { 'User-Agent': UA, Referer: 'https://t.bilibili.com/', Origin: 'https://t.bilibili.com', Cookie: s.cookie, 'Content-Type': 'application/json' };
+    const check = await fetch(`https://api.bilibili.com/x/dynamic/feed/create/submit_check?csrf=${encodeURIComponent(csrf)}`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ content: dynReq.content, pics: dynReq.pics, scene: dynReq.scene, create_option: dynReq.option }),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    const checked = (await check.json()) as ApiResponse<unknown>;
+    if (checked.code !== 0) throw new Error(`B 站动态内容检查失败：${checked.code} ${checked.message ?? ''}`);
+    const res = await fetch(`https://api.bilibili.com/x/dynamic/feed/create/dyn?platform=web&csrf=${encodeURIComponent(csrf)}`, {
+      method: 'POST', headers, body: JSON.stringify({ dyn_req: dynReq }), signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    const json = (await res.json()) as ApiResponse<{ dyn_id_str?: string; dyn_id?: number }>;
+    if (json.code !== 0) throw new Error(`B 站发动态失败：${json.code} ${json.message ?? ''}`);
+    const id = json.data?.dyn_id_str ?? String(json.data?.dyn_id ?? '');
+    if (!/^\d+$/.test(id)) throw new Error('B 站已接受动态请求，但未返回有效动态 ID，请到账号主页确认，避免重复发布');
+    return id;
   }
 
   /** 查询观众是否关注了当前登录账号；无法确认时由调用方保守处理。 */
