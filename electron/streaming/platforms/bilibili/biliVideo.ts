@@ -1,17 +1,19 @@
 /**
- * B 站视频接口：热门 / 每周必看 / 排行榜 / UP 主新投稿、视频详情、热评、字幕、音频地址，以及点赞和评论。
+ * 情报站使用的 B 站视频客户端：读取视频资料，并统一调用账号操作。
  *
  * 实测（2026-10，登录 Cookie）：
  * - 热门 x/web-interface/popular、每周必看 popular/series/one、排行 ranking/v2 不用签名；
  * - 字幕 x/player/wbi/v2、音频 x/player/wbi/playurl、UP 主投稿 x/space/wbi/arc/search 要 WBI 签名；
  *   AI 字幕（ai-zh 等）登录后才给，大部分热门视频都有；
  * - 热评用老接口 x/v2/reply?sort=1 就行。
- * 点赞、评论要 Cookie 里的 bili_jct 当 csrf。
+ * 点赞、评论、关注关系和私信的请求实现位于 bilibili/accountActions.ts。
  */
 
-import { randomUUID } from 'crypto';
 import zlib from 'zlib';
 import { createBiliSession, signWbi, type BiliSession } from './biliApi';
+import { BiliAccountActions } from '../../../bilibili/accountActions';
+
+export { DmError } from '../../../bilibili/accountActions';
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 const TIMEOUT_MS = 12_000;
@@ -99,22 +101,14 @@ function brief(v: RawVideo, source: string): BiliVideoBrief {
 export const BV_PATTERN = /BV[0-9A-Za-z]{10}/;
 export const B23_PATTERN = /b23\.tv\/[0-9A-Za-z]+/;
 
-function cookieValue(cookie: string, name: string): string | undefined {
-  return new RegExp(`(?:^|;\\s*)${name}=([^;]+)`).exec(cookie)?.[1];
-}
-
-/** 私信接口的错误（带 B 站返回码） */
-export class DmError extends Error {
-  constructor(readonly code: number, message: string) {
-    super(message);
-  }
-}
-
 export class BiliVideoClient {
   private session: Promise<BiliSession> | null = null;
   private sessionAt = 0;
+  private readonly account: BiliAccountActions;
 
-  constructor(private readonly cookie: () => string) {}
+  constructor(private readonly cookie: () => string) {
+    this.account = new BiliAccountActions(() => this.auth());
+  }
 
   private async auth(): Promise<BiliSession> {
     if (!this.session || Date.now() - this.sessionAt > SESSION_TTL_MS) {
@@ -317,73 +311,25 @@ export class BiliVideoClient {
 
   // ── 互动（用登录 Cookie）────────────────────────────
 
-  private async post(url: string, form: Record<string, string | number>): Promise<void> {
-    const s = await this.auth();
-    const csrf = cookieValue(s.cookie, 'bili_jct');
-    if (!s.loggedIn || !csrf) throw new Error('没有登录 Cookie（或缺 bili_jct），不能点赞评论');
-    const body = new URLSearchParams(Object.entries({ ...form, csrf }).map(([k, v]) => [k, String(v)]));
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'User-Agent': UA, Referer: 'https://www.bilibili.com/', Cookie: s.cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
-      body,
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
-    const json = (await res.json()) as ApiResponse<unknown>;
-    // 65006：已经赞过
-    if (json.code !== 0 && json.code !== 65006) throw new Error(`B 站返回 ${json.code} ${json.message ?? ''}`);
-  }
-
   like(aid: number): Promise<void> {
-    return this.post('https://api.bilibili.com/x/web-interface/archive/like', { aid, like: 1 });
+    return this.account.like(aid);
   }
 
   comment(aid: number, message: string): Promise<void> {
-    return this.post('https://api.bilibili.com/x/v2/reply/add', { type: 1, oid: aid, message, plat: 1 });
+    return this.account.comment(aid, message);
   }
 
   /** 查询观众是否关注了当前登录的主播；无法确认时由调用方保守处理。 */
-  async followsMe(viewerId: string): Promise<boolean | null> {
-    if (!/^\d+$/.test(viewerId)) return null;
-    const s = await this.auth();
-    if (!s.loggedIn || !s.uid) return null;
-    const data = await this.get<{ be_relation?: { attribute?: number } }>(`https://api.bilibili.com/x/web-interface/relation?mid=${viewerId}`);
-    const attribute = data.be_relation?.attribute;
-    return typeof attribute === 'number' ? attribute === 2 || attribute === 6 : null;
+  followsMe(viewerId: string): Promise<boolean | null> {
+    return this.account.followsMe(viewerId);
   }
 
   /**
    * 发一条文字私信（web 端接口，要 Wbi 签名）。失败抛 DmError，常见的：
    * 21047 对方回复或关注之前只能发 1 条，25003 对方隐私设置不收，21020 / 21046 发太快。
    */
-  async sendMessage(receiverId: string, text: string): Promise<void> {
-    const s = await this.auth();
-    const csrf = cookieValue(s.cookie, 'bili_jct');
-    if (!s.loggedIn || !csrf || !s.uid) throw new DmError(-101, '没有登录 Cookie（或缺 bili_jct），不能发私信');
-    const devId = randomUUID().toUpperCase();
-    const url = `https://api.vc.bilibili.com/web_im/v1/web_im/send_msg?${signWbi({ w_sender_uid: s.uid, w_receiver_id: receiverId, w_dev_id: devId }, s.mixinKey)}`;
-    const form: Record<string, string | number> = {
-      'msg[sender_uid]': s.uid,
-      'msg[receiver_id]': receiverId,
-      'msg[receiver_type]': 1,
-      'msg[msg_type]': 1,
-      'msg[msg_status]': 0,
-      'msg[dev_id]': devId,
-      'msg[timestamp]': Math.floor(Date.now() / 1000),
-      'msg[new_face_version]': 1,
-      'msg[content]': JSON.stringify({ content: text }),
-      csrf,
-      csrf_token: csrf,
-      build: 0,
-      mobi_app: 'web',
-    };
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'User-Agent': UA, Referer: 'https://message.bilibili.com/', Origin: 'https://message.bilibili.com', Cookie: s.cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams(Object.entries(form).map(([k, v]) => [k, String(v)])),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
-    const json = (await res.json()) as ApiResponse<unknown>;
-    if (json.code !== 0) throw new DmError(json.code, json.message ?? '');
+  sendMessage(receiverId: string, text: string): Promise<void> {
+    return this.account.sendMessage(receiverId, text);
   }
 }
 

@@ -11,7 +11,8 @@
 import fs from 'fs';
 import path from 'path';
 import type { LiveUser } from '../../shared/types/live';
-import { BV_PATTERN, B23_PATTERN, DmError } from '../streaming/platforms/bilibili/biliVideo';
+import { BV_PATTERN, B23_PATTERN } from '../streaming/platforms/bilibili/biliVideo';
+import { DmError } from '../bilibili/accountActions';
 import type { VideoAnalysis } from './analyze';
 import type { ResearchItem, ResearchJob, ResearchRunner } from './research';
 import { transcriptText, type VideoDossier } from './videoLibrary';
