@@ -386,7 +386,10 @@ export class GiftDm {
       if (code === 21047) {
         this.followed.delete(viewer.uid);
         this.blockedUntil.set(viewer.uid, this.now() + 5 * 60_000);
-        this.deps.announce(`${viewer.name}的字幕还没发完：B 站只允许先发一条。请他关注 Hiyori，关注后会自动续发`);
+        // 第一条都没发出去（他之前收过别的私信）和字幕续发到一半，说法不一样
+        this.deps.announce(d.initialSent
+          ? `${viewer.name}的字幕还没发完：B 站只允许先发一条。请他关注 Hiyori，关注后会自动续发`
+          : `给${viewer.name}的解析暂时发不出去：B 站规定关注或回复之前只能收一条私信。请他关注 Hiyori，关注后自动补发`);
       } else if (code === 25003) {
         this.deliveries.delete(d);
         this.persist();
