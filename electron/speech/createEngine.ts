@@ -24,6 +24,7 @@ export function createSpeechEngine(provider: TTSProviderConfig): SpeechEngine {
       speaker: provider.speaker,
       speechRate: doubao.speechRate,
       pitch: doubao.pitch,
+      language: provider.language,
       extraParams: parseExtraParams(doubao.extraParams),
     });
   }

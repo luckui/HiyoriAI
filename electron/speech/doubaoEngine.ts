@@ -25,6 +25,14 @@ export interface DoubaoEngineOptions {
   speaker: string;
   speechRate?: number;
   pitch?: number;
+  /**
+   * 设置里的语种（Auto / zh / en / ja / ko），映射成会话级的 additions.explicit_language。Auto 也按 zh-cn。
+   * 实测（2026-10，日语录音复刻的 2.0 音色）：
+   *   - 不传时中文念歪（「从字幕看」→「從景觀看」）、句与句之间声线不稳；zh-cn 后段间声纹相似度 0.89 → 0.95；
+   *   - zh-cn 下英文照常（中英混），整句日语、中文里夹的日语也照样念日语；ja 反而把中文念成日语腔；
+   *   - 同一会话里逐句换语种不可靠（会话开始时的语种占主导），所以只在会话级定一次。
+   */
+  language?: string;
   /** 合并进 req_params 的额外参数 */
   extraParams?: Record<string, unknown>;
   /** 会话里这么久没有收到任何帧就判为失败（默认 10 秒；测试用） */
@@ -41,6 +49,9 @@ const SEC_PER_UNIT = 0.0086;
 const SUBTITLE_WAIT_MS = 600;
 /** 连接空闲这么久后主动断开，下次用时再连 */
 const IDLE_CLOSE_MS = 180_000;
+
+/** 设置里的语种 → 豆包 explicit_language */
+const EXPLICIT_LANGUAGE: Record<string, string> = { auto: 'zh-cn', zh: 'zh-cn', en: 'en', ja: 'ja', ko: 'ko' };
 
 /** 常见错误补一句怎么处理 */
 const ERROR_HINTS: Array<[RegExp, string]> = [
@@ -87,9 +98,11 @@ export class DoubaoSpeechEngine implements SpeechEngine {
 
   /** StartSession / TaskRequest 共用的请求参数 */
   requestParams(): Record<string, unknown> {
-    const { speaker, speechRate, pitch, extraParams } = this.options;
+    const { speaker, speechRate, pitch, language, extraParams } = this.options;
     const additions: Record<string, unknown> = {};
     if (pitch) additions.post_process = { pitch };
+    const explicit = EXPLICIT_LANGUAGE[(language || 'auto').toLowerCase()];
+    if (explicit) additions.explicit_language = explicit;
     let params: Record<string, unknown> = {
       speaker,
       // enable_subtitle：服务端在每段结束后发 TTSSubtitle，带逐词时间戳 —— 句子起点和字幕节奏都以它为准
